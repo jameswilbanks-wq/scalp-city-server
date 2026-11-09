@@ -123,6 +123,19 @@ select:focus-visible,input:focus-visible,button:focus-visible{outline:2px solid 
 .backcity{position:static!important;margin:0 0 8px;width:100%}
 #posRow{pointer-events:auto}#posPill{font-size:11px;padding:6px 11px}#posPill.up{border-color:var(--green)}#posPill.dn{border-color:var(--red)}
 #tradeCard{pointer-events:auto;align-self:flex-start;max-width:min(92vw,360px);padding:9px 12px;border:1px solid var(--edge);background:var(--panel);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);border-radius:6px;font-size:11px;line-height:1.5}
+#goals{position:absolute;left:6px;bottom:150px;width:78px;z-index:6;pointer-events:none;padding:6px 6px 7px;border:1px solid var(--edge);background:rgba(7,5,38,.72);backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px);border-radius:6px;font-family:var(--f-disp)}
+#app.inroom #goals{display:none}
+#goals .gh{font-size:8px;letter-spacing:.16em;color:var(--dim)}
+#goals .gt{font-weight:700;font-size:15px;line-height:1.15;font-variant-numeric:tabular-nums;margin:1px 0 4px}
+#goals .gt.up{color:var(--green)}#goals .gt.dn{color:var(--red)}#goals .gt.z{color:var(--ink)}
+#goals .gr{position:relative;display:flex;align-items:center;justify-content:space-between;height:22px;margin-top:3px;padding:0 6px;border:1px solid rgba(138,144,208,.28);border-radius:4px;overflow:hidden;font-size:11px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--dim)}
+#goals .gr i{position:absolute;left:0;top:0;bottom:0;width:0;background:rgba(56,244,216,.22)}
+#goals .gr span{position:relative}
+#goals .gr.on{color:#04120c;background:var(--green);border-color:var(--green);box-shadow:0 0 10px rgba(52,255,154,.75),0 0 22px rgba(52,255,154,.35);animation:gpulse 2.4s ease-in-out infinite}
+#goals .gr.cur{color:var(--ink);border-color:var(--cyan)}
+#goals .gn{margin-top:5px;font-size:9px;letter-spacing:.04em;color:var(--dim);line-height:1.25}
+@keyframes gpulse{50%{box-shadow:0 0 16px rgba(52,255,154,.95),0 0 32px rgba(52,255,154,.5)}}
+@media (prefers-reduced-motion:reduce){#goals .gr.on{animation:none}}
 #tradeExit{pointer-events:auto;align-self:flex-start;font:700 13px var(--f-disp);letter-spacing:.1em;padding:12px 18px;min-height:44px;border:1px solid var(--red);background:rgba(40,6,24,.85);color:var(--red);border-radius:8px;box-shadow:0 0 14px rgba(255,61,110,.3)}#tradeExit.arm{background:var(--red);color:#fff}
 #tradeCard.up{border-color:var(--green);box-shadow:0 0 18px rgba(52,255,154,.28)}#tradeCard.dn{border-color:var(--red);box-shadow:0 0 18px rgba(255,61,110,.28)}#tradeCard.stale{border-color:var(--amber);box-shadow:0 0 18px rgba(255,210,63,.25)}
 #tradeCard .tcs{font-size:9px;letter-spacing:.12em;color:var(--dim)}#tradeCard .tcc{font-family:var(--f-disp);font-weight:700;font-size:15px;letter-spacing:.04em}
@@ -161,6 +174,7 @@ select:focus-visible,input:focus-visible,button:focus-visible{outline:2px solid 
     <button class="pill" id="srvFeed" type="button" hidden></button>
   </header>
 
+  <aside id="goals" aria-label="Daily profit goals"></aside>
   <button class="btn" id="back" type="button" hidden>&larr; CITY</button>
   <div id="roomTitle" hidden></div>
   <button class="btn" id="boardBtn" type="button">BOARD</button>
@@ -1876,6 +1890,31 @@ var FL=(function(){
   g.visible=false;
   return{g:g,cone:cone,pool:pool,lamp:lamp,halo:halo,shells:shells,tw:null,parent:null,sym:null,col:new THREE.Color(0x34ff9a)};
 })();
+var GOALS=[25,50,100,200,400,800,1600],_gk='';
+function goalsPnl(){
+  if(window.__WEB__)return Web.last&&Web.last.rec?+Web.last.rec.pnl||0:null;
+  if(P.running&&P.rec)return+P.rec.pnl||0;
+  if(SRV.rec)return+SRV.rec.pnl||0;
+  return P.rec?+P.rec.pnl||0:null;
+}
+function goalsRender(){
+  var el=$('goals');if(!el)return;
+  var v=goalsPnl(),key=v===null?'x':v.toFixed(2);if(key===_gk)return;_gk=key;
+  var pv=v===null?0:v,hit=0;GOALS.forEach(function(g){if(pv>=g)hit++});
+  el.textContent='';
+  function add(par,tag,cls,txt){var d=document.createElement(tag);d.className=cls;if(txt!=null)d.textContent=txt;par.appendChild(d);return d}
+  add(el,'div','gh','TODAY · GOALS');
+  add(el,'div','gt '+(pv>0?'up':pv<0?'dn':'z'),v===null?'—':money(pv,true));
+  for(var i=GOALS.length-1;i>=0;i--){
+    var g=GOALS[i],prev=i?GOALS[i-1]:0,on=pv>=g,cur=!on&&pv>=0&&(i===0||pv>=prev);
+    var row=add(el,'div','gr'+(on?' on':cur?' cur':''));
+    row.setAttribute('aria-label','Goal $'+g+(on?' reached':''));
+    if(cur){var f=document.createElement('i');f.style.width=Math.max(0,Math.min(100,(pv-prev)/(g-prev)*100)).toFixed(1)+'%';row.appendChild(f)}
+    add(row,'span','','$'+g);add(row,'span','',on?'✓':'');
+  }
+  var nx=null;for(var k=0;k<GOALS.length;k++)if(pv<GOALS[k]){nx=GOALS[k];break}
+  add(el,'div','gn',nx===null?'ALL 7 GOALS HIT':(v===null?'no data yet':'$'+Math.ceil(nx-pv)+' to $'+nx)+' · '+hit+'/7');
+}
 function flRestore(){if(FL.tw)FL.tw.forEach(function(m){m.material.color.setHex(0xa8c0ff)});FL.tw=null}
 function flAttach(sym){
   if(FL.parent&&!FL.parent.parent){FL.parent=null}
@@ -1912,6 +1951,7 @@ function renderAct(){
   var ex=$('tradeExit');ex.hidden=!(WEB&&ACT&&ACT.src==='SERVER PAPER'&&!S.room);if(!ex.hidden){var ar=Date.now()-Web.armed<5000;ex.className=ar?'arm':'';ex.textContent=ar?'TAP AGAIN TO EXIT (PAPER)':'EXIT TRADE NOW'}
   if(ACT)flAttach(ACT.pos.sym);else FL.g.visible=false;
   if(typeof srvPanelRender==='function')srvPanelRender();
+  goalsRender();
 }
 function flFrame(clk){
   if(!ACT||S.room){FL.g.visible=false;flRestore();return}
