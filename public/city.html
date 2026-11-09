@@ -1896,10 +1896,13 @@ var FL=(function(){
   var pool=new THREE.Mesh(new THREE.RingGeometry(0,10.5,48),m(0x34ff9a));pool.rotation.x=-Math.PI/2;pool.position.y=.3;g.add(pool);
   var lamp=glowSprite(0xffffff,7);lamp.position.y=82;g.add(lamp);
   cone.visible=false;lamp.visible=false;
-  var halo=glowSprite(0x34ff9a,34);halo.position.y=6.5;g.add(halo);
+  var halos=[],wg=[];(function(){var y=0;[[2.6,5,13],[2.0,4.2,11],[1.4,3.6,9]].forEach(function(t){
+    var h=glowSprite(0x34ff9a,t[2]);h.position.y=y+t[1]/2;g.add(h);halos.push(h);
+    var w=new THREE.Mesh(new THREE.BoxGeometry(t[0]*1.03,t[1],t[0]*1.03),new THREE.MeshBasicMaterial({map:WT,color:0x34ff9a,transparent:true,blending:THREE.AdditiveBlending,depthWrite:false}));
+    w.position.y=y+t[1]/2;g.add(w);wg.push(w);y+=t[1]})})();
   var shells=[];(function(){var y=0;[[2.6,5],[2.0,4.2],[1.4,3.6]].forEach(function(t){var sh=new THREE.Mesh(new THREE.BoxGeometry(t[0]*1.14,t[1]*1.02,t[0]*1.14),new THREE.MeshBasicMaterial({color:0x34ff9a,transparent:true,opacity:.3,blending:THREE.AdditiveBlending,depthWrite:false}));sh.position.y=y+t[1]/2;g.add(sh);shells.push(sh);y+=t[1]})})();
   g.visible=false;
-  return{g:g,cone:cone,pool:pool,lamp:lamp,halo:halo,shells:shells,tw:null,parent:null,sym:null,col:new THREE.Color(0x34ff9a)};
+  return{g:g,cone:cone,pool:pool,lamp:lamp,halos:halos,wg:wg,shells:shells,tw:null,parent:null,sym:null,col:new THREE.Color(0x34ff9a)};
 })();
 var GOALS=[25,50,100,200,400,800,1600],_gk='';
 function goalsPnl(){
@@ -1980,8 +1983,15 @@ function flFrame(clk){
   var k=reduce?1:(.8+.2*Math.sin(clk*4));
   FL.cone.material.color.copy(FL.col);FL.pool.material.color.copy(FL.col);FL.lamp.material.color.copy(FL.col);
   FL.cone.material.opacity=0;FL.pool.material.opacity=.22*k;
-  FL.halo.material.color.copy(FL.col);FL.halo.material.opacity=.8;FL.halo.scale.setScalar(32+(reduce?0:3*Math.sin(clk*3)));FL.shells.forEach(function(sh){sh.material.color.copy(FL.col);sh.material.opacity=.22+.14*k});
-  if(FL.tw){var br=5+2*k;FL.tw.forEach(function(m){m.material.color.setRGB(.66*br*.75+FL.col.r*br*.5,.75*br*.75+FL.col.g*br*.5,1*br*.75+FL.col.b*br*.5)})}
+  FL.shells.forEach(function(sh){sh.material.color.copy(FL.col);sh.material.opacity=.10+.06*k});
+  /* every floor glows; a pulse of light rolls up the whole building from the ground to the antenna */
+  for(var i=0;i<3;i++){
+    var wv=reduce?1:(.5+.5*Math.sin(clk*3.4-i*1.15));
+    var br=2.6+5.6*wv;
+    if(FL.tw&&FL.tw[i])FL.tw[i].material.color.setRGB(.66*br*.75+FL.col.r*br*.5,.75*br*.75+FL.col.g*br*.5,1*br*.75+FL.col.b*br*.5);
+    var gm=FL.wg[i].material;gm.color.copy(FL.col);gm.color.multiplyScalar(.5+3.4*wv);
+    var hm=FL.halos[i];hm.material.color.copy(FL.col);hm.material.opacity=.3+.6*wv;hm.scale.setScalar((i?11-i:13)*(1+.18*wv));
+  }
   FL.pool.scale.setScalar(1+(reduce?0:.06*Math.sin(clk*2)));
   FL.lamp.scale.setScalar(6+(reduce?0:Math.sin(clk*4)*.8));
   FL.g.visible=!!FL.parent;
