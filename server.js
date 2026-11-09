@@ -228,6 +228,9 @@ function logSignal(sym, sig, px, action, why) {
 }
 function shutCheck() {
   const r = P.rec;
+  // PAPER ONLY: the daily trade cap, loser cap and loss limit are OFF while paper trading (James, 2026-11-09).
+  // Set ENFORCE_LIMITS=1 to turn them back on. REVISIT BEFORE GOING LIVE.
+  if (process.env.ENFORCE_LIMITS !== '1') return;
   if (process.env.STOP_AT_TARGET === '1' && r.pnl >= CFG.target) r.shut = 'target'; else if (r.pnl <= -CFG.loss) r.shut = 'loss';
   else if (r.losers >= CFG.maxLosers) r.shut = 'losers'; else if (r.trades.length >= CFG.maxTrades) r.shut = 'trades';
 }

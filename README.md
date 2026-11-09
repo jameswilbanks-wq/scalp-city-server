@@ -9,3 +9,6 @@ ADMIN_KEY (secret for the dashboard), ACCOUNT_NUMBER, SYMBOLS, MAX_PREM, DTE, DA
 Dashboard: https://YOUR-SERVICE.onrender.com/?key=ADMIN_KEY
 One-time login: tap "CONNECT ROBINHOOD" on the dashboard.
 Local test: node test/mock.js (fake Robinhood) with `node -r ./test/fakedate.js server.js`.
+
+## Before going live
+The daily trade cap (6), losing-trade cap (3) and daily loss limit ($50) are switched off during paper trading. Re-decide them before live (set ENFORCE_LIMITS=1 on Render to turn them back on).
