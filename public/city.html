@@ -123,7 +123,10 @@ select:focus-visible,input:focus-visible,button:focus-visible{outline:2px solid 
 .backcity{position:static!important;margin:0 0 8px;width:100%}
 #posRow{pointer-events:auto}#posPill{font-size:11px;padding:6px 11px}#posPill.up{border-color:var(--green)}#posPill.dn{border-color:var(--red)}
 #tradeCard{pointer-events:auto;align-self:flex-start;max-width:min(92vw,360px);padding:9px 12px;border:1px solid var(--edge);background:var(--panel);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);border-radius:6px;font-size:11px;line-height:1.5}
-#goals{position:absolute;left:6px;bottom:150px;width:78px;z-index:6;pointer-events:none;padding:6px 6px 7px;border:1px solid var(--edge);background:rgba(7,5,38,.72);backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px);border-radius:6px;font-family:var(--f-disp)}
+#dayStop{position:absolute;left:6px;bottom:136px;z-index:6;pointer-events:auto;font:700 11px var(--f-disp);letter-spacing:.08em;padding:0 10px;min-height:40px;max-width:210px;text-align:left;border:1px solid var(--amber);color:var(--amber);background:rgba(36,26,4,.85);border-radius:8px}
+#dayStop.arm{background:var(--amber);color:#1a1200}#dayStop.off{border-color:var(--dim);color:var(--dim)}#dayStop.res{border-color:var(--green);color:var(--green)}
+#app.inroom #dayStop{display:none}
+#goals{position:absolute;left:6px;bottom:184px;width:78px;z-index:6;pointer-events:none;padding:6px 6px 7px;border:1px solid var(--edge);background:rgba(7,5,38,.72);backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px);border-radius:6px;font-family:var(--f-disp)}
 #app.inroom #goals{display:none}
 #goals .gh{font-size:8px;letter-spacing:.16em;color:var(--dim)}
 #goals .gt{font-weight:700;font-size:15px;line-height:1.15;font-variant-numeric:tabular-nums;margin:1px 0 4px}
@@ -162,6 +165,7 @@ select:focus-visible,input:focus-visible,button:focus-visible{outline:2px solid 
     <div class="row sel">
       <select id="acct" aria-label="Account"></select>
       <select id="span" aria-label="P&amp;L window">
+        <option value="today">TODAY</option>
         <option value="week">1 WEEK</option>
         <option value="month">1 MONTH</option>
         <option value="3month">3 MONTHS</option>
@@ -175,6 +179,7 @@ select:focus-visible,input:focus-visible,button:focus-visible{outline:2px solid 
   </header>
 
   <aside id="goals" aria-label="Daily profit goals"></aside>
+  <button class="btn" id="dayStop" type="button" hidden></button>
   <button class="btn" id="back" type="button" hidden>&larr; CITY</button>
   <div id="roomTitle" hidden></div>
   <button class="btn" id="boardBtn" type="button">BOARD</button>
@@ -541,8 +546,8 @@ function marketState(now){
 function hms(s){var h=Math.floor(s/3600),m=Math.floor(s%3600/60);return h>=24?Math.floor(h/24)+'d '+(h%24)+'h':h+'h '+m+'m'}
 
 /* ---------- state ---------- */
-var S={mode:'demo',reason:'',watch:['QQQ','SPY','IWM'],span:'week',acct:null,accounts:[],room:null,board:false};
-try{var w=JSON.parse(localStorage.getItem('scalp.watch')||'null');if(Array.isArray(w)&&w.length)S.watch=w.slice(0,8);var sp=localStorage.getItem('scalp.span');if(sp)S.span=sp}catch(e){}
+var S={mode:'demo',reason:'',watch:['QQQ','SPY','IWM'],span:'today',acct:null,accounts:[],room:null,board:false};
+try{var w=JSON.parse(localStorage.getItem('scalp.watch')||'null');if(Array.isArray(w)&&w.length)S.watch=w.slice(0,8);var sp=localStorage.getItem('scalp.span2');if(sp)S.span=sp}catch(e){}
 var Q={},A={},PNL={total:0,trades:[],points:[],bySym:{},loaded:false};
 
 /* ---------- indicators ---------- */
@@ -817,7 +822,11 @@ function updateVault(){
   var b=document.createElement('span');b.className='big '+(tot>0?'up':tot<0?'dn':'flat');b.textContent=has?money(tot,true):'$0';vaultLab.appendChild(b);
   var n=document.createElement('span');n.className='sub';n.textContent=has?(PNL.trades.length+' closed trades · tap for board'):(PNL.loaded?'no closed trades in this window':'loading');vaultLab.appendChild(n);
 }
-function spanName(s){return{week:'1W',month:'1M','3month':'3M',ytd:'YTD'}[s]||s}
+function spanCut(){
+  if(S.span==='today'){var k=dayKey(Date.now()),t=Date.now()-864e5;while(dayKey(t)===k)t-=36e5;return t+36e5}
+  return Date.now()-{week:7,month:30,'3month':90,ytd:Math.ceil((Date.now()-Date.UTC(new Date().getUTCFullYear(),0,1))/864e5)}[S.span]*864e5;
+}
+function spanName(s){return{today:'TODAY',week:'1W',month:'1M','3month':'3M',ytd:'YTD'}[s]||s}
 
 var tmp=new THREE.Vector3();
 function placeLabels(){
@@ -1013,7 +1022,7 @@ var Demo={
   },
   load:function(){
     if(!Demo.trades)Demo.pnl();
-    var cut=Date.now()-{week:7,month:30,'3month':90,ytd:Math.ceil((Date.now()-Date.UTC(new Date().getUTCFullYear(),0,1))/864e5)}[S.span]*864e5;
+    var cut=spanCut();
     var tr=Demo.trades.filter(function(t){return t.t>=cut});
     var byDay={};Demo.trades.filter(function(t){return t.t>=Date.now()-30*864e5}).forEach(function(t){var k=dayKey(t.t);byDay[k]=byDay[k]||{t:t.t,gain:0,n:0};byDay[k].gain+=t.gain;byDay[k].n++});
     var pts=Object.keys(byDay).sort().map(function(k){return byDay[k]});
@@ -1083,13 +1092,15 @@ var Data={
     if(S.mode==='demo'&&!liveOK){Demo.load();refreshAll();return}
     if(!mcp||!S.acct)return;
     try{
-      var acct=S.acct,span=S.span;
+      var acct=S.acct,span=S.span==='today'?'week':S.span;
       var tradesP=(async function(){var out=[],cur='';for(var i=0;i<6;i++){var d=await call('get_pnl_trade_history',cur?{account_number:acct,span:span,cursor:cur}:{account_number:acct,span:span});(d.trades||[]).forEach(function(t){out.push({t:Date.parse(t.timestamp),symbol:t.symbol||'',side:t.side,gain:+t.realized_gain||0})});cur=d.next_cursor;if(!cur)break}return out})();
       var spanP=call('get_realized_pnl',{account_number:acct,span:span});
       var monthP=span==='month'?spanP:call('get_realized_pnl',{account_number:acct,span:'month'});
       var res=await Promise.all([tradesP,spanP,monthP]);
       var pts=(res[2].data_points||[]).map(function(p){return{t:Date.parse(p.start_time),gain:p.realized_gain==null?null:+p.realized_gain,n:p.number_of_trades||0}});
-      applyPnl(res[0],pts,parseFloat(res[1].total_returns)||0);
+      var trs=res[0],tot=parseFloat(res[1].total_returns)||0;
+      if(S.span==='today'){var c0=spanCut();trs=trs.filter(function(t){return t.t>=c0});tot=trs.reduce(function(a,t){return a+t.gain},0)}
+      applyPnl(trs,pts,tot);
       refreshAll();
     }catch(e){var m=failMsg(e);setStatus(m[0],m[1])}
   },
@@ -1126,7 +1137,7 @@ $('acct').addEventListener('change',function(){
 });
 $('span').value=S.span;
 $('span').addEventListener('change',function(){
-  S.span=this.value;try{localStorage.setItem('scalp.span',S.span)}catch(e){}
+  S.span=this.value;try{localStorage.setItem('scalp.span2',S.span)}catch(e){}
   PNL.loaded=false;Data.loadPnl();
 });
 $('status').addEventListener('click',function(){if(S.mode!=='live'&&mcp){Data.start()}});
@@ -1897,6 +1908,15 @@ function goalsPnl(){
   if(SRV.rec)return+SRV.rec.pnl||0;
   return P.rec?+P.rec.pnl||0:null;
 }
+function dayRender(){
+  var b=$('dayStop');if(!b)return;
+  if(!window.__WEB__||!Web.last||!Web.last.rec){b.hidden=true;return}
+  b.hidden=false;var r=Web.last.rec,mine=r.shut==='stopped by you',arm=Date.now()-Web.dayArm<5000;
+  if(mine){b.className='btn res';b.textContent='STOPPED FOR TODAY · TAP TO RESUME'}
+  else if(r.shut){b.className='btn off';b.textContent='DONE FOR TODAY ('+r.shut+')'}
+  else if(arm){b.className='btn arm';b.textContent=r.pos?'TAP AGAIN: SELL TRADE + STOP':'TAP AGAIN TO STOP FOR THE DAY'}
+  else{b.className='btn';b.textContent='STOP FOR THE DAY'}
+}
 function goalsRender(){
   var el=$('goals');if(!el)return;
   var v=goalsPnl(),key=v===null?'x':v.toFixed(2);if(key===_gk)return;_gk=key;
@@ -1951,7 +1971,7 @@ function renderAct(){
   var ex=$('tradeExit');ex.hidden=!(WEB&&ACT&&ACT.src==='SERVER PAPER'&&!S.room);if(!ex.hidden){var ar=Date.now()-Web.armed<5000;ex.className=ar?'arm':'';ex.textContent=ar?'TAP AGAIN TO EXIT (PAPER)':'EXIT TRADE NOW'}
   if(ACT)flAttach(ACT.pos.sym);else FL.g.visible=false;
   if(typeof srvPanelRender==='function')srvPanelRender();
-  goalsRender();
+  goalsRender();dayRender();
 }
 function flFrame(clk){
   if(!ACT||S.room){FL.g.visible=false;flRestore();return}
@@ -2003,7 +2023,7 @@ $('srvKey').addEventListener('input',function(){try{localStorage.setItem('sc_srv
 
 /* ---------- web mode: city page served by the server itself ---------- */
 var WEB=!!window.__WEB__;
-var Web={timer:null,key:'',trades:[],armed:0,last:null,
+var Web={dayArm:0,timer:null,key:'',trades:[],armed:0,last:null,
   start:function(){
     Web.key=new URLSearchParams(location.search).get('key')||'';
     $('app').classList.add('web');S.mode='live';liveOK=false;S.accounts=[];fillAccts();
@@ -2053,7 +2073,7 @@ var Web={timer:null,key:'',trades:[],armed:0,last:null,
     refreshAll(true);renderAct();Web.ctl();
   },
   pnl:function(){
-    var cut=Date.now()-{week:7,month:30,'3month':90,ytd:Math.ceil((Date.now()-Date.UTC(new Date().getUTCFullYear(),0,1))/864e5)}[S.span]*864e5;
+    var cut=spanCut();
     var tr=Web.trades.filter(function(t){return t.t>=cut}),byDay={};
     Web.trades.filter(function(t){return t.t>=Date.now()-30*864e5}).forEach(function(t){var k=dayKey(t.t);byDay[k]=byDay[k]||{t:t.t,gain:0,n:0};byDay[k].gain+=t.gain;byDay[k].n++});
     applyPnl(tr,Object.keys(byDay).sort().map(function(k){return byDay[k]}),tr.reduce(function(a,t){return a+t.gain},0));
@@ -2077,6 +2097,13 @@ var Web={timer:null,key:'',trades:[],armed:0,last:null,
 };
 $('srvRun').addEventListener('click',function(){Web.run()});
 $('srvClose').addEventListener('click',function(){Web.close()});
+$('dayStop').addEventListener('click',async function(){
+  var r=Web.last&&Web.last.rec;if(!r)return;
+  if(r.shut==='stopped by you'){try{await Web.api('/api/resumeday','POST')}catch(e){}Web.load();return}
+  if(r.shut)return;
+  if(Date.now()-Web.dayArm<5000){Web.dayArm=0;try{var j=await (await Web.api('/api/stopday','POST')).json();$('srvCtlMsg').textContent=j.ok?(j.closedAt!=null?'Sold at $'+(+j.closedAt).toFixed(2)+' and stopped for the day (paper).':'Stopped for the day (paper).'):('Could not stop: '+(j.error||'unknown'))}catch(e){}Web.load()}
+  else{Web.dayArm=Date.now();dayRender();setTimeout(dayRender,5200)}
+});
 $('tradeExit').addEventListener('click',function(){Web.close();renderAct()});
 
 /* ---------- boot ---------- */

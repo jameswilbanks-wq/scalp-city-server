@@ -228,7 +228,7 @@ function logSignal(sym, sig, px, action, why) {
 }
 function shutCheck() {
   const r = P.rec;
-  if (r.pnl >= CFG.target) r.shut = 'target'; else if (r.pnl <= -CFG.loss) r.shut = 'loss';
+  if (process.env.STOP_AT_TARGET === '1' && r.pnl >= CFG.target) r.shut = 'target'; else if (r.pnl <= -CFG.loss) r.shut = 'loss';
   else if (r.losers >= CFG.maxLosers) r.shut = 'losers'; else if (r.trades.length >= CFG.maxTrades) r.shut = 'trades';
 }
 function closePaper(reason, bid, info) {
@@ -368,7 +368,7 @@ async function extraBars(list) {
 }
 function recOut() {
   const r = P.rec;
-  return r ? { day: r.day, pnl: r.pnl, ntr: r.trades.length, tr: r.trades.slice(-30).map(t => ({ sym: t.sym, k: t.strike, ty: t.type, in: t.entryT, pnl: t.pnl, why: t.reason })), sh: r.sh ? r.sh.pnl : null, upd: new Date(P.lastTick || Date.now()).toISOString(), run: { running: !!P.ctl.running }, pos: r.pos ? { sym: r.pos.sym, strike: r.pos.strike, type: r.pos.type, exp: r.pos.exp, entryAsk: r.pos.entryAsk, entryBid: r.pos.entryBid, peak: r.pos.peak, t0: r.pos.t0, trig: r.pos.trig, live: r.pos.live } : null } : null;
+  return r ? { shut: r.shut || '', day: r.day, pnl: r.pnl, ntr: r.trades.length, tr: r.trades.slice(-30).map(t => ({ sym: t.sym, k: t.strike, ty: t.type, in: t.entryT, pnl: t.pnl, why: t.reason })), sh: r.sh ? r.sh.pnl : null, upd: new Date(P.lastTick || Date.now()).toISOString(), run: { running: !!P.ctl.running }, pos: r.pos ? { sym: r.pos.sym, strike: r.pos.strike, type: r.pos.type, exp: r.pos.exp, entryAsk: r.pos.entryAsk, entryBid: r.pos.entryBid, peak: r.pos.peak, t0: r.pos.t0, trig: r.pos.trig, live: r.pos.live } : null } : null;
 }
 function liveData() { return { now: Date.now(), run: !!P.ctl.running, market: marketOpen(Date.now()), msg: P.msg, rec: recOut() }; }
 async function cityData(want) {
@@ -408,6 +408,15 @@ const server = http.createServer(async (req, res) => {
       const l = (u.searchParams.get('syms') || '').toUpperCase().split(',').map(x => x.trim()).filter((x, i, a) => /^[A-Z.]{1,6}$/.test(x) && a.indexOf(x) === i).slice(0, 8);
       if (!l.length) return send(res, 400, { error: 'need at least one symbol' });
       WATCH = l; await kset('watch', l); return send(res, 200, { watch: l });
+    }
+    if (req.method === 'POST' && u.pathname === '/api/stopday') {
+      if (!P.rec) return send(res, 200, { ok: false, error: 'no journal yet' });
+      let closed = null; if (P.rec.pos) { const r = await manualClose(); closed = r.ok ? r.bid : null; }
+      P.rec.shut = 'stopped by you'; await saveRec(); return send(res, 200, { ok: true, closedAt: closed });
+    }
+    if (req.method === 'POST' && u.pathname === '/api/resumeday') {
+      if (!P.rec || P.rec.shut !== 'stopped by you') return send(res, 200, { ok: false, error: 'not stopped by you' });
+      P.rec.shut = ''; await saveRec(); setImmediate(tick); return send(res, 200, { ok: true });
     }
     if (u.pathname === '/api/live') { return send(res, 200, liveData()); }
     if (u.pathname === '/api/city') return send(res, 200, await cityData((u.searchParams.get('syms') || '').toUpperCase().split(',').map(x => x.trim()).filter(Boolean)));
