@@ -1,0 +1,1 @@
+{"name":"scalp-city-server","version":"1.0.0","private":true,"main":"server.js","scripts":{"start":"node server.js"},"engines":{"node":">=20"},"dependencies":{"@modelcontextprotocol/sdk":"^1.12.0","pg":"^8.11.0"}}

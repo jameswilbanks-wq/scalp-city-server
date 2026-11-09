@@ -1,0 +1,356 @@
+'use strict';
+/* Scalp City server: always-on PAPER trading. It never places, cancels or changes a real order:
+   the only Robinhood tools it is allowed to call are read-only (see READ_ONLY below). */
+const http = require('http');
+const crypto = require('crypto');
+const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
+const { StreamableHTTPClientTransport } = require('@modelcontextprotocol/sdk/client/streamableHttp.js');
+const { UnauthorizedError } = require('@modelcontextprotocol/sdk/client/auth.js');
+const Engine = require('./engine.js');
+
+const PORT = +process.env.PORT || 3000;
+const PUBLIC_URL = (process.env.PUBLIC_URL || '').replace(/\/$/, '');
+const ADMIN_KEY = process.env.ADMIN_KEY || '';
+const RH_URL = process.env.RH_MCP_URL || 'https://agent.robinhood.com/mcp/trading';
+const TICK_MS = +process.env.TICK_MS || 20000;
+const READ_ONLY = new Set(['get_accounts', 'get_equity_quotes', 'get_equity_historicals', 'get_option_chains',
+  'get_option_instruments', 'get_option_quotes', 'get_option_positions', 'get_option_orders', 'get_portfolio']);
+
+/* ---------- storage: Postgres key/value (tokens + journal survive restarts) ---------- */
+let pool = null; const mem = new Map();
+async function initStore() {
+  if (!process.env.DATABASE_URL) { console.log('No DATABASE_URL: using memory only (login and journal are lost on restart)'); return; }
+  const { Pool } = require('pg');
+  pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.PGSSL === 'off' ? false : { rejectUnauthorized: false }, max: 3 });
+  await pool.query('create table if not exists kv (key text primary key, value jsonb not null, updated timestamptz not null default now())');
+}
+async function kget(k) {
+  if (!pool) return mem.has(k) ? JSON.parse(mem.get(k)) : null;
+  const r = await pool.query('select value from kv where key=$1', [k]); return r.rows.length ? r.rows[0].value : null;
+}
+async function kset(k, v) {
+  if (!pool) { mem.set(k, JSON.stringify(v)); return; }
+  await pool.query('insert into kv(key,value,updated) values($1,$2,now()) on conflict(key) do update set value=excluded.value, updated=now()', [k, JSON.stringify(v)]);
+}
+async function kdel(k) { if (!pool) mem.delete(k); else await pool.query('delete from kv where key=$1', [k]); }
+
+/* ---------- Robinhood MCP connection with OAuth (one-time login, then refresh tokens) ---------- */
+const S = { client: null, transport: null, connected: false, needsLogin: false, authUrl: '', err: '', lastOk: 0, connecting: false };
+const provider = {
+  get redirectUrl() { return PUBLIC_URL + '/oauth/callback'; },
+  get clientMetadata() {
+    return { client_name: 'Scalp City paper bot', redirect_uris: [PUBLIC_URL + '/oauth/callback'], grant_types: ['authorization_code', 'refresh_token'],
+      response_types: ['code'], token_endpoint_auth_method: 'none' };
+  },
+  async clientInformation() { return (await kget('oauth_client')) || undefined; },
+  async saveClientInformation(i) { await kset('oauth_client', i); },
+  async tokens() { return (await kget('oauth_tokens')) || undefined; },
+  async saveTokens(t) {
+    const old = (await kget('oauth_tokens')) || {};
+    await kset('oauth_tokens', Object.assign({}, old, t, { saved_at: Date.now() }));
+  },
+  async redirectToAuthorization(url) { S.authUrl = url.toString(); S.needsLogin = true; },
+  async saveCodeVerifier(v) { await kset('oauth_verifier', { v }); },
+  async codeVerifier() { const r = await kget('oauth_verifier'); if (!r) throw new Error('no code verifier'); return r.v; },
+  async invalidateCredentials(scope) {
+    if (scope === 'all' || scope === 'tokens') await kdel('oauth_tokens');
+    if (scope === 'all' || scope === 'client') await kdel('oauth_client');
+    if (scope === 'all' || scope === 'verifier') await kdel('oauth_verifier');
+  },
+};
+async function connect() {
+  if (S.connecting) return; S.connecting = true;
+  try {
+    try { if (S.client) await S.client.close(); } catch (e) { }
+    S.transport = new StreamableHTTPClientTransport(new URL(RH_URL), { authProvider: provider });
+    S.client = new Client({ name: 'scalp-city-server', version: '1.0.0' }, { capabilities: {} });
+    await S.client.connect(S.transport);
+    S.connected = true; S.needsLogin = false; S.err = ''; S.lastOk = Date.now(); S.authUrl = '';
+    console.log('Connected to Robinhood MCP');
+  } catch (e) {
+    S.connected = false;
+    if (e instanceof UnauthorizedError || /unauthor/i.test(String(e && e.message))) { S.needsLogin = true; S.err = 'Needs login'; console.log('Robinhood login needed'); }
+    else { S.err = 'connect: ' + String(e && e.message || e).slice(0, 200); console.log(S.err); }
+  } finally { S.connecting = false; }
+}
+async function rh(tool, args) {
+  if (!READ_ONLY.has(tool)) throw new Error('blocked: ' + tool + ' is not allowed in paper mode');
+  if (!S.connected) throw Object.assign(new Error('not connected'), { code: 'not_connected' });
+  let res;
+  try { res = await S.client.callTool({ name: tool, arguments: args || {} }); }
+  catch (e) {
+    if (e instanceof UnauthorizedError || /unauthor|401/i.test(String(e && e.message))) { S.connected = false; S.needsLogin = true; }
+    throw e;
+  }
+  if (res.isError) { const t = (res.content || []).map(c => c.text || '').join(' ').slice(0, 300); throw Object.assign(new Error(t || 'tool error'), { code: 'tool_error' }); }
+  const txt = (res.content || []).filter(c => c.type === 'text').map(c => c.text).join('');
+  let j; try { j = JSON.parse(txt); } catch (e) { throw new Error('unreadable reply from ' + tool); }
+  S.lastOk = Date.now();
+  return j.data !== undefined ? j.data : j;
+}
+
+/* ---------- strategy (same rules as the web page, paper only) ---------- */
+const ACCOUNT = process.env.ACCOUNT_NUMBER || '463657817';
+const CFG = { maxPrem: +process.env.MAX_PREM || 250, dte: process.env.DTE === '0' ? 0 : 1, target: +process.env.DAILY_TARGET || 100, loss: +process.env.DAILY_LOSS || 50,
+  syms: (process.env.SYMBOLS || 'QQQ,SPY,IWM').split(','), maxTrades: 6, maxLosers: 3, premStop: .35, tpUp: .40, trailArm: .20, trailGap: .15, timeBars: 15, maxSpread: .12, cooldownMs: 5 * 60000 };
+const PROFB = { premStop: .12, tpUp: .40, trailArm: .05, trailGap: .06, timeBars: 15 };
+const iso = ms => new Date(ms).toISOString();
+const nowET = () => Engine.et(Date.now());
+function marketOpen(ms) {
+  const e = Engine.et(ms); const d = new Date(ms); const wd = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short' }).format(d);
+  return !['Sat', 'Sun'].includes(wd) && e.min >= 570 && e.min < 960;
+}
+const P = { raw: {}, bars: {}, info: {}, chain: {}, inst: {}, seenSig: {}, rec: null, ctl: { running: false }, lastTick: 0, msg: 'Starting', busy: false, tickErr: '', saveErr: '' };
+
+async function pBars(sym) {
+  const now = Date.now(); let st = P.raw[sym];
+  async function win(a, b) {
+    const d = await rh('get_equity_historicals', { symbols: [sym], start_time: iso(a), end_time: iso(b), interval: 'minute', bounds: 'regular' });
+    return ((d.results || [])[0] || {}).bars || [];
+  }
+  if (!st) {
+    st = P.raw[sym] = {};
+    const a = await win(now - 3 * 864e5, now - 1.5 * 864e5), b = await win(now - 1.5 * 864e5, now);
+    a.concat(b).forEach(x => { st[Date.parse(x.begins_at)] = x; });
+  } else {
+    const ts = Object.keys(st).map(Number), last = ts.length ? Math.max.apply(null, ts) : now - 3600000;
+    (await win(Math.min(last - 5 * 60000, now - 40 * 60000), now)).forEach(x => { st[Date.parse(x.begins_at)] = x; });
+    const cut = now - 4 * 864e5; Object.keys(st).forEach(k => { if (+k < cut) delete st[k]; });
+  }
+  const list = Object.keys(st).map(k => st[k]).filter(x => Date.parse(x.begins_at) + 60000 <= Date.now());
+  return Engine.prepare(list, { partial: true });
+}
+async function getChain(sym) {
+  if (P.chain[sym]) return P.chain[sym];
+  const d = await rh('get_option_chains', { underlying_symbol: sym });
+  const ch = (d.chains || []).filter(c => c.can_open_position && !c.settle_on_open)[0];
+  if (!ch) throw { code: 'no_chain' };
+  return (P.chain[sym] = { id: ch.id, dates: (ch.expiration_dates || []).slice().sort() });
+}
+function pickExpiry(ch, dte) {
+  const today = nowET().day, fut = ch.dates.filter(d => d >= today);
+  if (!fut.length) return null; if (dte === 0) return fut[0]; return fut[0] === today ? fut[1] : fut[0];
+}
+async function getInst(chain, exp, type) {
+  const key = chain.id + '|' + exp + '|' + type; if (P.inst[key]) return P.inst[key];
+  const out = []; let cur = '';
+  for (let i = 0; i < 6; i++) {
+    const inp = { chain_id: chain.id, expiration_dates: exp, type }; if (cur) inp.cursor = cur;
+    const d = await rh('get_option_instruments', inp);
+    (d.instruments || []).forEach(x => { if (x.state === 'active' && x.tradability === 'tradable') out.push({ id: x.id, strike: +x.strike_price }); });
+    cur = d.next || ''; if (!cur) break;
+  }
+  return (P.inst[key] = out);
+}
+async function pickContract(sym, dir, px) {
+  const ch = await getChain(sym), exp = pickExpiry(ch, CFG.dte);
+  if (!exp) return { why: 'no expiry available' };
+  const type = dir > 0 ? 'call' : 'put', list = await getInst(ch, exp, type);
+  const lo = dir > 0 ? px - 2 : px - 8, hi = dir > 0 ? px + 8 : px + 2;
+  const c = list.filter(x => x.strike >= lo && x.strike <= hi).sort((a, b) => Math.abs(a.strike - px) - Math.abs(b.strike - px)).slice(0, 20);
+  if (!c.length) return { why: 'no strikes near the price' };
+  const qd = await rh('get_option_quotes', { instrument_ids: c.map(x => x.id) }), byId = {};
+  (qd.results || []).forEach(r => { if (r.quote) byId[r.quote.instrument_id] = r.quote; });
+  let cheapest = null, stale = false;
+  for (const k of c) {
+    const q = byId[k.id]; if (!q) continue;
+    if (q.updated_at && Date.now() - Date.parse(q.updated_at) > 120000) { stale = true; continue; }
+    const ask = +q.ask_price, bid = +q.bid_price; if (!(ask > 0 && bid > 0)) continue;
+    if (cheapest === null || ask < cheapest) cheapest = ask;
+    if (ask * 100 > CFG.maxPrem) continue;
+    if ((ask - bid) / ask > CFG.maxSpread) continue;
+    return { inst: k.id, strike: k.strike, exp, type, ask, bid, iv: +q.implied_volatility || null, delta: +q.delta || null };
+  }
+  return { why: cheapest === null ? (stale ? 'option quotes are stale' : 'no live quotes') : 'nothing near the money under $' + CFG.maxPrem + ' with a tight spread (cheapest ask $' + (cheapest * 100).toFixed(0) + ')' };
+}
+
+function newRec(day) { return { day, trades: [], signals: [], pnl: 0, losers: 0, shut: '', pos: null, blockUntil: 0, sh: { open: [], trades: [], pnl: 0 } }; }
+async function loadDay(day) { P.rec = (await kget('rec:' + day)) || newRec(day); P.rec.sh = P.rec.sh || { open: [], trades: [], pnl: 0 }; }
+let saveQ = Promise.resolve();
+function saveRec() {
+  if (!P.rec) return saveQ; const rec = JSON.parse(JSON.stringify(P.rec)); rec.updated = iso(Date.now());
+  saveQ = saveQ.then(() => kset('rec:' + rec.day, rec)).then(() => { P.saveErr = ''; }).catch(e => { P.saveErr = 'journal not saving: ' + String(e.message || e).slice(0, 120); });
+  return saveQ;
+}
+function logSignal(sym, sig, px, action, why) {
+  P.rec.signals.push({ t: iso(Date.now()), sym, dir: sig.dir, trig: sig.trig, px, action, why: why || '' });
+  if (P.rec.signals.length > 80) P.rec.signals.shift();
+}
+function shutCheck() {
+  const r = P.rec;
+  if (r.pnl >= CFG.target) r.shut = 'target'; else if (r.pnl <= -CFG.loss) r.shut = 'loss';
+  else if (r.losers >= CFG.maxLosers) r.shut = 'losers'; else if (r.trades.length >= CFG.maxTrades) r.shut = 'trades';
+}
+function closePaper(reason, bid, info) {
+  const p = P.rec.pos, pnl = (bid - p.entryAsk) * 100;
+  P.rec.trades.push({ sym: p.sym, type: p.type, strike: p.strike, exp: p.exp, inst: p.inst, entryT: iso(p.t0), entryAsk: p.entryAsk, entryBid: p.entryBid, entryU: p.entryU, exitT: iso(Date.now()), exitBid: bid, exitU: info && info.bar ? info.bar.c : null, pnl: Math.round(pnl * 100) / 100, peakBid: p.peak, reason, trig: p.trig, iv: p.iv, delta: p.delta });
+  P.rec.pnl = Math.round((P.rec.pnl + pnl) * 100) / 100; if (pnl < 0) P.rec.losers++;
+  if (reason === 'stop' || reason === 'level' || reason === 'premium stop') P.rec.blockUntil = Date.now() + CFG.cooldownMs;
+  P.rec.pos = null; shutCheck(); saveRec();
+}
+function exitReason(p, prof, bid, info, bars) {
+  const m = nowET().min, dir = p.dir; let reason = '';
+  if (m >= p.flatMin) reason = 'eod';
+  if (!reason && bars) {
+    let adv = null;
+    for (let i = bars.length - 1; i >= 0 && bars[i].t > p.sigT; i--) { const x = dir > 0 ? bars[i].l : bars[i].h; adv = adv === null ? x : (dir > 0 ? Math.min(adv, x) : Math.max(adv, x)); }
+    if (adv !== null && dir * (adv - p.stopU) <= 0) reason = 'stop';
+    const last = info && info.bar;
+    if (!reason && last && last.t > p.sigT) { const lvl = p.trig === 'vwap' ? last.vwap : p.trig === 'ema' ? last.e50 : (dir > 0 ? info.orH : info.orL); if (dir * (last.c - lvl) < 0) reason = 'level'; }
+  }
+  if (!reason && bid <= p.entryAsk * (1 - prof.premStop)) reason = 'premium stop';
+  if (!reason && bid >= p.entryAsk * (1 + prof.tpUp)) reason = 'target';
+  if (!reason && p.peak >= p.entryAsk * (1 + prof.trailArm) && bid <= p.peak * (1 - prof.trailGap)) reason = 'trail';
+  if (!reason && Date.now() - p.t0 >= prof.timeBars * 60000 && bid < p.entryAsk * 1.05) reason = 'time';
+  return reason;
+}
+async function managePos() {
+  const p = P.rec.pos, info = P.info[p.sym], bars = P.bars[p.sym];
+  const qd = await rh('get_option_quotes', { instrument_ids: [p.inst] }), q = ((qd.results || [])[0] || {}).quote; if (!q) return;
+  const bid = +q.bid_price; if (!(bid >= 0)) return;
+  if (q.updated_at && Date.now() - Date.parse(q.updated_at) > 180000) return;
+  p.live = { bid, ask: +q.ask_price, t: Date.now() }; p.peak = Math.max(p.peak || 0, bid);
+  const reason = exitReason(p, CFG, bid, info, bars); if (reason) closePaper(reason, bid, info);
+}
+function openShadow(p) { P.rec.sh.open.push({ sym: p.sym, dir: p.dir, type: p.type, strike: p.strike, exp: p.exp, inst: p.inst, t0: p.t0, sigT: p.sigT, entryAsk: p.entryAsk, entryBid: p.entryBid, entryU: p.entryU, stopU: p.stopU, trig: p.trig, peak: p.entryBid, flatMin: p.flatMin }); }
+async function manageShadows() {
+  const sh = P.rec.sh; if (!sh.open.length) return;
+  try {
+    const qd = await rh('get_option_quotes', { instrument_ids: sh.open.map(x => x.inst) }), by = {};
+    (qd.results || []).forEach(z => { if (z.quote) by[z.quote.instrument_id] = z.quote; });
+    for (const s of sh.open.slice()) {
+      const q = by[s.inst]; if (!q) continue; const bid = +q.bid_price; if (!(bid >= 0)) continue;
+      if (q.updated_at && Date.now() - Date.parse(q.updated_at) > 180000) continue;
+      s.peak = Math.max(s.peak || 0, bid);
+      const reason = exitReason(s, PROFB, bid, P.info[s.sym], P.bars[s.sym]);
+      if (reason) {
+        const pnl = Math.round((bid - s.entryAsk) * 10000) / 100;
+        sh.trades.push({ sym: s.sym, type: s.type, strike: s.strike, exp: s.exp, entryT: iso(s.t0), entryAsk: s.entryAsk, exitT: iso(Date.now()), exitBid: bid, pnl, peakBid: s.peak, reason, trig: s.trig, prof: 'B' });
+        sh.pnl = Math.round((sh.pnl + pnl) * 100) / 100; sh.open = sh.open.filter(x => x !== s);
+      }
+    }
+    saveRec();
+  } catch (e) { /* never disturb the main paper trade */ }
+}
+async function lookForEntry() {
+  const r = P.rec, fresh = [];
+  CFG.syms.forEach(s => {
+    const inf = P.info[s]; if (!inf || !inf.signal) return;
+    if (P.seenSig[s] === inf.bar.t) return; P.seenSig[s] = inf.bar.t;
+    if (Date.now() - (inf.bar.t + 60000) > 150000) { logSignal(s, inf.signal, inf.bar.c, 'skipped', 'signal was more than 2 minutes old when seen'); return; }
+    fresh.push(s);
+  });
+  for (let i = 0; i < fresh.length; i++) {
+    const s = fresh[i], inf = P.info[s], sig = inf.signal;
+    if (r.pos || i > 0) { logSignal(s, sig, inf.bar.c, 'skipped', r.pos ? 'a position is already open' : 'another symbol signaled first'); continue; }
+    if (Date.now() < r.blockUntil) { logSignal(s, sig, inf.bar.c, 'skipped', 'cooling down after a stop'); continue; }
+    let pk; try { pk = await pickContract(s, sig.dir, inf.bar.c); } catch (e) { pk = { why: 'could not load option data (' + ((e && e.code) || 'error') + ')' }; }
+    if (pk.why) { logSignal(s, sig, inf.bar.c, 'skipped', pk.why); continue; }
+    r.pos = { sym: s, dir: sig.dir, type: pk.type, strike: pk.strike, exp: pk.exp, inst: pk.inst, t0: Date.now(), sigT: inf.bar.t, entryAsk: pk.ask, entryBid: pk.bid, entryU: inf.bar.c,
+      stopU: inf.bar.c - sig.dir * Math.max(sig.atr, 0.05), trig: sig.trig, peak: pk.bid, iv: pk.iv, delta: pk.delta, flatMin: CFG.dte === 0 ? 935 : 950 };
+    openShadow(r.pos);
+    logSignal(s, sig, inf.bar.c, 'entered', pk.type + ' ' + pk.strike + ' exp ' + pk.exp + ' @ ask $' + pk.ask.toFixed(2));
+  }
+  saveRec();
+}
+async function tick() {
+  if (P.busy) return; P.busy = true;
+  try {
+    P.lastTick = Date.now();
+    const day = nowET().day;
+    if (!P.rec || P.rec.day !== day) {
+      if (P.rec && P.rec.pos) { P.rec.trades.push({ sym: P.rec.pos.sym, type: P.rec.pos.type, strike: P.rec.pos.strike, exp: P.rec.pos.exp, entryT: iso(P.rec.pos.t0), entryAsk: P.rec.pos.entryAsk, exitBid: null, pnl: 0, reason: 'unmanaged: left open overnight (paper)', unmanaged: true }); P.rec.pos = null; await saveRec(); }
+      P.seenSig = {}; await loadDay(day);
+    }
+    if (!P.ctl.running) { P.msg = 'Stopped. Press START on the dashboard to begin.'; return; }
+    if (!S.connected) { P.msg = S.needsLogin ? 'Waiting for Robinhood login.' : 'Reconnecting to Robinhood…'; if (!S.connecting && !S.needsLogin) await connect(); return; }
+    if (!marketOpen(Date.now())) { P.msg = 'Market closed. Running and waiting for the open.'; return; }
+    for (const s of CFG.syms) { const bars = await pBars(s); if (bars.length >= 60) { P.bars[s] = bars; P.info[s] = Engine.latest(bars, {}); } }
+    if (P.rec.pos) await managePos();
+    await manageShadows();
+    if (!P.rec.pos && !P.rec.shut) await lookForEntry();
+    P.msg = P.rec.shut ? 'Done for the day (' + P.rec.shut + ').' : 'Running. Last check ' + new Date().toISOString().slice(11, 19) + ' UTC.';
+    P.tickErr = '';
+  } catch (e) {
+    P.tickErr = String((e && (e.code || e.message)) || e).slice(0, 160);
+    P.msg = 'Could not check the market this round (' + P.tickErr + '). Retrying.';
+  } finally { P.busy = false; }
+}
+async function manualClose() {
+  const p = P.rec && P.rec.pos; if (!p) return { ok: false, error: 'no open position' };
+  if (P.busy) await new Promise(r => setTimeout(r, 1500));
+  const qd = await rh('get_option_quotes', { instrument_ids: [p.inst] }), q = ((qd.results || [])[0] || {}).quote;
+  const bid = q ? +q.bid_price : (p.live && p.live.bid); if (!(bid >= 0)) return { ok: false, error: 'no price' };
+  closePaper('manual', bid, P.info[p.sym] || null); return { ok: true, bid };
+}
+
+/* ---------- web: dashboard + API ---------- */
+function status() {
+  const r = P.rec, p = r && r.pos;
+  return { now: Date.now(), running: !!P.ctl.running, mode: 'PAPER', msg: P.msg, tickErr: P.tickErr, saveErr: P.saveErr, lastTick: P.lastTick, market: marketOpen(Date.now()),
+    robinhood: { connected: S.connected, needsLogin: S.needsLogin, err: S.err, lastOk: S.lastOk }, store: pool ? 'database' : 'MEMORY ONLY',
+    day: r && r.day, pnl: r && r.pnl, shut: r && r.shut, trades: (r && r.trades || []).slice(-20), signals: (r && r.signals || []).slice(-12),
+    shadow: r && r.sh ? { pnl: r.sh.pnl, closed: r.sh.trades.length, open: r.sh.open.length } : null,
+    pos: p ? { sym: p.sym, type: p.type, strike: p.strike, exp: p.exp, entryAsk: p.entryAsk, t0: p.t0, bid: p.live && p.live.bid, peak: p.peak, asOf: p.live && p.live.t, stopPx: p.entryAsk * (1 - CFG.premStop), targetPx: p.entryAsk * (1 + CFG.tpUp) } : null,
+    limits: { target: CFG.target, loss: CFG.loss, syms: CFG.syms } };
+}
+const authed = (u, req) => ADMIN_KEY && (u.searchParams.get('key') === ADMIN_KEY || req.headers['x-key'] === ADMIN_KEY);
+function send(res, code, body, type) { res.writeHead(code, { 'content-type': type || 'application/json', 'cache-control': 'no-store', 'access-control-allow-origin': '*', 'access-control-allow-headers': 'x-key,content-type' }); res.end(typeof body === 'string' ? body : JSON.stringify(body)); }
+const server = http.createServer(async (req, res) => {
+  const u = new URL(req.url, 'http://x');
+  try {
+    if (req.method === 'OPTIONS') return send(res, 204, '');
+    if (u.pathname === '/health') return send(res, 200, { ok: true });
+    if (u.pathname === '/oauth/callback') {
+      const code = u.searchParams.get('code');
+      if (!code) return send(res, 400, 'Missing code', 'text/plain');
+      await S.transport.finishAuth(code); await connect();
+      return send(res, 200, '<meta name=viewport content="width=device-width"><body style="font:18px system-ui;padding:24px;background:#080626;color:#fff">Robinhood is connected. You can close this tab and open your dashboard.</body>', 'text/html');
+    }
+    if (!authed(u, req)) return send(res, 401, 'Add ?key=YOUR_KEY to the address.', 'text/plain');
+    if (u.pathname === '/') return send(res, 200, DASH, 'text/html');
+    if (u.pathname === '/auth') { if (!S.authUrl) await connect(); if (S.authUrl) { res.writeHead(302, { location: S.authUrl }); return res.end(); } return send(res, 200, { connected: S.connected, err: S.err }); }
+    if (u.pathname === '/api/status') return send(res, 200, status());
+    if (req.method === 'POST' && u.pathname === '/api/control') { P.ctl.running = u.searchParams.get('run') === '1'; await kset('control', P.ctl); setImmediate(tick); return send(res, 200, status()); }
+    if (req.method === 'POST' && u.pathname === '/api/close') return send(res, 200, await manualClose());
+    return send(res, 404, 'Not found', 'text/plain');
+  } catch (e) { return send(res, 500, { error: String(e && e.message || e) }); }
+});
+
+const DASH = `<!doctype html><html><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Scalp City Server</title>
+<style>:root{--bg:#080626;--ink:#e9e9ff;--dim:#8a90d0;--g:#34ff9a;--r:#ff3d6e;--c:#38f4d8}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.4 ui-monospace,Menlo,monospace;padding:16px}
+h1{font-size:18px;letter-spacing:.1em;color:var(--c);margin:0 0 4px}.bar{padding:8px 10px;border:1px dashed var(--c);color:var(--c);font-weight:700;letter-spacing:.06em;margin:8px 0}.bar.off{border-color:var(--dim);color:var(--dim)}.bar.warn{border-color:#ffb000;color:#ffb000}
+.card{border:1px solid #3a3f88;padding:10px;margin:10px 0;background:rgba(10,8,52,.8)}.big{font-size:28px;font-weight:700;margin:4px 0}.up{color:var(--g)}.dn{color:var(--r)}.dim{color:var(--dim);font-size:12px}
+button{font:700 14px ui-monospace,monospace;padding:12px;border:1px solid var(--c);background:transparent;color:var(--c);width:100%;margin:6px 0}button.stop{border-color:var(--r);color:var(--r)}table{width:100%;border-collapse:collapse;font-size:12px}td,th{text-align:left;padding:3px 4px;border-bottom:1px solid #22265f}</style></head><body>
+<h1>SCALP CITY SERVER</h1><div id=bar class="bar off">LOADING</div><div id=msg class=dim></div>
+<div id=pos></div><div class=card><div class=dim>TODAY (PAPER)</div><div id=pnl class=big>--</div><div id=shadow class=dim></div></div>
+<button id=ctl></button><div id=login></div>
+<div class=card><div class=dim>TRADES TODAY</div><table id=tr></table></div><div class=card><div class=dim>RECENT SIGNALS</div><div id=sg class=dim></div></div>
+<script>
+var KEY=new URLSearchParams(location.search).get('key')||'';function api(p,m){return fetch(p+(p.indexOf('?')<0?'?':'&')+'key='+encodeURIComponent(KEY),{method:m||'GET'}).then(function(r){return r.json()})}
+var armed=0,s=null;function $(i){return document.getElementById(i)}function money(n){return(n<0?'-':'+')+'$'+Math.abs(n).toFixed(2)}
+function t(ms){return new Date(ms).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',timeZone:'America/New_York'})}
+function draw(){if(!s)return;var b=$('bar');b.textContent=s.running?'PAPER · PRETEND MONEY · RUNNING ON SERVER':'PAPER · STOPPED';b.className='bar'+(s.running?'':' off');
+if(!s.robinhood.connected){b.className='bar warn';b.textContent=s.robinhood.needsLogin?'ROBINHOOD LOGIN NEEDED':'ROBINHOOD NOT CONNECTED'}
+if(s.store!=='database'){b.className='bar warn';b.textContent='WARNING: NO DATABASE. LOGIN/JOURNAL LOST ON RESTART'}
+$('msg').textContent=s.msg+(s.saveErr?' · '+s.saveErr:'');
+var lg=$('login');lg.innerHTML='';if(!s.robinhood.connected){var a=document.createElement('button');a.textContent='CONNECT ROBINHOOD (one-time login)';a.onclick=function(){location.href='/auth?key='+encodeURIComponent(KEY)};lg.appendChild(a)}
+$('pnl').textContent=s.pnl==null?'--':money(s.pnl);$('pnl').className='big '+(s.pnl>0?'up':s.pnl<0?'dn':'');
+$('shadow').textContent=s.shadow?('tight-exit test (B): '+money(s.shadow.pnl)+' on '+s.shadow.closed+' closed'+(s.shadow.open?', '+s.shadow.open+' open':'')):'';
+var p=s.pos,ph=$('pos');ph.innerHTML='';if(p){var has=p.bid!=null,pn=has?(p.bid-p.entryAsk)*100:0,pc=has?(p.bid/p.entryAsk-1)*100:0,d=document.createElement('div');d.className='card';
+d.innerHTML='<div class=dim>OPEN PAPER POSITION · 1 contract</div><div><b>'+p.sym+' '+p.strike+(p.type==='call'?' CALL':' PUT')+'</b> exp '+p.exp+'</div><div class="big '+(pn>=0?'up':'dn')+'">'+(has?money(pn)+' ('+(pc>=0?'+':'')+pc.toFixed(1)+'%)':'waiting for price…')+'</div><div class=dim>bought $'+p.entryAsk.toFixed(2)+' at '+t(p.t0)+' ET'+(has?' · sell price $'+p.bid.toFixed(2)+' · best $'+p.peak.toFixed(2):'')+' · auto-exits: stop $'+p.stopPx.toFixed(2)+' / target $'+p.targetPx.toFixed(2)+'</div>';
+var c=document.createElement('button');c.textContent=Date.now()-armed<5000?'TAP AGAIN TO CLOSE (PAPER)':'CLOSE THIS TRADE NOW';c.onclick=function(){if(Date.now()-armed<5000){armed=0;api('/api/close','POST').then(load)}else{armed=Date.now();draw();setTimeout(draw,5200)}};d.appendChild(c);ph.appendChild(d)}
+var c=$('ctl');c.textContent=s.running?'STOP':'START PAPER TRADING';c.className=s.running?'stop':'';c.onclick=function(){api('/api/control?run='+(s.running?0:1),'POST').then(function(x){s=x;draw()})};
+var tb=$('tr');tb.innerHTML='<tr><th>Time</th><th>Contract</th><th>Paid</th><th>Sold</th><th>P&L</th><th>Why</th></tr>';s.trades.slice().reverse().forEach(function(x){var r=tb.insertRow();[t(Date.parse(x.entryT))+'-'+t(Date.parse(x.exitT)),x.sym+' '+x.strike+(x.type==='call'?'C':'P'),'$'+(+x.entryAsk).toFixed(2),x.exitBid==null?'--':'$'+(+x.exitBid).toFixed(2),money(x.pnl),x.reason].forEach(function(v,i){var td=r.insertCell();td.textContent=v;if(i===4)td.className=x.pnl>0?'up':x.pnl<0?'dn':''})});
+$('sg').textContent='';s.signals.slice().reverse().forEach(function(x){var l=document.createElement('div');l.textContent=t(Date.parse(x.t))+' '+x.sym+' '+(x.dir>0?'▲':'▼')+' '+x.trig+' → '+x.action+(x.why?' ('+x.why+')':'');$('sg').appendChild(l)})}
+function load(){api('/api/status').then(function(x){s=x;draw()}).catch(function(){$('msg').textContent='Cannot reach the server.'})}load();setInterval(load,10000);
+</script></body></html>`;
+
+(async () => {
+  await initStore();
+  P.ctl = (await kget('control')) || { running: false };
+  await connect();
+  setInterval(() => { tick(); }, TICK_MS);
+  setInterval(() => { if (!S.connected && !S.connecting && !S.needsLogin) connect(); }, 60000);
+  server.listen(PORT, () => console.log('listening on ' + PORT + ' paper mode, running=' + P.ctl.running));
+})();
