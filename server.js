@@ -22,17 +22,18 @@ async function initStore() {
   if (!process.env.DATABASE_URL) { console.log('No DATABASE_URL: using memory only (login and journal are lost on restart)'); return; }
   const { Pool } = require('pg');
   pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.PGSSL === 'off' ? false : { rejectUnauthorized: false }, max: 3 });
-  await pool.query('create table if not exists kv (key text primary key, value jsonb not null, updated timestamptz not null default now())');
+  try { await pool.query('create table if not exists scalp.kv (key text primary key, value jsonb not null, updated timestamptz not null default now())'); } catch (e) { /* table is created ahead of time by the owner */ }
+  await pool.query('select 1 from scalp.kv limit 1');
 }
 async function kget(k) {
   if (!pool) return mem.has(k) ? JSON.parse(mem.get(k)) : null;
-  const r = await pool.query('select value from kv where key=$1', [k]); return r.rows.length ? r.rows[0].value : null;
+  const r = await pool.query('select value from scalp.kv where key=$1', [k]); return r.rows.length ? r.rows[0].value : null;
 }
 async function kset(k, v) {
   if (!pool) { mem.set(k, JSON.stringify(v)); return; }
-  await pool.query('insert into kv(key,value,updated) values($1,$2,now()) on conflict(key) do update set value=excluded.value, updated=now()', [k, JSON.stringify(v)]);
+  await pool.query('insert into scalp.kv(key,value,updated) values($1,$2,now()) on conflict(key) do update set value=excluded.value, updated=now()', [k, JSON.stringify(v)]);
 }
-async function kdel(k) { if (!pool) mem.delete(k); else await pool.query('delete from kv where key=$1', [k]); }
+async function kdel(k) { if (!pool) mem.delete(k); else await pool.query('delete from scalp.kv where key=$1', [k]); }
 
 /* ---------- Robinhood MCP connection with OAuth (one-time login, then refresh tokens) ---------- */
 const S = { client: null, transport: null, connected: false, needsLogin: false, authUrl: '', err: '', lastOk: 0, connecting: false };
