@@ -376,11 +376,26 @@ function recOut() {
   return r ? { shut: r.shut || '', day: r.day, pnl: r.pnl, ntr: r.trades.length, tr: r.trades.slice(-30).map(t => ({ sym: t.sym, k: t.strike, ty: t.type, in: t.entryT, pnl: t.pnl, why: t.reason })), sh: r.sh ? r.sh.pnl : null, upd: new Date(P.lastTick || Date.now()).toISOString(), run: { running: !!P.ctl.running }, pos: r.pos ? { sym: r.pos.sym, strike: r.pos.strike, type: r.pos.type, exp: r.pos.exp, entryAsk: r.pos.entryAsk, entryBid: r.pos.entryBid, peak: r.pos.peak, t0: r.pos.t0, trig: r.pos.trig, live: r.pos.live } : null } : null;
 }
 function liveData() { return { now: Date.now(), run: !!P.ctl.running, market: marketOpen(Date.now()), msg: P.msg, rec: recOut() }; }
+/* scorecard: every closed paper trade, grouped by ticker x strategy (entry trigger: vwap / ema / orb / sweep) */
+function scoreOf(scan) {
+  const cells = {}, add = (k, pnl, day) => { const c = cells[k] = cells[k] || { n: 0, w: 0, pnl: 0, gw: 0, gl: 0, since: day }; c.n++; if (pnl > 0) { c.w++; c.gw += pnl; } else if (pnl < 0) c.gl -= pnl; c.pnl += pnl; if (day < c.since) c.since = day; };
+  (scan || []).forEach(x => {
+    const day = (x.value && x.value.day) || String(x.key).slice(4);
+    ((x.value && x.value.trades) || []).forEach(t => {
+      if (!(t.exitT || t.exitBid != null) || t.unmanaged) return;
+      const trig = t.trig || 'ema', pnl = +t.pnl || 0, sym = t.sym || '?';
+      add(sym + '|' + trig, pnl, day); add(sym + '|*', pnl, day); add('*|' + trig, pnl, day); add('*|*', pnl, day);
+    });
+  });
+  const out = {}; Object.keys(cells).forEach(k => { const c = cells[k]; out[k] = { n: c.n, w: c.w, pnl: Math.round(c.pnl * 100) / 100, pf: c.gl ? Math.round(c.gw / c.gl * 100) / 100 : null, since: c.since }; });
+  return out;
+}
 async function cityData(want) {
   const bars = {}; CFG.syms.forEach(s => { bars[s] = bars5(s); });
   (await extraBars(WATCH || want || [])).forEach(s => { bars[s] = bars5(s); });
-  const days = (await kscan('rec:', 60)).map(x => ({ day: x.value.day || x.key.slice(4), trades: (x.value.trades || []).filter(t => t.exitT || t.exitBid != null).map(t => ({ t: Date.parse(t.exitT || t.entryT), sym: t.sym, pnl: +t.pnl || 0 })) }));
-  return Object.assign(liveData(), { bars, days, watch: WATCH });
+  const scan = await kscan('rec:', 200), score = scoreOf(scan);
+  const days = scan.slice(0, 60).map(x => ({ day: x.value.day || x.key.slice(4), trades: (x.value.trades || []).filter(t => t.exitT || t.exitBid != null).map(t => ({ t: Date.parse(t.exitT || t.entryT), sym: t.sym, pnl: +t.pnl || 0 })) }));
+  return Object.assign(liveData(), { bars, days, watch: WATCH, score });
 }
 
 /* ---------- web: dashboard + API ---------- */

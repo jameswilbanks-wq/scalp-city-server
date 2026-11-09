@@ -58,6 +58,14 @@ select:focus-visible,input:focus-visible,button:focus-visible{outline:2px solid 
 .tile.z{opacity:.55}
 
 .board{position:absolute;left:12px;right:12px;bottom:128px;max-height:calc(100% - 230px);overflow:auto;background:var(--panel);border:1px solid var(--edge);padding:12px 14px;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+.sc{width:100%;border-collapse:collapse;margin:0 0 4px;font-variant-numeric:tabular-nums}
+.sc th{font:600 9px var(--f-mono);letter-spacing:.1em;color:var(--dim);text-transform:uppercase;padding:3px 4px;text-align:center}
+.sc td{padding:4px;text-align:center;border:1px solid rgba(138,144,208,.22);font:600 12px var(--f-disp)}
+.sc td small{display:block;font:500 9px var(--f-mono);color:var(--dim);letter-spacing:.03em}
+.sc td.rl{text-align:left;color:var(--cyan);letter-spacing:.1em;border:none;font-size:11px}
+.sc td.g{color:var(--green);background:rgba(52,255,154,.08)}.sc td.r{color:#ff5d7a;background:rgba(255,93,122,.08)}.sc td.z{color:var(--dim)}
+.sc td.best{box-shadow:inset 0 0 0 1px var(--green)}
+#score{margin:10px 0 2px}#score p{margin:3px 0;font-size:10px;color:var(--dim);line-height:1.5}
 .board h3{margin:0 0 8px;font:700 11px var(--f-disp);letter-spacing:.18em;color:var(--cyan)}
 .bgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}
 .hexes{display:flex;flex-wrap:wrap;gap:4px}
@@ -194,6 +202,7 @@ select:focus-visible,input:focus-visible,button:focus-visible{outline:2px solid 
       <div><h3>WORKER HEATMAP</h3><p class="mode" id="modeA"></p><div class="hexes" id="hexes"></div></div>
       <div><h3>LEADERBOARD</h3><p class="mode" id="modeB"></p><ol class="rank" id="rank"></ol></div>
     </div>
+    <div id="score" hidden></div>
     <div class="add">
       <input id="addSym" maxlength="6" placeholder="ADD TOWER" aria-label="Add a symbol">
       <button class="btn" id="addBtn" type="button">ADD</button>
@@ -985,7 +994,32 @@ function renderBoard(){
   var ch=$('chips');ch.textContent='';
   S.watch.forEach(function(s){var c=document.createElement('button');c.type='button';c.className='chip';c.textContent=s+' ✕';c.setAttribute('aria-label','Remove '+s);c.addEventListener('click',function(){if(S.watch.length>1)setWatch(S.watch.filter(function(x){return x!==s}))});ch.appendChild(c)});
 }
-function toggleBoard(on){S.board=on;$('board').hidden=!on;if(on){renderBoard();var l=$('lab');if(l)l.hidden=true;var pp=$('paper');if(pp)pp.hidden=true;var lv=$('live');if(lv)lv.hidden=true}}
+var SCORE=null;
+function renderScore(){
+  var el=$('score');if(!el)return;
+  if(!window.__WEB__||!SCORE){el.hidden=true;return}
+  el.hidden=false;
+  var ST=['vwap','ema','orb','sweep'],SN={vwap:'VWAP',ema:'EMA 50',orb:'15-MIN BREAK',sweep:'SWEEP'},syms={};
+  Object.keys(SCORE).forEach(function(k){var a=k.split('|');if(a[0]!=='*')syms[a[0]]=1});
+  var rows=Object.keys(syms).sort();
+  var h='<h3>SCORECARD · TICKER × STRATEGY</h3><table class="sc"><tr><th></th>';
+  ST.forEach(function(t){h+='<th>'+SN[t]+'</th>'});h+='<th>ALL</th></tr>';
+  function cell(c,best){
+    if(!c)return '<td class="z">&ndash;</td>';
+    var cls=c.pnl>0?'g':c.pnl<0?'r':'z';
+    return '<td class="'+cls+(best?' best':'')+'">'+(c.pnl<0?'-':'')+'$'+Math.abs(c.pnl).toFixed(0)+'<small>'+c.n+' tr · '+Math.round(c.w/c.n*100)+'%'+(c.n<5?' · few':'')+'</small></td>';
+  }
+  var notes=[];
+  rows.forEach(function(sym){
+    var bk=null,bv=-1e9;ST.forEach(function(t){var c=SCORE[sym+'|'+t];if(c&&c.n>=5&&c.pnl>bv){bv=c.pnl;bk=t}});
+    h+='<tr><td class="rl">'+sym+'</td>';ST.forEach(function(t){h+=cell(SCORE[sym+'|'+t],t===bk&&bv>0)});h+=cell(SCORE[sym+'|*'])+'</tr>';
+    if(bk&&bv>0)notes.push(sym+' &rarr; '+SN[bk]);
+  });
+  h+='<tr><td class="rl">ALL</td>';ST.forEach(function(t){h+=cell(SCORE['*|'+t])});h+=cell(SCORE['*|*'])+'</tr></table>';
+  h+='<p>Paper trades only, since the journal started. Green box = best strategy for that ticker (needs 5+ trades). &ldquo;few&rdquo; = too few trades to trust yet.'+(notes.length?'<br>Best so far: '+notes.join(' · '):'')+'</p>';
+  el.innerHTML=h;
+}
+function toggleBoard(on){S.board=on;$('board').hidden=!on;if(on){renderBoard();renderScore();var l=$('lab');if(l)l.hidden=true;var pp=$('paper');if(pp)pp.hidden=true;var lv=$('live');if(lv)lv.hidden=true}}
 $('boardBtn').addEventListener('click',function(){toggleBoard(!S.board)});
 function setWatch(list){
   S.watch=list;try{localStorage.setItem('scalp.watch',JSON.stringify(list))}catch(e){}
@@ -2132,7 +2166,7 @@ var Web={dayArm:0,timer:null,key:'',trades:[],armed:0,last:null,
   },
   apply:function(d){
     Web.syncWatch(d);
-    Web.last=d;
+    Web.last=d;SCORE=d.score||SCORE;if(S.board)renderScore();
     setStatus('live',d.run?'SERVER · PAPER RUNNING':'SERVER · PAPER STOPPED');
     Object.keys(d.bars||{}).forEach(function(sym){
       var b=d.bars[sym];if(!b||!b.length)return;
