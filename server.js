@@ -50,7 +50,7 @@ const provider = {
     const old = (await kget('oauth_tokens')) || {};
     await kset('oauth_tokens', Object.assign({}, old, t, { saved_at: Date.now() }));
   },
-  async redirectToAuthorization(url) { S.authUrl = url.toString(); S.needsLogin = true; },
+  async redirectToAuthorization(url) { S.authUrl = url.toString(); S.needsLogin = true; console.log('AUTHURL', S.authUrl); },
   async saveCodeVerifier(v) { await kset('oauth_verifier', { v }); },
   async codeVerifier() { const r = await kget('oauth_verifier'); if (!r) throw new Error('no code verifier'); return r.v; },
   async invalidateCredentials(scope) {
