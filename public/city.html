@@ -123,6 +123,7 @@ select:focus-visible,input:focus-visible,button:focus-visible{outline:2px solid 
 .backcity{position:static!important;margin:0 0 8px;width:100%}
 #posRow{pointer-events:auto}#posPill{font-size:11px;padding:6px 11px}#posPill.up{border-color:var(--green)}#posPill.dn{border-color:var(--red)}
 #tradeCard{pointer-events:auto;align-self:flex-start;max-width:min(92vw,360px);padding:9px 12px;border:1px solid var(--edge);background:var(--panel);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);border-radius:6px;font-size:11px;line-height:1.5}
+#tradeExit{pointer-events:auto;align-self:flex-start;font:700 13px var(--f-disp);letter-spacing:.1em;padding:12px 18px;min-height:44px;border:1px solid var(--red);background:rgba(40,6,24,.85);color:var(--red);border-radius:8px;box-shadow:0 0 14px rgba(255,61,110,.3)}#tradeExit.arm{background:var(--red);color:#fff}
 #tradeCard.up{border-color:var(--green);box-shadow:0 0 18px rgba(52,255,154,.28)}#tradeCard.dn{border-color:var(--red);box-shadow:0 0 18px rgba(255,61,110,.28)}#tradeCard.stale{border-color:var(--amber);box-shadow:0 0 18px rgba(255,210,63,.25)}
 #tradeCard .tcs{font-size:9px;letter-spacing:.12em;color:var(--dim)}#tradeCard .tcc{font-family:var(--f-disp);font-weight:700;font-size:15px;letter-spacing:.04em}
 #tradeCard .tcp{font-family:var(--f-disp);font-weight:700;font-size:26px;line-height:1.15;font-variant-numeric:tabular-nums}#tradeCard .tcl{color:var(--dim)}#tradeCard .tcl b{color:var(--ink);font-weight:600}
@@ -156,6 +157,7 @@ select:focus-visible,input:focus-visible,button:focus-visible{outline:2px solid 
     </div>
     <div class="row" id="posRow"><button class="pill" id="posPill" type="button" hidden></button></div>
     <div id="tradeCard" hidden role="status" aria-live="off"></div>
+    <button id="tradeExit" type="button" hidden></button>
     <button class="pill" id="srvFeed" type="button" hidden></button>
   </header>
 
@@ -1902,6 +1904,7 @@ function renderAct(){
   else fb.hidden=true;
   var pp=$('posPill');if(ACT&&(pp.hidden||pp.dataset.srv)&&ACT.src==='SERVER PAPER'){var q=ACT.pos,l=q.live;pp.hidden=false;if(l&&l.bid!=null){var pn2=(l.bid-q.entryAsk)*100;pp.className='pill '+(pn2>=0?'up':'dn');pp.textContent='SERVER '+q.sym+' '+q.strike+(q.type==='call'?'C':'P')+'  '+money(pn2,true)}else{pp.className='pill';pp.textContent='SERVER '+q.sym+' '+q.strike+(q.type==='call'?'C':'P')+' open'}pp.dataset.srv='1'}
   else if(pp.dataset.srv&&!(ACT&&ACT.src==='SERVER PAPER')){pp.dataset.srv='';if(!(P.rec&&P.rec.pos))pp.hidden=true}
+  var ex=$('tradeExit');ex.hidden=!(WEB&&ACT&&ACT.src==='SERVER PAPER'&&!S.room);if(!ex.hidden){var ar=Date.now()-Web.armed<5000;ex.className=ar?'arm':'';ex.textContent=ar?'TAP AGAIN TO EXIT (PAPER)':'EXIT TRADE NOW'}
   if(ACT)flAttach(ACT.pos.sym);else FL.g.visible=false;
   if(typeof srvPanelRender==='function')srvPanelRender();
 }
@@ -2009,6 +2012,7 @@ var Web={timer:null,key:'',trades:[],armed:0,last:null,
 };
 $('srvRun').addEventListener('click',function(){Web.run()});
 $('srvClose').addEventListener('click',function(){Web.close()});
+$('tradeExit').addEventListener('click',function(){Web.close();renderAct()});
 
 /* ---------- boot ---------- */
 resize();applyCam();
