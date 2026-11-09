@@ -60,6 +60,7 @@ const provider = {
   },
 };
 async function connect() {
+  if (USE_ALPACA) { S.connected = true; S.needsLogin = false; S.err = ''; S.lastOk = Date.now(); return; }
   if (S.connecting) return; S.connecting = true;
   try {
     try { if (S.client) await S.client.close(); } catch (e) { }
@@ -74,8 +75,51 @@ async function connect() {
     else { S.err = 'connect: ' + String(e && e.message || e).slice(0, 200); console.log(S.err); }
   } finally { S.connecting = false; }
 }
+
+/* ---------- market-data feed: Alpaca (free keys) in place of the Robinhood read tools ---------- */
+const AK = process.env.ALPACA_KEY_ID, AS = process.env.ALPACA_SECRET, USE_ALPACA = !!(AK && AS);
+async function ap(path, qs) {
+  const u = new URL('https://data.alpaca.markets' + path); Object.keys(qs || {}).forEach(k => { if (qs[k] !== undefined && qs[k] !== '') u.searchParams.set(k, qs[k]); });
+  const r = await fetch(u, { headers: { 'APCA-API-KEY-ID': AK, 'APCA-API-SECRET-KEY': AS, accept: 'application/json' } });
+  if (!r.ok) throw Object.assign(new Error('alpaca ' + r.status + ' ' + (await r.text()).slice(0, 160)), { code: 'tool_error' });
+  return r.json();
+}
+function occ(sym) { const m = /^(.*?)(\d{6})([CP])(\d{8})$/.exec(sym); return m ? { root: m[1], exp: '20' + m[2].slice(0, 2) + '-' + m[2].slice(2, 4) + '-' + m[2].slice(4, 6), type: m[3] === 'C' ? 'call' : 'put', strike: +m[4] / 1000 } : null; }
+async function optSnaps(under, qs) {
+  const out = {}; let tok = '';
+  for (let i = 0; i < 8; i++) {
+    const d = await ap('/v1beta1/options/snapshots/' + under, Object.assign({ feed: 'indicative', limit: 1000, page_token: tok }, qs));
+    Object.assign(out, d.snapshots || {}); tok = d.next_page_token || ''; if (!tok) break;
+  }
+  return out;
+}
+function qOf(sym, z) { const q = z.latestQuote || {}, g = z.greeks || {}; return { instrument_id: sym, ask_price: q.ap, bid_price: q.bp, updated_at: q.t, implied_volatility: z.impliedVolatility, delta: g.delta }; }
+async function alpacaTool(tool, a) {
+  if (tool === 'get_equity_historicals') {
+    const d = await ap('/v2/stocks/bars', { symbols: a.symbols[0], timeframe: '1Min', start: a.start_time, end: a.end_time, feed: 'iex', limit: 10000, adjustment: 'raw' });
+    const bars = ((d.bars || {})[a.symbols[0]] || []).map(b => ({ begins_at: b.t, open_price: b.o, high_price: b.h, low_price: b.l, close_price: b.c, volume: b.v }));
+    return { results: [{ bars }] };
+  }
+  if (tool === 'get_option_chains') {
+    const t = Date.now(), snaps = await optSnaps(a.underlying_symbol, { expiration_date_gte: new Date(t).toISOString().slice(0, 10), expiration_date_lte: new Date(t + 9 * 864e5).toISOString().slice(0, 10), type: 'call' });
+    const dates = {}; Object.keys(snaps).forEach(k => { const o = occ(k); if (o) dates[o.exp] = 1; });
+    return { chains: [{ id: a.underlying_symbol, can_open_position: true, settle_on_open: false, expiration_dates: Object.keys(dates).sort() }] };
+  }
+  if (tool === 'get_option_instruments') {
+    const snaps = await optSnaps(a.chain_id, { expiration_date: a.expiration_dates, type: a.type });
+    return { instruments: Object.keys(snaps).map(k => { const o = occ(k); return o && { id: k, strike_price: o.strike, state: 'active', tradability: 'tradable' }; }).filter(Boolean), next: '' };
+  }
+  if (tool === 'get_option_quotes') {
+    const ids = a.instrument_ids, o = occ(ids[0]); if (!o) return { results: [] };
+    const d = await ap('/v1beta1/options/snapshots', { symbols: ids.join(','), feed: 'indicative' });
+    return { results: ids.map(id => (d.snapshots || {})[id] ? { quote: qOf(id, d.snapshots[id]) } : {}) };
+  }
+  if (tool === 'get_accounts' || tool === 'get_equity_quotes') return {};
+  throw new Error('unsupported: ' + tool);
+}
 async function rh(tool, args) {
   if (!READ_ONLY.has(tool)) throw new Error('blocked: ' + tool + ' is not allowed in paper mode');
+  if (USE_ALPACA) { const r = await alpacaTool(tool, args || {}); S.lastOk = Date.now(); return r; }
   if (!S.connected) throw Object.assign(new Error('not connected'), { code: 'not_connected' });
   let res;
   try { res = await S.client.callTool({ name: tool, arguments: args || {} }); }
