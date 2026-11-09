@@ -654,8 +654,9 @@ function buildTowers(){
   towers=[];
   var n=S.watch.length;
   S.watch.forEach(function(sym,i){
-    var g=new THREE.Group(),f=n===1?0:(i/(n-1)-.5),ang=f*2.3,R=12.5;
-    g.position.set(Math.sin(ang)*R,0,-Math.cos(ang)*R+1);city.add(g);
+    /* spread evenly around the whole circle; odd counts put one at the back, even counts straddle it, so none ever lands front-and-centre in front of the vault */
+    var g=new THREE.Group(),ang=i/n*Math.PI*2+(n%2?0:Math.PI/n),R=n>5?10.5:12.5;
+    g.position.set(Math.sin(ang)*R,0,-Math.cos(ang)*R);city.add(g);
     var tiers=[[2.6,5],[2.0,4.2],[1.4,3.6]],y=0;
     tiers.forEach(function(t){
       var geo=new THREE.BoxGeometry(t[0],t[1],t[0]),m=new THREE.Mesh(geo,new THREE.MeshBasicMaterial({map:WT,color:0xa8c0ff}));
