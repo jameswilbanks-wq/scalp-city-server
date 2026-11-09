@@ -16,7 +16,7 @@ var Engine = (function () {
     capital: 5000, target: 100, lossLimit: 50, risk: 100 / 6,
     maxLosers: 3, maxTrades: 8, startMin: 585, lastEntry: 930, flatMin: 950,
     slip: 0.01, lev: 3, shorts: true, atrMult: 1, partialR: 1, timeStop: 15, cooldown: 5,
-    vwap: true, ema: true, orb: true
+    vwap: true, ema: true, orb: true, sweep: true, sweepLook: 20, sweepWick: 0.5, sweepMinRange: 0.8, sweepMaxRisk: 2.5
   };
   function ladderCfg(T, capital, extra) {
     var c = { target: T, lossLimit: T / 2, risk: T / 6, capital: capital };
@@ -60,6 +60,23 @@ var Engine = (function () {
     }
   }
 
+  /* Liquidity sweep ("final boarding call", from the 2026-11-09 reel): price pokes through the recent swing low/high where
+     everyone's stops sit, then closes back inside the range with a long wick. Enter the reclaim: low sweep -> long (call),
+     high sweep -> inverse (put). The stop sits just beyond the wick and is never moved. s = index of the day's first bar. */
+  function sweepSignal(bars, k, s, c) {
+    var b = bars[k], L = c.sweepLook;
+    if (!c.sweep || k - s < 10 || !(b.atr > 0)) return null;
+    var lo = Infinity, hi = -Infinity, j;
+    for (j = Math.max(s, k - L); j < k; j++) { lo = Math.min(lo, bars[j].l); hi = Math.max(hi, bars[j].h); }
+    var rng = b.h - b.l; if (rng < c.sweepMinRange * b.atr) return null;
+    var buf = 0.1 * b.atr;
+    if (b.l < lo && b.c > lo && (Math.min(b.o, b.c) - b.l) >= c.sweepWick * rng && b.c > b.l + 0.5 * rng && (b.c - b.l) <= c.sweepMaxRisk * b.atr)
+      return { dir: 1, trig: 'sweep', lvl: lo, stopPx: b.l - buf };
+    if (b.h > hi && b.c < hi && (b.h - Math.max(b.o, b.c)) >= c.sweepWick * rng && b.c < b.h - 0.5 * rng && (b.h - b.c) <= c.sweepMaxRisk * b.atr)
+      return { dir: -1, trig: 'sweep', lvl: hi, stopPx: b.h + buf };
+    return null;
+  }
+
   function crossSignal(b, pr, orH, orL, c) {
     var hit = null;
     function cross(trig, lvl, plvl) {
@@ -81,7 +98,7 @@ var Engine = (function () {
     for (k = s; k < e; k++) if (bars[k].min < 585) { orH = Math.max(orH, bars[k].h); orL = Math.min(orL, bars[k].l); }
     var dayPnl = 0, losers = 0, nt = 0, shut = '', pos = null, pending = null, blockUntil = -1, trades = [], skipped = 0, maxCash = 0, wins = 0;
 
-    function level(p, b) { return p.trig === 'vwap' ? b.vwap : p.trig === 'ema' ? b.e50 : (p.dir > 0 ? orH : orL); }
+    function level(p, b) { return p.lvl !== undefined ? p.lvl : p.trig === 'vwap' ? b.vwap : p.trig === 'ema' ? b.e50 : (p.dir > 0 ? orH : orL); }
     function realize(qty, price) {
       var x = price - pos.dir * c.slip;
       var pr = qty * pos.dir * (x - pos.e);
@@ -104,13 +121,13 @@ var Engine = (function () {
       var dir = sig.dir;
       if (dir < 0 && !c.shorts) return;
       var e0 = b.o + dir * c.slip;
-      var d = Math.max(c.atrMult * sig.atr, 0.05);
+      var d = sig.stopPx !== undefined ? Math.max(sig.dir * (e0 - sig.stopPx), 0.05) : Math.max(c.atrMult * sig.atr, 0.05);
       var expo = Math.min(c.risk / d * e0, dir > 0 ? c.capital : c.capital * c.lev);
       var q = dir > 0 ? Math.floor(expo / e0) : expo / e0;
       if (!(q >= 1)) { skipped++; return; }
       var cash = dir > 0 ? q * e0 : q * e0 / c.lev;
       if (cash > maxCash) maxCash = cash;
-      pos = { dir: dir, e: e0, d: d, stop: e0 - dir * d, q: q, q0: q, k0: k, trig: sig.trig, partial: false, mfe: 0, realized: 0, cash: cash };
+      pos = { dir: dir, e: e0, d: d, stop: e0 - dir * d, q: q, q0: q, k0: k, trig: sig.trig, lvl: sig.lvl, partial: false, mfe: 0, realized: 0, cash: cash };
       nt++;
     }
     function manage(b, k) {
@@ -135,7 +152,7 @@ var Engine = (function () {
       if (!p.partial && (k - p.k0) >= c.timeStop && p.mfe < 0.3) exitAll(b.c, 'time', k);
     }
     function signal(k) {
-      var hit = crossSignal(bars[k], bars[k - 1], orH, orL, c);
+      var hit = sweepSignal(bars, k, s, c) || crossSignal(bars[k], bars[k - 1], orH, orL, c);
       if (hit) hit.atr = bars[k].atr;
       return hit;
     }
@@ -201,7 +218,7 @@ var Engine = (function () {
     for (var j = s; j <= i; j++) if (bars[j].min < 585) { orH = Math.max(orH, bars[j].h); orL = Math.min(orL, bars[j].l); }
     var sig = null;
     if (pr.day === b.day && b.min >= c.startMin && b.min <= c.lastEntry) {
-      sig = crossSignal(b, pr, orH, orL, c);
+      sig = sweepSignal(bars, i, s, c) || crossSignal(b, pr, orH, orL, c);
       if (sig) sig.atr = b.atr;
     }
     return { bar: b, i: i, dayStart: s, day: b.day, orH: orH, orL: orL, signal: sig, atr: b.atr, vwap: b.vwap, e50: b.e50, e9: b.e9, inWindow: b.min >= c.startMin && b.min <= c.lastEntry };

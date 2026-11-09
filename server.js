@@ -249,7 +249,7 @@ function exitReason(p, prof, bid, info, bars) {
     for (let i = bars.length - 1; i >= 0 && bars[i].t > p.sigT; i--) { const x = dir > 0 ? bars[i].l : bars[i].h; adv = adv === null ? x : (dir > 0 ? Math.min(adv, x) : Math.max(adv, x)); }
     if (adv !== null && dir * (adv - p.stopU) <= 0) reason = 'stop';
     const last = info && info.bar;
-    if (!reason && last && last.t > p.sigT) { const lvl = p.trig === 'vwap' ? last.vwap : p.trig === 'ema' ? last.e50 : (dir > 0 ? info.orH : info.orL); if (dir * (last.c - lvl) < 0) reason = 'level'; }
+    if (!reason && last && last.t > p.sigT) { const lvl = p.lvl !== undefined ? p.lvl : p.trig === 'vwap' ? last.vwap : p.trig === 'ema' ? last.e50 : (dir > 0 ? info.orH : info.orL); if (dir * (last.c - lvl) < 0) reason = 'level'; }
   }
   if (!reason && bid <= p.entryAsk * (1 - prof.premStop)) reason = 'premium stop';
   if (!reason && bid >= p.entryAsk * (1 + prof.tpUp)) reason = 'target';
@@ -273,7 +273,7 @@ async function fastPos() {
   try { if (P.rec && P.rec.pos) { await managePos(); if (P.rec.pos) saveRecSoon(); } } catch (e) { /* the 20 s tick will retry */ } finally { P.busy = false; }
 }
 let _sv = 0; function saveRecSoon() { if (Date.now() - _sv > 10000) { _sv = Date.now(); saveRec(); } }
-function openShadow(p) { P.rec.sh.open.push({ sym: p.sym, dir: p.dir, type: p.type, strike: p.strike, exp: p.exp, inst: p.inst, t0: p.t0, sigT: p.sigT, entryAsk: p.entryAsk, entryBid: p.entryBid, entryU: p.entryU, stopU: p.stopU, trig: p.trig, peak: p.entryBid, flatMin: p.flatMin }); }
+function openShadow(p) { P.rec.sh.open.push({ sym: p.sym, dir: p.dir, type: p.type, strike: p.strike, exp: p.exp, inst: p.inst, t0: p.t0, sigT: p.sigT, entryAsk: p.entryAsk, entryBid: p.entryBid, entryU: p.entryU, stopU: p.stopU, trig: p.trig, lvl: p.lvl, peak: p.entryBid, flatMin: p.flatMin }); }
 async function manageShadows() {
   const sh = P.rec.sh; if (!sh.open.length) return;
   try {
@@ -308,7 +308,7 @@ async function lookForEntry() {
     let pk; try { pk = await pickContract(s, sig.dir, inf.bar.c); } catch (e) { pk = { why: 'could not load option data (' + ((e && e.code) || 'error') + ')' }; }
     if (pk.why) { logSignal(s, sig, inf.bar.c, 'skipped', pk.why); continue; }
     r.pos = { sym: s, dir: sig.dir, type: pk.type, strike: pk.strike, exp: pk.exp, inst: pk.inst, t0: Date.now(), sigT: inf.bar.t, entryAsk: pk.ask, entryBid: pk.bid, entryU: inf.bar.c,
-      stopU: inf.bar.c - sig.dir * Math.max(sig.atr, 0.05), trig: sig.trig, peak: pk.bid, iv: pk.iv, delta: pk.delta, flatMin: CFG.dte === 0 ? 935 : 950 };
+      stopU: sig.stopPx !== undefined ? sig.stopPx : inf.bar.c - sig.dir * Math.max(sig.atr, 0.05), trig: sig.trig, lvl: sig.lvl, peak: pk.bid, iv: pk.iv, delta: pk.delta, flatMin: CFG.dte === 0 ? 935 : 950 };
     openShadow(r.pos);
     logSignal(s, sig, inf.bar.c, 'entered', pk.type + ' ' + pk.strike + ' exp ' + pk.exp + ' @ ask $' + pk.ask.toFixed(2));
   }
