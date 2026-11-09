@@ -323,6 +323,8 @@ async function tick() {
       if (P.rec && P.rec.pos) { P.rec.trades.push({ sym: P.rec.pos.sym, type: P.rec.pos.type, strike: P.rec.pos.strike, exp: P.rec.pos.exp, entryT: iso(P.rec.pos.t0), entryAsk: P.rec.pos.entryAsk, exitBid: null, pnl: 0, reason: 'unmanaged: left open overnight (paper)', unmanaged: true }); P.rec.pos = null; await saveRec(); }
       P.seenSig = {}; await loadDay(day);
     }
+    // limits are off for paper: lift any automatic stop-for-the-day left in today's journal (keeps the manual one)
+    if (process.env.ENFORCE_LIMITS !== '1' && P.rec && ['trades', 'losers', 'loss', 'target'].includes(P.rec.shut)) { P.rec.shut = ''; saveRec(); }
     if (!P.ctl.running) { P.msg = 'Stopped. Press START on the dashboard to begin.'; return; }
     if (!S.connected) { P.msg = S.needsLogin ? 'Waiting for Robinhood login.' : 'Reconnecting to Robinhood…'; if (!S.connecting && !S.needsLogin) await connect(); return; }
     if (!marketOpen(Date.now())) { P.msg = 'Market closed. Running and waiting for the open.'; return; }
