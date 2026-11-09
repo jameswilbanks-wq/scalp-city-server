@@ -261,6 +261,14 @@ async function managePos() {
   p.live = { bid, ask: +q.ask_price, t: Date.now() }; p.peak = Math.max(p.peak || 0, bid);
   const reason = exitReason(p, CFG, bid, info, bars); if (reason) closePaper(reason, bid, info);
 }
+/* fast loop: while a paper position is open, re-price it every 2 s (stops and the screen both see fresh prices) */
+const FAST_MS = +process.env.FAST_MS || 2000;
+async function fastPos() {
+  if (P.busy || !P.ctl.running || !S.connected || !P.rec || !P.rec.pos || !marketOpen(Date.now())) return;
+  P.busy = true;
+  try { if (P.rec && P.rec.pos) { await managePos(); if (P.rec.pos) saveRecSoon(); } } catch (e) { /* the 20 s tick will retry */ } finally { P.busy = false; }
+}
+let _sv = 0; function saveRecSoon() { if (Date.now() - _sv > 10000) { _sv = Date.now(); saveRec(); } }
 function openShadow(p) { P.rec.sh.open.push({ sym: p.sym, dir: p.dir, type: p.type, strike: p.strike, exp: p.exp, inst: p.inst, t0: p.t0, sigT: p.sigT, entryAsk: p.entryAsk, entryBid: p.entryBid, entryU: p.entryU, stopU: p.stopU, trig: p.trig, peak: p.entryBid, flatMin: p.flatMin }); }
 async function manageShadows() {
   const sh = P.rec.sh; if (!sh.open.length) return;
@@ -357,12 +365,16 @@ async function extraBars(list) {
   }
   return out;
 }
+function recOut() {
+  const r = P.rec;
+  return r ? { day: r.day, pnl: r.pnl, ntr: r.trades.length, tr: r.trades.slice(-30).map(t => ({ sym: t.sym, k: t.strike, ty: t.type, in: t.entryT, pnl: t.pnl, why: t.reason })), sh: r.sh ? r.sh.pnl : null, upd: new Date(P.lastTick || Date.now()).toISOString(), run: { running: !!P.ctl.running }, pos: r.pos ? { sym: r.pos.sym, strike: r.pos.strike, type: r.pos.type, exp: r.pos.exp, entryAsk: r.pos.entryAsk, entryBid: r.pos.entryBid, peak: r.pos.peak, t0: r.pos.t0, trig: r.pos.trig, live: r.pos.live } : null } : null;
+}
+function liveData() { return { now: Date.now(), run: !!P.ctl.running, market: marketOpen(Date.now()), msg: P.msg, rec: recOut() }; }
 async function cityData(want) {
   const bars = {}; CFG.syms.forEach(s => { bars[s] = bars5(s); });
   (await extraBars(want || [])).forEach(s => { bars[s] = bars5(s); });
-  const r = P.rec, days = (await kscan('rec:', 60)).map(x => ({ day: x.value.day || x.key.slice(4), trades: (x.value.trades || []).filter(t => t.exitT || t.exitBid != null).map(t => ({ t: Date.parse(t.exitT || t.entryT), sym: t.sym, pnl: +t.pnl || 0 })) }));
-  return { now: Date.now(), run: !!P.ctl.running, market: marketOpen(Date.now()), msg: P.msg, bars, days,
-    rec: r ? { day: r.day, pnl: r.pnl, ntr: r.trades.length, tr: r.trades.slice(-30).map(t => ({ sym: t.sym, k: t.strike, ty: t.type, in: t.entryT, pnl: t.pnl, why: t.reason })), sh: r.sh ? r.sh.pnl : null, upd: new Date(P.lastTick || Date.now()).toISOString(), run: { running: !!P.ctl.running }, pos: r.pos ? { sym: r.pos.sym, strike: r.pos.strike, type: r.pos.type, exp: r.pos.exp, entryAsk: r.pos.entryAsk, entryBid: r.pos.entryBid, peak: r.pos.peak, t0: r.pos.t0, trig: r.pos.trig, live: r.pos.live } : null } : null };
+  const days = (await kscan('rec:', 60)).map(x => ({ day: x.value.day || x.key.slice(4), trades: (x.value.trades || []).filter(t => t.exitT || t.exitBid != null).map(t => ({ t: Date.parse(t.exitT || t.entryT), sym: t.sym, pnl: +t.pnl || 0 })) }));
+  return Object.assign(liveData(), { bars, days });
 }
 
 /* ---------- web: dashboard + API ---------- */
@@ -391,6 +403,7 @@ const server = http.createServer(async (req, res) => {
     if (!authed(u, req)) return send(res, 401, 'Add ?key=YOUR_KEY to the address.', 'text/plain');
     if (u.pathname === '/' && CITY) { const gz = /gzip/.test(req.headers['accept-encoding'] || ''); res.writeHead(200, Object.assign({ 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }, gz ? { 'content-encoding': 'gzip' } : {})); return res.end(gz ? CITY_GZ : CITY); }
     if (u.pathname === '/' || u.pathname === '/ops') return send(res, 200, DASH, 'text/html');
+    if (u.pathname === '/api/live') { return send(res, 200, liveData()); }
     if (u.pathname === '/api/city') return send(res, 200, await cityData((u.searchParams.get('syms') || '').toUpperCase().split(',').map(x => x.trim()).filter(Boolean)));
     if (u.pathname === '/auth') { if (!S.authUrl) await connect(); if (S.authUrl) { res.writeHead(302, { location: S.authUrl }); return res.end(); } return send(res, 200, { connected: S.connected, err: S.err }); }
     if (u.pathname === '/api/status') return send(res, 200, status());
@@ -434,6 +447,7 @@ function load(){api('/api/status').then(function(x){s=x;draw()}).catch(function(
   P.ctl = (await kget('control')) || { running: false };
   await connect();
   setInterval(() => { tick(); }, TICK_MS);
+  setInterval(() => { fastPos(); }, FAST_MS);
   setInterval(() => { if (!S.connected && !S.connecting && !S.needsLogin) connect(); }, 60000);
   server.listen(PORT, () => console.log('listening on ' + PORT + ' paper mode, running=' + P.ctl.running));
 })();

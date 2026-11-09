@@ -1900,7 +1900,7 @@ function renderAct(){
     var held=Math.max(0,Math.round((Date.now()-(+p.t0||Date.now()))/60000));
     var cfg=ACT.src==='SERVER PAPER'?SRV_RULES:(P.cfg||SRV_RULES);
     add('tcl','auto-exit: stop $'+(p.entryAsk*(1-(cfg.premStop!=null?cfg.premStop:cfg.stop))).toFixed(2)+' · target $'+(p.entryAsk*(1+(cfg.tpUp!=null?cfg.tpUp:cfg.target))).toFixed(2)+' · held '+held+' min'+(p.trig?' · '+p.trig+' signal':''));
-    add('tcl','today '+money(ACT.pnl||0,true)+' · '+(ACT.n||0)+' closed'+(stale&&isFinite(ACT.age)?' · price is '+Math.round(ACT.age/60000)+' min old':''));
+    add('tcl','today '+money(ACT.pnl||0,true)+' · '+(ACT.n||0)+' closed'+(hasQ&&isFinite(ACT.age)&&!stale?' · price '+Math.round(ACT.age/1000)+'s old':'')+(stale&&isFinite(ACT.age)?' · price is '+Math.round(ACT.age/60000)+' min old':''));
   }
   if(S.room||ACT)fb.hidden=true;
   else if(SRV.state==='needs_ok'){fb.hidden=false;fb.textContent='TAP TO ALLOW SERVER FEED';fb.className='pill bad'}
@@ -1968,7 +1968,7 @@ var Web={timer:null,key:'',trades:[],armed:0,last:null,
     $('app').classList.add('web');S.mode='live';liveOK=false;S.accounts=[];fillAccts();
     setStatus('','LOADING SERVER DATA');
     $('srvKeyBox').hidden=true;$('srvCtl').hidden=false;
-    Web.load();clearInterval(Web.timer);Web.timer=setInterval(Web.load,10000);
+    Web.load();clearInterval(Web.timer);Web.timer=setInterval(Web.load,10000);clearInterval(Web.ft);Web.ft=setInterval(Web.fast,2000);
   },
   api:function(p,m){return fetch(p+(p.indexOf('?')<0?'?':'&')+'key='+encodeURIComponent(Web.key),{method:m||'GET',cache:'no-store'})},
   load:async function(){
@@ -1977,6 +1977,16 @@ var Web={timer:null,key:'',trades:[],armed:0,last:null,
       if(r.status===401){setStatus('bad','ADD ?key= TO THE ADDRESS');return}
       Web.apply(await r.json());
     }catch(e){setStatus('bad','CANNOT REACH SERVER · RETRYING')}
+  },
+  fast:async function(){
+    if(Web.fb||!Web.last||!Web.last.rec||!Web.last.rec.pos)return;
+    Web.fb=1;
+    try{var r=await Web.api('/api/live');if(!r.ok)return;var d=await r.json();
+      if(!Web.last||!Web.last.rec||!Web.last.rec.pos&&d.rec&&d.rec.pos)return;
+      Web.last.rec=d.rec;Web.last.run=d.run;SRV.rec=d.rec;SRV.state='ok';SRV.at=Date.now();
+      renderAct();Web.ctl();
+      if(!d.rec||!d.rec.pos)Web.load();
+    }catch(e){}finally{Web.fb=0}
   },
   apply:function(d){
     Web.last=d;
