@@ -33,6 +33,10 @@ async function kset(k, v) {
   if (!pool) { mem.set(k, JSON.stringify(v)); return; }
   await pool.query('insert into scalp.kv(key,value,updated) values($1,$2,now()) on conflict(key) do update set value=excluded.value, updated=now()', [k, JSON.stringify(v)]);
 }
+async function kscan(prefix, limit) {
+  if (!pool) return [...mem.keys()].filter(k => k.startsWith(prefix)).sort().reverse().slice(0, limit).map(k => ({ key: k, value: JSON.parse(mem.get(k)) }));
+  const r = await pool.query('select key, value from scalp.kv where key like $1 order by key desc limit $2', [prefix + '%', limit]); return r.rows;
+}
 async function kdel(k) { if (!pool) mem.delete(k); else await pool.query('delete from scalp.kv where key=$1', [k]); }
 
 /* ---------- Robinhood MCP connection with OAuth (one-time login, then refresh tokens) ---------- */
@@ -329,6 +333,27 @@ async function manualClose() {
   closePaper('manual', bid, P.info[p.sym] || null); return { ok: true, bid };
 }
 
+
+/* ---------- city page (3D view) served from here so it works from anywhere ---------- */
+const fs = require('fs'), zlib = require('zlib'), path = require('path');
+let CITY = null, CITY_GZ = null;
+try { CITY = '<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>' + fs.readFileSync(path.join(__dirname, 'public', 'city.html'), 'utf8').replace('<!--WEB-->', '<script>window.__WEB__=1</script>') + '</body></html>'; CITY_GZ = zlib.gzipSync(CITY); } catch (e) { console.log('city.html missing: ' + e.message); }
+function bars5(sym) {
+  const st = P.raw[sym]; if (!st) return [];
+  const out = {}; Object.keys(st).map(Number).sort((a, b) => a - b).forEach(t => {
+    const b = st[t], k = Math.floor(t / 300000) * 300000, o = +b.open_price, c = +b.close_price, h = +b.high_price, l = +b.low_price, v = +b.volume || 0, x = out[k];
+    if (!x) out[k] = { begins_at: new Date(k).toISOString(), open_price: o, close_price: c, high_price: h, low_price: l, volume: v };
+    else { x.close_price = c; x.high_price = Math.max(x.high_price, h); x.low_price = Math.min(x.low_price, l); x.volume += v; }
+  });
+  return Object.keys(out).sort().map(k => out[k]);
+}
+async function cityData() {
+  const bars = {}; CFG.syms.forEach(s => { bars[s] = bars5(s); });
+  const r = P.rec, days = (await kscan('rec:', 60)).map(x => ({ day: x.value.day || x.key.slice(4), trades: (x.value.trades || []).filter(t => t.exitT || t.exitBid != null).map(t => ({ t: Date.parse(t.exitT || t.entryT), sym: t.sym, pnl: +t.pnl || 0 })) }));
+  return { now: Date.now(), run: !!P.ctl.running, market: marketOpen(Date.now()), msg: P.msg, bars, days,
+    rec: r ? { day: r.day, pnl: r.pnl, ntr: r.trades.length, tr: r.trades.slice(-30).map(t => ({ sym: t.sym, k: t.strike, ty: t.type, in: t.entryT, pnl: t.pnl, why: t.reason })), sh: r.sh ? r.sh.pnl : null, upd: new Date(P.lastTick || Date.now()).toISOString(), run: { running: !!P.ctl.running }, pos: r.pos ? { sym: r.pos.sym, strike: r.pos.strike, type: r.pos.type, exp: r.pos.exp, entryAsk: r.pos.entryAsk, entryBid: r.pos.entryBid, peak: r.pos.peak, t0: r.pos.t0, trig: r.pos.trig, live: r.pos.live } : null } : null };
+}
+
 /* ---------- web: dashboard + API ---------- */
 function status() {
   const r = P.rec, p = r && r.pos;
@@ -353,7 +378,9 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, '<meta name=viewport content="width=device-width"><body style="font:18px system-ui;padding:24px;background:#080626;color:#fff">Robinhood is connected. You can close this tab and open your dashboard.</body>', 'text/html');
     }
     if (!authed(u, req)) return send(res, 401, 'Add ?key=YOUR_KEY to the address.', 'text/plain');
-    if (u.pathname === '/') return send(res, 200, DASH, 'text/html');
+    if (u.pathname === '/' && CITY) { const gz = /gzip/.test(req.headers['accept-encoding'] || ''); res.writeHead(200, Object.assign({ 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }, gz ? { 'content-encoding': 'gzip' } : {})); return res.end(gz ? CITY_GZ : CITY); }
+    if (u.pathname === '/' || u.pathname === '/ops') return send(res, 200, DASH, 'text/html');
+    if (u.pathname === '/api/city') return send(res, 200, await cityData());
     if (u.pathname === '/auth') { if (!S.authUrl) await connect(); if (S.authUrl) { res.writeHead(302, { location: S.authUrl }); return res.end(); } return send(res, 200, { connected: S.connected, err: S.err }); }
     if (u.pathname === '/api/status') return send(res, 200, status());
     if (req.method === 'POST' && u.pathname === '/api/control') { P.ctl.running = u.searchParams.get('run') === '1'; await kset('control', P.ctl); setImmediate(tick); return send(res, 200, status()); }
