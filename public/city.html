@@ -1039,6 +1039,7 @@ function goneLive(){
 var Data={
   resubscribe:function(){
     unsubs.forEach(function(u){try{u()}catch(e){}});unsubs=[];
+    if(window.__WEB__){if(Web.key!==undefined)Web.load();return}
     if(!mcp||S.mode==='demo'&&!liveOK){if(S.mode==='demo'){Demo.refresh();refreshAll()}return}
     var syms=S.watch.slice();
     unsubs.push(mcp.watchTool(RH,'get_equity_quotes',{symbols:syms},function(ev){
@@ -1963,7 +1964,7 @@ var Web={timer:null,key:'',trades:[],armed:0,last:null,
   api:function(p,m){return fetch(p+(p.indexOf('?')<0?'?':'&')+'key='+encodeURIComponent(Web.key),{method:m||'GET',cache:'no-store'})},
   load:async function(){
     try{
-      var r=await Web.api('/api/city');
+      var r=await Web.api('/api/city?syms='+encodeURIComponent(S.watch.join(',')));
       if(r.status===401){setStatus('bad','ADD ?key= TO THE ADDRESS');return}
       Web.apply(await r.json());
     }catch(e){setStatus('bad','CANNOT REACH SERVER · RETRYING')}

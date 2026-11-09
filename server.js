@@ -347,8 +347,19 @@ function bars5(sym) {
   });
   return Object.keys(out).sort().map(k => out[k]);
 }
-async function cityData() {
+const EXTRA = {}; // display-only symbols the page asked for (never traded)
+async function extraBars(list) {
+  const out = [];
+  for (const s of list) {
+    if (CFG.syms.includes(s) || !/^[A-Z.]{1,6}$/.test(s) || out.length >= 8) continue;
+    out.push(s); const e = EXTRA[s] = EXTRA[s] || { at: 0 };
+    if (Date.now() - e.at > 20000 && S.connected) { e.at = Date.now(); try { await pBars(s); e.err = ''; } catch (x) { e.err = String((x && (x.code || x.message)) || x).slice(0, 80); } }
+  }
+  return out;
+}
+async function cityData(want) {
   const bars = {}; CFG.syms.forEach(s => { bars[s] = bars5(s); });
+  (await extraBars(want || [])).forEach(s => { bars[s] = bars5(s); });
   const r = P.rec, days = (await kscan('rec:', 60)).map(x => ({ day: x.value.day || x.key.slice(4), trades: (x.value.trades || []).filter(t => t.exitT || t.exitBid != null).map(t => ({ t: Date.parse(t.exitT || t.entryT), sym: t.sym, pnl: +t.pnl || 0 })) }));
   return { now: Date.now(), run: !!P.ctl.running, market: marketOpen(Date.now()), msg: P.msg, bars, days,
     rec: r ? { day: r.day, pnl: r.pnl, ntr: r.trades.length, tr: r.trades.slice(-30).map(t => ({ sym: t.sym, k: t.strike, ty: t.type, in: t.entryT, pnl: t.pnl, why: t.reason })), sh: r.sh ? r.sh.pnl : null, upd: new Date(P.lastTick || Date.now()).toISOString(), run: { running: !!P.ctl.running }, pos: r.pos ? { sym: r.pos.sym, strike: r.pos.strike, type: r.pos.type, exp: r.pos.exp, entryAsk: r.pos.entryAsk, entryBid: r.pos.entryBid, peak: r.pos.peak, t0: r.pos.t0, trig: r.pos.trig, live: r.pos.live } : null } : null };
@@ -380,7 +391,7 @@ const server = http.createServer(async (req, res) => {
     if (!authed(u, req)) return send(res, 401, 'Add ?key=YOUR_KEY to the address.', 'text/plain');
     if (u.pathname === '/' && CITY) { const gz = /gzip/.test(req.headers['accept-encoding'] || ''); res.writeHead(200, Object.assign({ 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }, gz ? { 'content-encoding': 'gzip' } : {})); return res.end(gz ? CITY_GZ : CITY); }
     if (u.pathname === '/' || u.pathname === '/ops') return send(res, 200, DASH, 'text/html');
-    if (u.pathname === '/api/city') return send(res, 200, await cityData());
+    if (u.pathname === '/api/city') return send(res, 200, await cityData((u.searchParams.get('syms') || '').toUpperCase().split(',').map(x => x.trim()).filter(Boolean)));
     if (u.pathname === '/auth') { if (!S.authUrl) await connect(); if (S.authUrl) { res.writeHead(302, { location: S.authUrl }); return res.end(); } return send(res, 200, { connected: S.connected, err: S.err }); }
     if (u.pathname === '/api/status') return send(res, 200, status());
     if (req.method === 'POST' && u.pathname === '/api/control') { P.ctl.running = u.searchParams.get('run') === '1'; await kset('control', P.ctl); setImmediate(tick); return send(res, 200, status()); }
