@@ -939,6 +939,7 @@ function toggleBoard(on){S.board=on;$('board').hidden=!on;if(on){renderBoard();v
 $('boardBtn').addEventListener('click',function(){toggleBoard(!S.board)});
 function setWatch(list){
   S.watch=list;try{localStorage.setItem('scalp.watch',JSON.stringify(list))}catch(e){}
+  if(window.__WEB__){Web.pend=1;Web.api('/api/watch?syms='+encodeURIComponent(list.join(',')),'POST').catch(function(){}).then(function(){Web.pend=0;Web.load()})}
   buildTowers();renderBoard();Data.resubscribe();
 }
 $('addBtn').addEventListener('click',function(){
@@ -1988,7 +1989,15 @@ var Web={timer:null,key:'',trades:[],armed:0,last:null,
       if(!d.rec||!d.rec.pos)Web.load();
     }catch(e){}finally{Web.fb=0}
   },
+  syncWatch:function(d){
+    if(Web.pend)return;
+    if(d.watch===null||d.watch===undefined){
+      try{if(localStorage.getItem('scalp.watch')&&!Web.posted){Web.posted=1;Web.api('/api/watch?syms='+encodeURIComponent(S.watch.join(',')),'POST').catch(function(){})}}catch(e){}
+      return}
+    if(d.watch.join()!==S.watch.join()){S.watch=d.watch.slice(0,8);try{localStorage.setItem('scalp.watch',JSON.stringify(S.watch))}catch(e){}buildTowers();renderBoard()}
+  },
   apply:function(d){
+    Web.syncWatch(d);
     Web.last=d;
     setStatus('live',d.run?'SERVER · PAPER RUNNING':'SERVER · PAPER STOPPED');
     Object.keys(d.bars||{}).forEach(function(sym){
