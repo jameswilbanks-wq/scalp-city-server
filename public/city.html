@@ -635,35 +635,39 @@ var city=new THREE.Group();scene.add(city);
 
 /* vault */
 var vault=new THREE.Group();vault.position.set(0,0,0);city.add(vault);
-var dome,domeGlow,vaultHit,carG;
+var dome,domeGlow,vaultHit,carG,aimG,muzzle,muzGlow,beam=null;
 (function(){
   var base=new THREE.Mesh(new THREE.CylinderGeometry(3,3.3,.7,48),new THREE.MeshLambertMaterial({color:0x14125e}));base.position.y=.35;vault.add(base);
   var rim=new THREE.Mesh(new THREE.TorusGeometry(3.05,.07,8,64),new THREE.MeshBasicMaterial({color:0x38f4d8}));rim.rotation.x=Math.PI/2;rim.position.y=.72;vault.add(rim);
-  /* off-road SUV on a turntable, built from boxes: square body, flat sides, upright glass, round lamps, roof rack, rear spare */
+  /* original "beam operator" character: helmet with a glowing visor, a back-mounted power pack and a long two-handed beam rifle */
   var L=function(c){return new THREE.MeshLambertMaterial({color:c})},B=function(c){return new THREE.MeshBasicMaterial({color:c})};
-  carG=new THREE.Group();vault.add(carG);
+  carG=new THREE.Group();carG.position.y=.72;vault.add(carG);
   function box(w,h,d,mat,x,y,z,par){var m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat);m.position.set(x,y,z);(par||carG).add(m);return m}
-  var bodyM=L(0x3f8a5c);
-  dome=box(5.0,0.95,2.1,bodyM,0,1.02,0);               /* lower body, long axis = x, nose at +x */
-  box(3.7,0.85,1.96,bodyM,-0.45,1.92,0);               /* cabin */
-  var glass=B(0x0a1630);
-  [-1,1].forEach(function(sd){box(3.3,0.58,0.02,glass,-0.45,1.98,sd*0.99)});   /* side windows */
-  box(0.02,0.58,1.7,glass,1.42,1.98,0);                /* windscreen */
-  box(0.02,0.58,1.7,glass,-2.32,1.98,0);               /* rear window */
-  box(3.76,0.07,2.0,L(0xe9ecf2),-0.45,2.38,0);         /* pale roof */
-  box(3.0,0.05,1.6,L(0x14161c),-0.45,2.46,0);          /* roof rack deck */
-  [-0.8,0.8].forEach(function(z){box(3.0,0.1,0.05,L(0x14161c),-0.45,2.44,z)});
-  box(0.35,0.5,2.1,L(0x1a1c22),2.5,0.9,0);             /* front bumper */
-  box(0.06,0.4,1.1,L(0x101218),2.53,1.28,0);           /* grille */
-  [-1,1].forEach(function(sd){
-    var hl=new THREE.Mesh(new THREE.CylinderGeometry(.2,.2,.08,18),B(0xfff3c4));hl.rotation.z=Math.PI/2;hl.position.set(2.52,1.28,sd*.78);carG.add(hl);
-    box(.08,.24,.34,B(0xff2a3a),-2.52,1.28,sd*.82);    /* tail lamps */
-    var fl=box(5.1,0.08,0.06,L(0x1a1c22),0,0.64,sd*1.07);}); /* sills */
-  [[1.65,1],[1.65,-1],[-1.55,1],[-1.55,-1]].forEach(function(w){
-    var t=new THREE.Mesh(new THREE.CylinderGeometry(.56,.56,.5,24),L(0x0d0e12));t.rotation.x=Math.PI/2;t.position.set(w[0],.56,w[1]*1.0);carG.add(t);
-    var hb=new THREE.Mesh(new THREE.CylinderGeometry(.3,.3,.52,16),L(0xaab2c4));hb.rotation.x=Math.PI/2;hb.position.set(w[0],.56,w[1]*1.0);carG.add(hb)});
-  var sp=new THREE.Mesh(new THREE.CylinderGeometry(.45,.45,.3,22),L(0x0d0e12));sp.rotation.z=Math.PI/2;sp.position.set(-2.67,1.45,0);carG.add(sp);   /* spare on the tailgate */
-  carG.rotation.y=-0.6;carG.position.y=.7;
+  function limb(a,b,t,mat,par){var d=a.distanceTo(b),m=new THREE.Mesh(new THREE.BoxGeometry(t,t,d),mat);m.position.copy(a).add(b).multiplyScalar(.5);m.lookAt(b.x+(par?0:0),b.y,b.z);(par||carG).add(m);return m}
+  var suitM=L(0xd9822b),dark=L(0x262a36),mid=L(0x4a5062);
+  dome=box(1.0,1.15,.6,suitM,0,1.88,0);                    /* torso (tints with the day's P&L) */
+  [-1,1].forEach(function(sd){box(.42,1.3,.46,dark,sd*.27,.65,0);box(.48,.26,.74,L(0x15171f),sd*.27,.13,.12)});   /* legs + boots */
+  box(1.06,.14,.66,mid,0,1.34,0);                           /* belt */
+  box(.8,.5,.05,mid,0,2.0,.32);                              /* chest plate */
+  box(.64,.64,.64,L(0xe8c9a0),0,2.76,0);                     /* head */
+  box(.74,.34,.74,mid,0,3.02,0);                             /* helmet top */
+  var visor=box(.6,.2,.05,B(0x38f4d8),0,2.8,.34);            /* glowing visor */
+  box(.9,1.15,.5,dark,0,1.95,-.55);                          /* power pack */
+  [-1,1].forEach(function(sd){var tb=new THREE.Mesh(new THREE.CylinderGeometry(.09,.09,1.0,10),B(0x38f4d8));tb.position.set(sd*.3,1.95,-.84);carG.add(tb)});
+  var packGlow=glowSprite(0x38f4d8,2.2);packGlow.position.set(0,2.0,-.9);carG.add(packGlow);
+  /* aiming rig: shoulders, arms and rifle pitch together */
+  aimG=new THREE.Group();aimG.position.set(0,2.25,0);carG.add(aimG);
+  var rifle=new THREE.Group();aimG.add(rifle);
+  box(.3,.34,1.9,mid,.34,-.12,1.05,rifle);                   /* rifle body */
+  box(.2,.2,.7,dark,.34,-.12,2.2,rifle);                     /* barrel */
+  var ring=new THREE.Mesh(new THREE.TorusGeometry(.17,.045,8,16),B(0x38f4d8));ring.position.set(.34,-.12,2.52);rifle.add(ring);
+  box(.24,.5,.3,dark,.34,-.44,.45,rifle);                    /* grip */
+  muzzle=new THREE.Object3D();muzzle.position.set(.34,-.12,2.6);rifle.add(muzzle);
+  muzGlow=glowSprite(0x38f4d8,1.6);muzGlow.position.copy(muzzle.position);rifle.add(muzGlow);
+  limb(new THREE.Vector3(.58,.0,0),new THREE.Vector3(.38,-.2,.55),.3,suitM,aimG);    /* right arm */
+  limb(new THREE.Vector3(-.58,.0,0),new THREE.Vector3(.3,-.1,1.5),.28,suitM,aimG);   /* left arm to the front grip */
+  rifle.userData.base=0;
+  carG.rotation.y=-0.6;
   domeGlow=glowSprite(0xffe8b0,7);domeGlow.position.y=1.6;vault.add(domeGlow);
   vaultHit=new THREE.Mesh(new THREE.CylinderGeometry(3.3,3.3,4.5,16),new THREE.MeshBasicMaterial({transparent:true,opacity:0,depthWrite:false}));vaultHit.position.y=2.2;vaultHit.userData.vault=true;vault.add(vaultHit);
 })();
@@ -837,7 +841,7 @@ function updateVault(){
   var tot=PNL.total,has=PNL.trades.length>0||PNL.points.some(function(p){return p.gain!=null});
   var g=tot>0?Math.min(1,Math.log10(1+tot)/4):(tot<0?Math.min(1,Math.log10(1+Math.abs(tot))/4):0);
   if(!has)g=.12;
-  var base=new THREE.Color(0x3f8a5c),target=tot<0?new THREE.Color(0xff3d6e):new THREE.Color(0xffffff);
+  var base=new THREE.Color(0xd9822b),target=tot<0?new THREE.Color(0xff3d6e):new THREE.Color(0xffffff);
   dome.material.color.copy(base).lerp(target,g*.6);
   domeGlow.material.color.set(tot<0?0xff3d6e:0xffe8b0);domeGlow.material.opacity=.25+g*.75;domeGlow.scale.setScalar(4+g*6);
   vaultLab.textContent='';
@@ -861,7 +865,7 @@ function placeLabels(){
     el.style.display='';el.style.transform='translate('+Math.round((tmp.x*.5+.5)*w)+'px,'+Math.round((-tmp.y*.5+.5)*h)+'px) translate(-50%,-100%)';
   }
   towers.forEach(function(t){put(t.lab,t.g.position.x,17,t.g.position.z)});
-  put(vaultLab,vault.position.x,4.8,vault.position.z);
+  put(vaultLab,vault.position.x,5.3,vault.position.z);
 }
 
 /* ---------- room screens ---------- */
@@ -1864,12 +1868,11 @@ function frame(now){
     t.glow.scale.setScalar(4.5+t.flash*5+(reduce?0:Math.sin(clock*2+i)*.4));
   });
   if(!reduce){
-    carG.rotation.y+=dt*.3;
     domeGlow.material.opacity=Math.min(1,domeGlow.material.opacity)*.0+(.35+.65*Math.min(1,Math.max(.12,Math.abs(PNL.total)>0?Math.log10(1+Math.abs(PNL.total))/4:.12)))*(.92+.08*Math.sin(clock*2));
     robot.head.rotation.y=Math.sin(clock*.8)*.35;robot.head.rotation.z=Math.sin(clock*1.3)*.05;
     robot.arms[0].position.y=1.9+Math.sin(clock*9)*.03;robot.arms[1].position.y=1.9+Math.sin(clock*9+1.7)*.03;
   }
-  flFrame(clock);
+  flFrame(clock);guyFrame(clock);
   renderer.render(scene,camera);
   placeLabels();
   requestAnimationFrame(frame);
@@ -1999,6 +2002,43 @@ function renderAct(){
   if(ACT)flAttach(ACT.pos.sym);else FL.g.visible=false;
   if(typeof srvPanelRender==='function')srvPanelRender();
   goalsRender();dayRender();
+}
+var _gy=-0.6,_gp=0;
+function guyFrame(clk){
+  if(!carG)return;
+  if(!beam){
+    beam=new THREE.Group();
+    var core=new THREE.Mesh(new THREE.CylinderGeometry(.07,.07,1,8),new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:.95,blending:THREE.AdditiveBlending,depthWrite:false}));
+    var glow=new THREE.Mesh(new THREE.CylinderGeometry(.26,.26,1,12),new THREE.MeshBasicMaterial({color:0x34ff9a,transparent:true,opacity:.5,blending:THREE.AdditiveBlending,depthWrite:false}));
+    var glow2=new THREE.Mesh(new THREE.CylinderGeometry(.5,.5,1,12),new THREE.MeshBasicMaterial({color:0x34ff9a,transparent:true,opacity:.18,blending:THREE.AdditiveBlending,depthWrite:false}));
+    var hit=glowSprite(0x34ff9a,7);
+    beam.add(core);beam.add(glow);beam.add(glow2);beam.userData={core:core,glow:glow,glow2:glow2,hit:hit};scene.add(beam);scene.add(hit);beam.visible=false;hit.visible=false;
+  }
+  var bu=beam.userData,on=!!(ACT&&!S.room&&towers.length),tw=null;
+  if(on){for(var i=0;i<towers.length;i++)if(towers[i].sym===ACT.pos.sym){tw=towers[i];break}if(!tw)tw=towers[0]}
+  var yawT,pitchT;
+  if(tw){
+    var dx=tw.g.position.x-vault.position.x,dz=tw.g.position.z-vault.position.z;
+    yawT=Math.atan2(dx,dz);pitchT=-Math.atan2(6.5-2.1,Math.sqrt(dx*dx+dz*dz)-2.6);
+  }else{yawT=-0.6+(reduce?0:Math.sin(clk*.5)*.5);pitchT=.18}
+  var dy=((yawT-_gy+Math.PI)%(Math.PI*2)+Math.PI*2)%(Math.PI*2)-Math.PI;
+  _gy+=dy*.08;_gp+=(pitchT-_gp)*.1;
+  carG.rotation.y=_gy;aimG.rotation.x=_gp;
+  if(!reduce&&!tw)carG.position.y=.72+Math.sin(clk*1.6)*.02;
+  var col=FL.col;
+  if(!tw){beam.visible=false;bu.hit.visible=false;muzGlow.scale.setScalar(1.4);return}
+  /* the beam: from the rifle muzzle to the middle of the active building */
+  aimG.updateMatrixWorld(true);
+  var a=new THREE.Vector3();muzzle.getWorldPosition(a);
+  var b=new THREE.Vector3(tw.g.position.x,6.5,tw.g.position.z),d=b.clone().sub(a),len=d.length();
+  var q=new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0),d.clone().normalize());
+  beam.quaternion.copy(q);beam.position.copy(a).add(b).multiplyScalar(.5);
+  var jit=reduce?1:(1+.25*Math.sin(clk*46)+.15*Math.sin(clk*83));
+  bu.core.scale.set(1,len,1);bu.glow.scale.set(jit,len,jit);bu.glow2.scale.set(1+(jit-1)*1.6,len,1+(jit-1)*1.6);
+  bu.glow.material.color.copy(col);bu.glow2.material.color.copy(col);
+  beam.visible=true;
+  bu.hit.visible=true;bu.hit.position.copy(b);bu.hit.material.color.copy(col);bu.hit.scale.setScalar(6+(reduce?0:Math.sin(clk*30)*1.2));
+  muzGlow.material.color.copy(col);muzGlow.scale.setScalar(2.2+(reduce?0:Math.sin(clk*40)*.4));
 }
 function flFrame(clk){
   if(!ACT||S.room){FL.g.visible=false;flRestore();return}
