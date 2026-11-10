@@ -487,6 +487,12 @@ async function backtest(days) {
       let x = 0; for (let j = Math.max(1, k - 30); j <= k; j++) if (bars[j].day === b.day && (bars[j].c - bars[j].vwap) * (bars[j - 1].c - bars[j - 1].vwap) < 0) x++;
       tags.push(x >= 3 ? 'chop' : 'trend');
       tags.push('ALL'); if (g.sig.trig === 'sweep') tags.push(x >= 3 ? 'sweep+chop' : 'sweep+trend');
+      if (g.sig.trig === 'ema') {
+        const pk = bars[k - 5] || bars[k - 1], slope = dir * (b.e50 - pk.e50) > 0, vw = dir * (b.c - b.vwap) > 0, body = Math.abs(b.c - b.o) >= 0.5 * b.atr;
+        tags.push('ema:' + (b.min < 630 ? 'open' : b.min < 840 ? 'mid' : 'late'), 'ema:' + (x >= 3 ? 'chop' : 'trend'), 'ema:slope' + (slope ? '+' : '-'), 'ema:vwap' + (vw ? '+' : '-'), 'ema:body' + (body ? 'big' : 'small'), 'ema:' + (slope && vw ? 'slope+vwap' : 'other'), 'ema:' + (slope && vw && x < 3 ? 'all3' : 'not-all3'));
+        const n1 = bars[k + 1];
+        if (n1 && n1.day === b.day && dir * (n1.c - b.c) > 0) tags.push('ema:confirmed');
+      }
       tags.forEach(t => { add(m, t, v); add(out.all, t, v); });
       // confirmation variant: next bar must also close beyond the signal bar's close; measure from that bar
       const n1 = bars[k + 1];
