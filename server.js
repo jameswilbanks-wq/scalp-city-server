@@ -145,6 +145,7 @@ const ACCOUNT = process.env.ACCOUNT_NUMBER || '463657817';
 const TRIGS = (process.env.TRIGGERS || 'sweep,ema').split(',').map(x => x.trim());
 const TRIG_CFG = TRIGS.includes('all') ? {} : { vwap: TRIGS.includes('vwap'), ema: TRIGS.includes('ema'), orb: TRIGS.includes('orb') }; // sweep is always on
 const EMA_FILTER = process.env.EMA_FILTER !== '0'; // skip EMA crosses that agree with both EMA slope and VWAP side (EMA_FILTER=0 turns off)
+const SWEEP_RUN = process.env.SWEEP_RUN !== '0'; // sweep trades use the wick stop + 1R underlying trail instead of the dollar exits
 const CHOP_MAX = +process.env.CHOP_MAX || 0; // off by default: the study found sweep signals in chop did no worse (n=36)
 const CFG = { maxPrem: +process.env.MAX_PREM || 250, dte: process.env.DTE === '0' ? 0 : 1, target: +process.env.DAILY_TARGET || 100, loss: +process.env.DAILY_LOSS || 50,
   syms: (process.env.SYMBOLS || 'QQQ,SPY,IWM').split(',').filter(x => !(process.env.EXCLUDE_SYMS === undefined ? 'IWM' : process.env.EXCLUDE_SYMS).split(',').includes(x)), maxTrades: 6, maxLosers: 3, premStop: .35, tpUp: .40, trailArm: .20, trailGap: .15, timeBars: 15, maxSpread: .12, cooldownMs: 5 * 60000 };
@@ -264,7 +265,7 @@ function shutCheck() {
 }
 function closePaper(reason, bid, info) {
   const p = P.rec.pos, q = p.qty || 1, hf = p.half || null, pnl = (hf ? hf.pnl : 0) + (bid - p.entryAsk) * 100 * (hf ? q - 1 : q);
-  P.rec.trades.push({ entryQAge: p.qAge, exitQAge: p.live ? p.live.age : undefined, qty: q, half: hf || undefined, sym: p.sym, type: p.type, strike: p.strike, exp: p.exp, inst: p.inst, entryT: iso(p.t0), entryAsk: p.entryAsk, entryBid: p.entryBid, entryU: p.entryU, exitT: iso(Date.now()), exitBid: bid, exitU: info && info.bar ? info.bar.c : null, pnl: Math.round(pnl * 100) / 100, peakBid: p.peak, reason, trig: p.trig, ext: p.ext, iv: p.iv, delta: p.delta });
+  P.rec.trades.push({ run: p.trailR ? true : undefined, trailR: p.trailR ? Math.round(p.trailR * 100) / 100 : undefined, entryQAge: p.qAge, exitQAge: p.live ? p.live.age : undefined, qty: q, half: hf || undefined, sym: p.sym, type: p.type, strike: p.strike, exp: p.exp, inst: p.inst, entryT: iso(p.t0), entryAsk: p.entryAsk, entryBid: p.entryBid, entryU: p.entryU, exitT: iso(Date.now()), exitBid: bid, exitU: info && info.bar ? info.bar.c : null, pnl: Math.round(pnl * 100) / 100, peakBid: p.peak, reason, trig: p.trig, ext: p.ext, iv: p.iv, delta: p.delta });
   P.rec.pnl = Math.round((P.rec.pnl + pnl) * 100) / 100; if (pnl < 0) P.rec.losers++;
   if (reason === 'stop' || reason === 'level' || reason === 'premium stop') P.rec.blockUntil = Date.now() + CFG.cooldownMs;
   P.rec.pos = null; shutCheck(); saveRec();
@@ -272,6 +273,21 @@ function closePaper(reason, bid, info) {
 function exitReason(p, prof, bid, info, bars) {
   const m = nowET().min, dir = p.dir; let reason = '';
   if (m >= p.flatMin) reason = 'eod';
+  /* SWEEP RUN exit (James approved 2026-11-10 after the year study: quick targets lost, a 1R chandelier trail was the best sweep exit, PF about 1.04): wick stop on the underlying, then the stop trails one stop-distance (R) behind the best price since entry. No +$25 target, no dollar trail, no -$20 premium stop, no level exit, no time stop; only a catastrophic -50% premium stop and the flat-before-close rule. Shadows keep profile B. SWEEP_RUN=0 reverts. */
+  if (p.trailR) {
+    if (!reason && bars) {
+      let stop = p.stopU, best = p.entryU, moved = false;
+      for (let i = 0; i < bars.length; i++) {
+        const x = bars[i]; if (x.t <= p.sigT) continue;
+        if (dir > 0 ? x.l <= stop : x.h >= stop) { reason = moved ? 'trail' : 'stop'; break; }
+        best = dir > 0 ? Math.max(best, x.h) : Math.min(best, x.l);
+        const ns = best - dir * p.trailR; if (dir * (ns - stop) > 0) { stop = ns; moved = true; }
+      }
+      p.stopNow = Math.round(stop * 100) / 100;
+    }
+    if (!reason && bid <= p.entryAsk * 0.5) reason = 'premium stop';
+    return reason;
+  }
   if (!reason && bars) {
     let adv = null;
     for (let i = bars.length - 1; i >= 0 && bars[i].t > p.sigT; i--) { const x = dir > 0 ? bars[i].l : bars[i].h; adv = adv === null ? x : (dir > 0 ? Math.min(adv, x) : Math.max(adv, x)); }
@@ -437,7 +453,7 @@ async function lookForEntry() {
     let pk; try { pk = await pickContract(s, sig.dir, inf.bar.c, P.extNow && EXT_SYMS.includes(s) && !CFG.syms.includes(s) ? EXT_MAXPREM : 0); } catch (e) { pk = { why: 'could not load option data (' + ((e && e.code) || 'error') + ')' }; }
     if (pk.why) { logSignal(s, sig, inf.bar.c, 'skipped', pk.why); continue; }
     r.pos = { sym: s, dir: sig.dir, type: pk.type, strike: pk.strike, exp: pk.exp, inst: pk.inst, t0: Date.now(), sigT: inf.bar.t, entryAsk: pk.ask, entryBid: pk.bid, entryU: inf.bar.c, qAge: pk.qAge, qty: QTY,
-      stopU: sig.stopPx !== undefined ? sig.stopPx : inf.bar.c - sig.dir * Math.max(sig.atr, 0.05), trig: sig.trig, lvl: sig.lvl, peak: pk.bid, iv: pk.iv, delta: pk.delta, flatMin: P.extNow && !CFG.syms.includes(s) ? P.extNow.flat : CFG.dte === 0 ? 935 : 950, ext: P.extNow && !CFG.syms.includes(s) ? P.extNow.name : undefined };
+      trailR: SWEEP_RUN && sig.trig === 'sweep' && sig.stopPx !== undefined && Math.abs(inf.bar.c - sig.stopPx) > 0.0001 * inf.bar.c ? Math.abs(inf.bar.c - sig.stopPx) : undefined, stopU: sig.stopPx !== undefined ? sig.stopPx : inf.bar.c - sig.dir * Math.max(sig.atr, 0.05), trig: sig.trig, lvl: sig.lvl, peak: pk.bid, iv: pk.iv, delta: pk.delta, flatMin: P.extNow && !CFG.syms.includes(s) ? P.extNow.flat : CFG.dte === 0 ? 935 : 950, ext: P.extNow && !CFG.syms.includes(s) ? P.extNow.name : undefined };
     openShadow(r.pos);
     logSignal(s, sig, inf.bar.c, 'entered', pk.type + ' ' + pk.strike + ' exp ' + pk.exp + ' @ ask $' + pk.ask.toFixed(2));
   }
