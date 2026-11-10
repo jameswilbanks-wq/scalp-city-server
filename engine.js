@@ -227,9 +227,21 @@ var Engine = (function () {
       var pk5 = bars[i - 5] || pr;
       if (sig.dir * (b.e50 - pk5.e50) > 0 && sig.dir * (b.c - b.vwap) > 0) { emaSkip = true; sig = null; }
     }
+    /* ORB5 (study 2026-11-10, a year of QQQ/SPY): first-5-minute range (9:30-9:34 ET), FIRST close beyond it of the day, stop at the opposite side of the range. Separate from the main signal: the server runs it as its own paper book. */
+    var orb5 = null, oBars = [];
+    for (j = s; j <= i; j++) if (bars[j].min >= 570 && bars[j].min <= 574) oBars.push(bars[j]);
+    if (oBars.length === 5 && b.min >= 575 && b.min <= 900 && pr.day === b.day) {
+      var oH = -Infinity, oL = Infinity, firstBreak = true;
+      oBars.forEach(function (x) { oH = Math.max(oH, x.h); oL = Math.min(oL, x.l); });
+      for (j = s; j < i; j++) if (bars[j].min >= 575 && (bars[j].c > oH || bars[j].c < oL)) { firstBreak = false; break; }
+      if (firstBreak && (b.c > oH || b.c < oL)) {
+        var od = b.c > oH ? 1 : -1, ostop = od > 0 ? oL : oH;
+        if (Math.abs(b.c - ostop) > 0.0001 * b.c) orb5 = { dir: od, trig: 'orb5', stopPx: ostop, oH: oH, oL: oL, atr: b.atr };
+      }
+    }
     var chop = 0;
     for (j = Math.max(s + 1, i - 30); j <= i; j++) if ((bars[j].c - bars[j].vwap) * (bars[j - 1].c - bars[j - 1].vwap) < 0) chop++;
-    return { emaSkip: emaSkip, chop: chop, bar: b, i: i, dayStart: s, day: b.day, orH: orH, orL: orL, signal: sig, atr: b.atr, vwap: b.vwap, e50: b.e50, e9: b.e9, inWindow: b.min >= c.startMin && b.min <= c.lastEntry };
+    return { orb5: orb5, emaSkip: emaSkip, chop: chop, bar: b, i: i, dayStart: s, day: b.day, orH: orH, orL: orL, signal: sig, atr: b.atr, vwap: b.vwap, e50: b.e50, e9: b.e9, inWindow: b.min >= c.startMin && b.min <= c.lastEntry };
   }
 
   /* Study helper: every entry signal the strategy would have produced over prepared bars (indicators must be filled). */
