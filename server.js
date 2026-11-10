@@ -581,6 +581,82 @@ async function backtest(days) {
   out.sim = simAll; out.all = fin(out.all); out.done = new Date().toISOString();
   return out;
 }
+/* ---------- Study 2 (read-only): about a year of 1-minute bars. Tests (A) opening-range breakout with R-multiple targets, (B) first-half-hour -> last-half-hour momentum, (C) sweep/EMA hold variants incl. the EMA filter. Option P&L model: 0.45 delta x underlying move x 100 minus $3 per contract (screen only, not proof). Saved to kv 'bt2'. ---------- */
+const BT2 = { run: false, res: null };
+async function backtest2(days) {
+  const now = Date.now(), out = { days, started: new Date().toISOString(), orb: {}, mom: {}, hold: {}, n: {} }, r2 = x => Math.round(x * 100) / 100;
+  const acc = (m, key, net, extra) => { const c = m[key] = m[key] || { n: 0, w: 0, gw: 0, gl: 0, net: 0, x: 0 }; c.n++; c.net += net; c.x += extra || 0; if (net > 0) { c.w++; c.gw += net; } else c.gl += -net; };
+  const fin = m => { const r = {}; Object.keys(m).sort().forEach(k => { const c = m[k]; r[k] = { n: c.n, win: Math.round(100 * c.w / c.n), avgNet: r2(c.net / c.n), total: r2(c.net), pf: c.gl ? r2(c.gw / c.gl) : null, avgX: r2(c.x / c.n) }; }); return r; };
+  const ORBM = {}, MOMM = {}, HOLDM = {};
+  for (const sym of CFG.syms) {
+    const st = {};
+    for (let a = now - days * 864e5; a < now; a += 4 * 864e5) {
+      const d = await rh('get_equity_historicals', { symbols: [sym], start_time: iso(a), end_time: iso(Math.min(a + 4 * 864e5, now)), interval: 'minute', bounds: 'regular' });
+      (((d.results || [])[0] || {}).bars || []).forEach(x => { st[Date.parse(x.begins_at)] = x; });
+    }
+    const bars = Engine.prepare(Object.keys(st).map(k => st[k])); if (bars.length < 1000) { out.n[sym] = 'too few bars: ' + bars.length; continue; }
+    Engine.simulate(bars, {}, true);
+    const dayList = []; bars.forEach(b => { if (dayList[dayList.length - 1] !== b.day) dayList.push(b.day); });
+    const half = d => dayList.indexOf(d) < dayList.length / 2 ? 'H1' : 'H2';
+    out.n[sym] = { bars: bars.length, sessions: dayList.length, from: dayList[0], to: dayList[dayList.length - 1] };
+    const add = (M, key, d, net, x) => { acc(M, key + '|ALL', net, x); acc(M, key + '|' + half(d), net, x); acc(M, sym + '|' + key + '|ALL', net, x); };
+    // per-day slices
+    let i = 0, prevClose = null;
+    const moms = [];
+    while (i < bars.length) {
+      let j = i; while (j < bars.length && bars[j].day === bars[i].day) j++;
+      const D = bars[i].day;
+      // (A) opening-range breakout, first 5 minutes
+      const or = []; for (let q = i; q < j; q++) if (bars[q].min >= 570 && bars[q].min <= 574) or.push(bars[q]);
+      if (or.length === 5) {
+        const orH = Math.max(...or.map(b => b.h)), orL = Math.min(...or.map(b => b.l));
+        for (let k = i; k < j - 1; k++) {
+          const b = bars[k]; if (b.min < 575 || b.min > 900) continue;
+          const dir = b.c > orH ? 1 : b.c < orL ? -1 : 0; if (!dir) continue;
+          const e = bars[k + 1].o, stop = dir > 0 ? orL : orH, risk = Math.abs(e - stop);
+          if (risk > 0.0001 * e) [['1R', 1], ['1.5R', 1.5], ['2R', 2], ['3R', 3], ['hold', 0]].forEach(([nm, mult]) => {
+            let xr = null;
+            for (let q = k + 1; q < j && bars[q].min < 930; q++) {
+              const x = bars[q], hitS = dir > 0 ? x.l <= stop : x.h >= stop, hitT = mult && (dir > 0 ? x.h >= e + mult * risk : x.l <= e - mult * risk);
+              if (hitS) { xr = -1; break; } if (hitT) { xr = mult; break; }
+              xr = dir * (x.c - e) / risk;
+            }
+            if (xr === null) return;
+            add(ORBM, 'orb5|' + nm, D, xr * risk * 45 - 3, xr);
+          });
+          break; // first breakout of the day only
+        }
+      }
+      // (B) momentum: first half-hour -> last half-hour
+      const b10 = bars.find((b, ix) => ix >= i && ix < j && b.min === 599), b930 = bars.find((b, ix) => ix >= i && ix < j && b.min === 930);
+      if (b10 && b930 && prevClose) {
+        const last = bars[j - 1], r1 = b10.c - prevClose, rF = b10.c - bars[i].o;
+        moms.push({ D, e: b930.o, x: last.c, r1, rF, rel: Math.abs(r1) / prevClose });
+      }
+      prevClose = bars[j - 1].c;
+      i = j;
+    }
+    const sorted = moms.map(m => m.rel).sort((a, b) => a - b), top = sorted[Math.floor(sorted.length * 2 / 3)] || 0;
+    moms.forEach(m => {
+      [['r1', m.r1], ['rFirst30', m.rF]].forEach(([nm, r]) => { const dir = r > 0 ? 1 : r < 0 ? -1 : 0; if (!dir) return; const u = dir * (m.x - m.e); add(MOMM, 'mom|' + nm, m.D, u * 45 - 3, u > 0 ? 1 : 0); if (m.rel >= top) add(MOMM, 'mom|' + nm + '|highvol', m.D, u * 45 - 3, u > 0 ? 1 : 0); });
+    });
+    // (C) sweep / EMA hold variants on all signals, with the EMA slope+VWAP filter flag
+    Engine.signals(bars, { vwap: false, orb: false }).forEach(g => {
+      const k = g.k, b = bars[k], dir = g.sig.dir, e = bars[k + 1]; if (!e || e.day !== b.day) return;
+      const pk = bars[k - 5] || bars[k - 1], filt = g.sig.trig === 'ema' && dir * (b.e50 - pk.e50) > 0 && dir * (b.c - b.vwap) > 0, tag = g.sig.trig + (g.sig.trig === 'ema' ? (filt ? '-filtered' : '-pass') : '');
+      const stops = { wick: g.sig.stopPx, none: null, atr1: e.o - dir * (b.atr || 0) };
+      [5, 10, 15, 20, 30].forEach(N => Object.keys(stops).forEach(sn => {
+        if (sn === 'wick' && (stops[sn] === undefined || stops[sn] === null)) return;
+        let ex = null; const st2 = stops[sn];
+        for (let q = k + 1; q <= k + N && bars[q] && bars[q].day === b.day; q++) { const x = bars[q]; if (st2 !== null && (dir > 0 ? x.l <= st2 : x.h >= st2)) { ex = st2; break; } ex = x.c; }
+        if (ex === null) return;
+        const u = dir * (ex - e.o); add(HOLDM, tag + '|' + sn + '/' + N, b.day, u * 45 - 3, u);
+      }));
+    });
+  }
+  out.orb = fin(ORBM); out.mom = fin(MOMM); out.hold = fin(HOLDM); out.done = new Date().toISOString();
+  return out;
+}
 const server = http.createServer(async (req, res) => {
   const u = new URL(req.url, 'http://x');
   try {
@@ -662,5 +738,6 @@ function load(){api('/api/status').then(function(x){s=x;draw()}).catch(function(
   setInterval(() => { fastPos(); }, FAST_MS);
   setInterval(() => { if (!S.connected && !S.connecting && !S.needsLogin) connect(); }, 60000);
   server.listen(PORT, () => console.log('listening on ' + PORT + ' paper mode, running=' + P.ctl.running));
+setTimeout(async () => { try { if (BT2.run || (await kget('bt2'))) return; BT2.run = true; BT2.res = await backtest2(+process.env.BT2_DAYS || 365); await kset('bt2', BT2.res); } catch (e) { BT2.res = { error: String(e && e.message || e) }; try { await kset('bt2', BT2.res); } catch (e2) {} } finally { BT2.run = false; } }, 150000); // year-long study once, saved to kv 'bt2' (delete the key to re-run on next boot)
 setTimeout(() => { if (!BT.run && !BT.res) { BT.run = true; backtest(20).then(r => { BT.res = r; return kset('bt', r); }).catch(e => { BT.res = { error: String(e && e.message || e) }; return kset('bt', BT.res); }).catch(() => {}).finally(() => { BT.run = false; }); } }, 90000); // one study per boot, saved to kv key 'bt'
 })();
