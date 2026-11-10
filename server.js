@@ -330,6 +330,59 @@ async function manageShadows() {
     saveRec();
   } catch (e) { /* never disturb the main paper trade */ }
 }
+/* ---------- Variant tracker (VT): logs EVERY raw sweep/EMA signal (taken or not, EMA-filtered or not, extra symbols too) and scores hypothetical exits on the underlying. Never trades; saved to kv key 'vt'. P&L model: 0.45 delta x underlying move x 100, minus $3 cost. ---------- */
+const VT_EXTRA = (process.env.VT_EXTRA === undefined ? 'IWM' : process.env.VT_EXTRA).split(',').map(x => x.trim().toUpperCase()).filter(Boolean);
+const VT_VARS = [['none', 5], ['none', 10], ['none', 15], ['wick', 10], ['wick', 15], ['atr1', 10]];
+const VT = { doc: null, dirty: false };
+function vtScore(bars, it) {
+  const ie = bars.findIndex(b => b.t > it.t); if (ie < 0) return;
+  const e = bars[ie];
+  VT_VARS.forEach(([sn, N]) => {
+    const key = sn + '/' + N; if (it.r[key] !== undefined) return;
+    if (sn === 'wick' && (it.stopPx === undefined || it.stopPx === null)) return;
+    if (bars.length <= ie + N - 1) return;
+    const st = sn === 'wick' ? it.stopPx : sn === 'atr1' ? e.o - it.dir * (it.atr || 0) : null;
+    let ex = null, hit = 0;
+    for (let j = ie; j < ie + N && bars[j] && bars[j].day === e.day; j++) {
+      const x = bars[j];
+      if (st !== null && (it.dir > 0 ? x.l <= st : x.h >= st)) { ex = st; hit = 1; break; }
+      ex = x.c;
+    }
+    if (ex === null) return;
+    it.r[key] = [Math.round(it.dir * (ex - e.o) * 1000) / 1000, hit]; VT.dirty = true;
+  });
+}
+function vtSum(items) {
+  const g = {}, r2 = x => Math.round(x * 100) / 100;
+  items.forEach(it => Object.keys(it.r).forEach(k => {
+    const net = it.r[k][0] * 45 - 3;
+    [it.trig + '|' + (it.filt ? 'filtered' : 'pass') + '|' + k, it.trig + '|ALL|' + k, it.sym + '|' + it.trig + '|' + k].forEach(key => {
+      const c = g[key] = g[key] || { n: 0, w: 0, gw: 0, gl: 0, net: 0 };
+      c.n++; c.net += net; if (net > 0) { c.w++; c.gw += net; } else c.gl += -net;
+    });
+  }));
+  const out = {};
+  Object.keys(g).sort().forEach(k => { const c = g[k]; out[k] = { n: c.n, win: Math.round(100 * c.w / c.n), avg: r2(c.net / c.n), total: r2(c.net), pf: c.gl ? r2(c.gw / c.gl) : null }; });
+  return out;
+}
+async function vtTick() {
+  if (!VT.doc) { VT.doc = (await kget('vt')) || { items: [] }; VT.doc.items = VT.doc.items || []; }
+  const vb = {};
+  for (const s of CFG.syms.concat(VT_EXTRA.filter(x => !CFG.syms.includes(x)))) {
+    let bars = CFG.syms.includes(s) ? P.bars[s] : await pBars(s, false);
+    if (!bars || bars.length < 60) continue; vb[s] = bars;
+    const raw = Engine.latest(bars, Object.assign({ emaFilter: false }, TRIG_CFG)), inf = Engine.latest(bars, Object.assign({ emaFilter: true }, TRIG_CFG));
+    if (raw && raw.signal) {
+      const sg = raw.signal, id = s + ':' + raw.bar.t + ':' + sg.trig;
+      if (!VT.doc.items.some(x => x.id === id)) { VT.doc.items.push({ id, sym: s, trig: sg.trig, dir: sg.dir, t: raw.bar.t, stopPx: sg.stopPx, atr: sg.atr, filt: !!(inf && inf.emaSkip), r: {} }); VT.dirty = true; }
+    }
+  }
+  VT.doc.items.forEach(it => { if (vb[it.sym]) vtScore(vb[it.sym], it); });
+  if (VT.dirty) {
+    VT.doc.items = VT.doc.items.slice(-1500); VT.doc.sum = vtSum(VT.doc.items); VT.doc.updated = new Date().toISOString(); VT.dirty = false;
+    await kset('vt', VT.doc);
+  }
+}
 async function lookForEntry() {
   const r = P.rec, fresh = [];
   (P.scan || CFG.syms).forEach(s => {
@@ -378,6 +431,7 @@ async function tick() {
     }
     if (P.rec.pos) await managePos();
     await manageShadows();
+    if (open) { try { await vtTick(); } catch (e) { P.vtErr = String(e && e.message || e).slice(0, 120); } }
     if (!P.rec.pos && !P.rec.shut) await lookForEntry();
     P.msg = P.rec.shut ? 'Done for the day (' + P.rec.shut + ').' : (ext ? 'Extended hours (' + ext.name + '-market): scanning ' + EXT_SYMS.join(', ') + '. Last check ' : 'Running. Last check ') + new Date().toISOString().slice(11, 19) + ' UTC.';
     P.tickErr = '';
