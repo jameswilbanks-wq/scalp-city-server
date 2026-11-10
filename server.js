@@ -468,7 +468,7 @@ function send(res, code, body, type) { res.writeHead(code, { 'content-type': typ
 const BT = { run: false, res: null };
 /* Read-only study: does price keep going our way after each entry signal? (underlying only, no options). */
 async function backtest(days) {
-  const simAll = {}, out = { days, syms: {}, all: {} }, now = Date.now(), H = [1, 3, 5, 10];
+  const simAll = {}, out = { days, syms: {}, all: {}, hold: {} }, now = Date.now(), H = [1, 3, 5, 10];
   const add = (m, key, v) => { const c = m[key] = m[key] || { n: 0, w: {}, sum: {}, atr: {} }; c.n++; H.forEach(h => { if (v[h] === undefined) return; c.w[h] = (c.w[h] || 0) + (v[h] > 0 ? 1 : 0); c.sum[h] = (c.sum[h] || 0) + v[h]; c.atr[h] = (c.atr[h] || 0) + v.a[h]; }); };
   for (const sym of CFG.syms) {
     const st = {};
@@ -499,7 +499,29 @@ async function backtest(days) {
       const n1 = bars[k + 1];
       if (n1 && n1.day === b.day && dir * (n1.c - b.c) > 0) { const w = { a: {} }; H.forEach(h => { if (bars[k + 1 + h] && bars[k + 1 + h].day === b.day) { w[h] = dir * (bars[k + 1 + h].c - n1.c); w.a[h] = w[h] / (b.atr || 1); } }); add(m, 'confirmed', w); add(out.all, 'confirmed', w); }
     });
+    // Hold study (sweep only): enter next bar open, exit on stop or after N bars; option P&L approximated as delta 0.45 x underlying move, minus a $3 spread/slippage cost per contract.
+    sigs.filter(g => g.sig.trig === 'sweep').forEach(g => {
+      const k = g.k, b = bars[k], dir = g.sig.dir, e = bars[k + 1];
+      if (!e || e.day !== b.day) return;
+      const stops = { wick: g.sig.stopPx, none: null, atr1: e.o - dir * (b.atr || 0) };
+      [5, 10, 15, 20, 30].forEach(N => Object.keys(stops).forEach(sn => {
+        let ex = null, why = 'time', j = k + 1;
+        for (; j <= k + N && bars[j] && bars[j].day === b.day; j++) {
+          const x = bars[j], st = stops[sn];
+          if (st !== null && st !== undefined && (dir > 0 ? x.l <= st : x.h >= st)) { ex = st; why = 'stop'; break; }
+          ex = x.c;
+        }
+        if (ex === null) return;
+        const u = dir * (ex - e.o), net = u * 100 * 0.45 - 3, key = sn + '/' + N + 'min';
+        [out.hold[sym] = out.hold[sym] || {}, out.hold.ALL = out.hold.ALL || {}].forEach(m => {
+          const c = m[key] = m[key] || { n: 0, w: 0, gw: 0, gl: 0, net: 0, u: 0, stops: 0, risk: 0 };
+          c.n++; c.net += net; c.u += u; if (net > 0) { c.w++; c.gw += net; } else c.gl += -net; if (why === 'stop') c.stops++;
+          c.risk += Math.abs(e.o - (g.sig.stopPx || e.o)) * 45;
+        });
+      }));
+    });
   }
+  Object.keys(out.hold).forEach(m => Object.keys(out.hold[m]).forEach(k => { const c = out.hold[m][k], r = x => Math.round(x * 100) / 100; out.hold[m][k] = { n: c.n, win: Math.round(100 * c.w / c.n), avgNet: r(c.net / c.n), total: r(c.net), pf: c.gl ? r(c.gw / c.gl) : null, avgU: r(c.u / c.n), stopPct: Math.round(100 * c.stops / c.n), wickRiskPerContract: r(c.risk / c.n) }; }));
   const fin = m => { const r = {}; Object.keys(m).forEach(k => { const c = m[k]; r[k] = { n: c.n }; H.forEach(h => { r[k]['up' + h] = c.n ? Math.round(100 * (c.w[h] || 0) / c.n) : null; r[k]['avg' + h + '$'] = c.n ? Math.round(100 * (c.sum[h] || 0) / c.n) / 100 : null; r[k]['avg' + h + 'ATR'] = c.n ? Math.round(100 * (c.atr[h] || 0) / c.n) / 100 : null; }); }); return r; };
   Object.keys(out.syms).forEach(s => { out.syms[s] = fin(out.syms[s]); });
   out.sim = simAll; out.all = fin(out.all); out.done = new Date().toISOString();
