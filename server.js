@@ -156,6 +156,11 @@ function extSession(ms) {
   return null;
 }
 const symActive = (sym, ms) => CFG.syms.includes(sym) ? marketOpen(ms) : (EXT_SYMS.includes(sym) && !!extSession(ms));
+/* Dollar exits (James, 2026-11-10): the main exits use dollars per 1-contract trade instead of % of the premium.
+   Take profit +$20, hard stop -$20, trail arms at +$12 and exits if it gives back $8 from the peak. Entries are skipped when the
+   bid/ask spread alone is wider than $10 (it would eat the $20 stop). DOLLAR_EXITS=0 goes back to the percent rules. */
+const USD = process.env.DOLLAR_EXITS === '0' ? null : { stop: 20, tp: 20, trailArm: 12, trailGap: 8, maxSpread: 10 };
+CFG.usd = USD;
 const PROFB = { premStop: .12, tpUp: .40, trailArm: .05, trailGap: .06, timeBars: 15 };
 const iso = ms => new Date(ms).toISOString();
 const nowET = () => Engine.et(Date.now());
@@ -224,6 +229,7 @@ async function pickContract(sym, dir, px, maxPrem) {
     if (cheapest === null || ask < cheapest) cheapest = ask;
     if (ask * 100 > maxPrem) continue;
     if ((ask - bid) / ask > CFG.maxSpread) continue;
+    if (CFG.usd && (ask - bid) * 100 > CFG.usd.maxSpread) continue;
     return { inst: k.id, strike: k.strike, exp, type, ask, bid, iv: +q.implied_volatility || null, delta: +q.delta || null };
   }
   return { why: cheapest === null ? (stale ? 'option quotes are stale' : 'no live quotes') : 'nothing near the money under $' + maxPrem + ' with a tight spread (cheapest ask $' + (cheapest * 100).toFixed(0) + ')' };
@@ -266,9 +272,16 @@ function exitReason(p, prof, bid, info, bars) {
     const last = info && info.bar;
     if (!reason && last && last.t > p.sigT) { const lvl = p.lvl !== undefined ? p.lvl : p.trig === 'vwap' ? last.vwap : p.trig === 'ema' ? last.e50 : (dir > 0 ? info.orH : info.orL); if (dir * (last.c - lvl) < 0) reason = 'level'; }
   }
-  if (!reason && bid <= p.entryAsk * (1 - prof.premStop)) reason = 'premium stop';
-  if (!reason && bid >= p.entryAsk * (1 + prof.tpUp)) reason = 'target';
-  if (!reason && p.peak >= p.entryAsk * (1 + prof.trailArm) && bid <= p.peak * (1 - prof.trailGap)) reason = 'trail';
+  if (prof.usd) {
+    const d = x => Math.round(x * 100 * 100) / 100, pk = p.peak || bid, gain = d(bid - p.entryAsk), peakGain = d(pk - p.entryAsk), back = d(pk - bid);
+    if (!reason && gain <= -prof.usd.stop) reason = 'premium stop';
+    if (!reason && gain >= prof.usd.tp) reason = 'target';
+    if (!reason && peakGain >= prof.usd.trailArm && back >= prof.usd.trailGap) reason = 'trail';
+  } else {
+    if (!reason && bid <= p.entryAsk * (1 - prof.premStop)) reason = 'premium stop';
+    if (!reason && bid >= p.entryAsk * (1 + prof.tpUp)) reason = 'target';
+    if (!reason && p.peak >= p.entryAsk * (1 + prof.trailArm) && bid <= p.peak * (1 - prof.trailGap)) reason = 'trail';
+  }
   if (!reason && Date.now() - p.t0 >= prof.timeBars * 60000 && bid < p.entryAsk * 1.05) reason = 'time';
   return reason;
 }
@@ -437,7 +450,7 @@ function status() {
     robinhood: { connected: S.connected, needsLogin: S.needsLogin, err: S.err, lastOk: S.lastOk }, store: pool ? 'database' : 'MEMORY ONLY',
     day: r && r.day, pnl: r && r.pnl, shut: r && r.shut, trades: (r && r.trades || []).slice(-20), signals: (r && r.signals || []).slice(-12),
     shadow: r && r.sh ? { pnl: r.sh.pnl, closed: r.sh.trades.length, open: r.sh.open.length } : null,
-    pos: p ? { sym: p.sym, type: p.type, strike: p.strike, exp: p.exp, entryAsk: p.entryAsk, t0: p.t0, bid: p.live && p.live.bid, peak: p.peak, asOf: p.live && p.live.t, stopPx: p.entryAsk * (1 - CFG.premStop), targetPx: p.entryAsk * (1 + CFG.tpUp) } : null,
+    pos: p ? { sym: p.sym, type: p.type, strike: p.strike, exp: p.exp, entryAsk: p.entryAsk, t0: p.t0, bid: p.live && p.live.bid, peak: p.peak, asOf: p.live && p.live.t, stopPx: CFG.usd ? p.entryAsk - CFG.usd.stop / 100 : p.entryAsk * (1 - CFG.premStop), targetPx: CFG.usd ? p.entryAsk + CFG.usd.tp / 100 : p.entryAsk * (1 + CFG.tpUp) } : null,
     limits: { target: CFG.target, loss: CFG.loss, syms: CFG.syms } };
 }
 const authed = (u, req) => ADMIN_KEY && (u.searchParams.get('key') === ADMIN_KEY || req.headers['x-key'] === ADMIN_KEY);
