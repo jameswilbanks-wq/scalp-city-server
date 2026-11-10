@@ -415,7 +415,14 @@ function scoreOf(scan) {
   const out = {}; Object.keys(cells).forEach(k => { const c = cells[k]; out[k] = { n: c.n, w: c.w, pnl: Math.round(c.pnl * 100) / 100, pf: c.gl ? Math.round(c.gw / c.gl * 100) / 100 : null, since: c.since }; });
   return out;
 }
+/* outside market hours the 20 s tick doesn't fetch candles, so the towers would say "loading" after every restart: load them on demand */
+const ENS = {};
+async function ensureBars(list) {
+  if (!S.connected || marketOpen(Date.now())) return;
+  await Promise.all(list.map(async s => { const e = ENS[s] = ENS[s] || { at: 0 }; if (P.raw[s] && Date.now() - e.at < 60000) return; e.at = Date.now(); try { await pBars(s); } catch (x) { e.err = String((x && (x.code || x.message)) || x).slice(0, 80); } }));
+}
 async function cityData(want) {
+  await ensureBars(CFG.syms);
   const bars = {}; CFG.syms.forEach(s => { bars[s] = bars5(s); });
   (await extraBars(WATCH || want || [])).forEach(s => { bars[s] = bars5(s); });
   const scan = await kscan('rec:', 200), score = scoreOf(scan);
