@@ -140,6 +140,10 @@ async function rh(tool, args) {
 
 /* ---------- strategy (same rules as the web page, paper only) ---------- */
 const ACCOUNT = process.env.ACCOUNT_NUMBER || '463657817';
+/* Triggers (2026-11-10 study: only the liquidity sweep leaned our way; EMA/VWAP/ORB were coin flips or worse).
+   Default: sweep only. TRIGGERS=all brings back vwap/ema/orb. CHOP_MAX skips a signal when price crossed VWAP that many times in the last 30 bars (0 = off). */
+const TRIG_CFG = (process.env.TRIGGERS || 'sweep') === 'all' ? {} : { vwap: false, ema: false, orb: false };
+const CHOP_MAX = process.env.CHOP_MAX === undefined ? 3 : +process.env.CHOP_MAX;
 const CFG = { maxPrem: +process.env.MAX_PREM || 250, dte: process.env.DTE === '0' ? 0 : 1, target: +process.env.DAILY_TARGET || 100, loss: +process.env.DAILY_LOSS || 50,
   syms: (process.env.SYMBOLS || 'QQQ,SPY,IWM').split(','), maxTrades: 6, maxLosers: 3, premStop: .35, tpUp: .40, trailArm: .20, trailGap: .15, timeBars: 15, maxSpread: .12, cooldownMs: 5 * 60000 };
 /* Extended hours (paper): NVDA and AAPL may also be scanned and traded before the open and after the close.
@@ -329,6 +333,7 @@ async function lookForEntry() {
   (P.scan || CFG.syms).forEach(s => {
     const inf = P.info[s]; if (!inf || !inf.signal) return;
     if (P.seenSig[s] === inf.bar.t) return; P.seenSig[s] = inf.bar.t;
+    if (CHOP_MAX > 0 && inf.chop >= CHOP_MAX) { logSignal(s, inf.signal, inf.bar.c, 'skipped', 'choppy: price crossed VWAP ' + inf.chop + ' times in 30 min'); return; }
     if (Date.now() - (inf.bar.t + 60000) > 150000) { logSignal(s, inf.signal, inf.bar.c, 'skipped', 'signal was more than 2 minutes old when seen'); return; }
     fresh.push(s);
   });
@@ -367,7 +372,7 @@ async function tick() {
     P.scan = open ? CFG.syms : EXT_SYMS;
     for (const s of P.scan) {
       const bars = await pBars(s, !open);
-      if (bars.length >= 60) { P.bars[s] = bars; P.info[s] = Engine.latest(bars, open ? {} : ext.cfg); }
+      if (bars.length >= 60) { P.bars[s] = bars; P.info[s] = Engine.latest(bars, Object.assign({}, TRIG_CFG, open ? {} : ext.cfg)); }
     }
     if (P.rec.pos) await managePos();
     await manageShadows();
@@ -461,7 +466,7 @@ function send(res, code, body, type) { res.writeHead(code, { 'content-type': typ
 const BT = { run: false, res: null };
 /* Read-only study: does price keep going our way after each entry signal? (underlying only, no options). */
 async function backtest(days) {
-  const out = { days, syms: {}, all: {} }, now = Date.now(), H = [1, 3, 5, 10];
+  const simAll = {}, out = { days, syms: {}, all: {} }, now = Date.now(), H = [1, 3, 5, 10];
   const add = (m, key, v) => { const c = m[key] = m[key] || { n: 0, w: {}, sum: {}, atr: {} }; c.n++; H.forEach(h => { if (v[h] === undefined) return; c.w[h] = (c.w[h] || 0) + (v[h] > 0 ? 1 : 0); c.sum[h] = (c.sum[h] || 0) + v[h]; c.atr[h] = (c.atr[h] || 0) + v.a[h]; }); };
   for (const sym of CFG.syms) {
     const st = {};
@@ -471,6 +476,8 @@ async function backtest(days) {
     }
     const bars = Engine.prepare(Object.keys(st).map(k => st[k])); Engine.simulate(bars, {}, true); // fills indicators
     const sigs = Engine.signals(bars, {});
+    const sw = Engine.simulate(bars, { vwap: false, ema: false, orb: false }, true), al = Engine.simulate(bars, {}, true), pick = r => ({ days: r.summary.days, trades: r.summary.trades, winRate: Math.round(1000 * r.summary.winRate) / 10, avgWin: Math.round(r.summary.avgWin * 100) / 100, avgLoss: Math.round(r.summary.avgLoss * 100) / 100, pf: Math.round(r.summary.profitFactor * 100) / 100, total: Math.round(r.summary.total * 100) / 100 });
+    simAll[sym] = { sweepOnly: pick(sw), all: pick(al) };
     const m = out.syms[sym] = {};
     sigs.forEach(g => {
       const k = g.k, b = bars[k], dir = g.sig.dir, v = { a: {} }, tags = [g.sig.trig];
@@ -478,7 +485,7 @@ async function backtest(days) {
       // chop: VWAP crossed 3+ times in the last 30 bars
       let x = 0; for (let j = Math.max(1, k - 30); j <= k; j++) if (bars[j].day === b.day && (bars[j].c - bars[j].vwap) * (bars[j - 1].c - bars[j - 1].vwap) < 0) x++;
       tags.push(x >= 3 ? 'chop' : 'trend');
-      tags.push('ALL');
+      tags.push('ALL'); if (g.sig.trig === 'sweep') tags.push(x >= 3 ? 'sweep+chop' : 'sweep+trend');
       tags.forEach(t => { add(m, t, v); add(out.all, t, v); });
       // confirmation variant: next bar must also close beyond the signal bar's close; measure from that bar
       const n1 = bars[k + 1];
@@ -486,7 +493,8 @@ async function backtest(days) {
     });
   }
   const fin = m => { const r = {}; Object.keys(m).forEach(k => { const c = m[k]; r[k] = { n: c.n }; H.forEach(h => { r[k]['up' + h] = c.n ? Math.round(100 * (c.w[h] || 0) / c.n) : null; r[k]['avg' + h + '$'] = c.n ? Math.round(100 * (c.sum[h] || 0) / c.n) / 100 : null; r[k]['avg' + h + 'ATR'] = c.n ? Math.round(100 * (c.atr[h] || 0) / c.n) / 100 : null; }); }); return r; };
-  Object.keys(out.syms).forEach(s => { out.syms[s] = fin(out.syms[s]); }); out.all = fin(out.all); out.done = new Date().toISOString();
+  Object.keys(out.syms).forEach(s => { out.syms[s] = fin(out.syms[s]); });
+  out.sim = simAll; out.all = fin(out.all); out.done = new Date().toISOString();
   return out;
 }
 const server = http.createServer(async (req, res) => {

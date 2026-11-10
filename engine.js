@@ -221,7 +221,9 @@ var Engine = (function () {
       sig = sweepSignal(bars, i, s, c) || crossSignal(b, pr, orH, orL, c);
       if (sig) sig.atr = b.atr;
     }
-    return { bar: b, i: i, dayStart: s, day: b.day, orH: orH, orL: orL, signal: sig, atr: b.atr, vwap: b.vwap, e50: b.e50, e9: b.e9, inWindow: b.min >= c.startMin && b.min <= c.lastEntry };
+    var chop = 0;
+    for (j = Math.max(s + 1, i - 30); j <= i; j++) if ((bars[j].c - bars[j].vwap) * (bars[j - 1].c - bars[j - 1].vwap) < 0) chop++;
+    return { chop: chop, bar: b, i: i, dayStart: s, day: b.day, orH: orH, orL: orL, signal: sig, atr: b.atr, vwap: b.vwap, e50: b.e50, e9: b.e9, inWindow: b.min >= c.startMin && b.min <= c.lastEntry };
   }
 
   /* Study helper: every entry signal the strategy would have produced over prepared bars (indicators must be filled). */
