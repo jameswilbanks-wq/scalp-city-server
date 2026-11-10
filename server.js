@@ -409,6 +409,7 @@ function scoreOf(scan) {
       if (!(t.exitT || t.exitBid != null) || t.unmanaged) return;
       const trig = t.trig || 'ema', pnl = +t.pnl || 0, sym = t.sym || '?';
       add(sym + '|' + trig, pnl, day); add(sym + '|*', pnl, day); add('*|' + trig, pnl, day); add('*|*', pnl, day);
+      add('*|@' + (t.ext || 'reg'), pnl, day); if (t.ext) add(sym + '|@ext', pnl, day); // session: pre / post / regular
     });
   });
   const out = {}; Object.keys(cells).forEach(k => { const c = cells[k]; out[k] = { n: c.n, w: c.w, pnl: Math.round(c.pnl * 100) / 100, pf: c.gl ? Math.round(c.gw / c.gl * 100) / 100 : null, since: c.since }; });

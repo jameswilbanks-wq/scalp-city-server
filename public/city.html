@@ -64,6 +64,8 @@ select:focus-visible,input:focus-visible,button:focus-visible{outline:2px solid 
 .sc td small{display:block;font:500 9px var(--f-mono);color:var(--dim);letter-spacing:.03em}
 .sc td.rl{text-align:left;color:var(--cyan);letter-spacing:.1em;border:none;font-size:11px}
 .sc td.g{color:var(--green);background:rgba(52,255,154,.08)}.sc td.r{color:#ff5d7a;background:rgba(255,93,122,.08)}.sc td.z{color:var(--dim)}
+.sc td.rl small.xb{display:block;font:600 8px var(--f-mono);letter-spacing:.06em;color:var(--amber,#ffd23f);margin-top:2px}
+.sc th.xh{color:var(--amber,#ffd23f)}.sc.ss{margin-top:6px}
 .sc td.best{box-shadow:inset 0 0 0 1px var(--green)}
 #score{margin:10px 0 2px}#score p{margin:3px 0;font-size:10px;color:var(--dim);line-height:1.5}
 .board h3{margin:0 0 8px;font:700 11px var(--f-disp);letter-spacing:.18em;color:var(--cyan)}
@@ -1012,10 +1014,15 @@ function renderScore(){
   var notes=[];
   rows.forEach(function(sym){
     var bk=null,bv=-1e9;ST.forEach(function(t){var c=SCORE[sym+'|'+t];if(c&&c.n>=5&&c.pnl>bv){bv=c.pnl;bk=t}});
-    h+='<tr><td class="rl">'+sym+'</td>';ST.forEach(function(t){h+=cell(SCORE[sym+'|'+t],t===bk&&bv>0)});h+=cell(SCORE[sym+'|*'])+'</tr>';
+    var xc=SCORE[sym+'|@ext'];
+    h+='<tr><td class="rl">'+sym+(xc?'<small class="xb">PRE/POST '+xc.n+'</small>':'')+'</td>';ST.forEach(function(t){h+=cell(SCORE[sym+'|'+t],t===bk&&bv>0)});h+=cell(SCORE[sym+'|*'])+'</tr>';
     if(bk&&bv>0)notes.push(sym+' &rarr; '+SN[bk]);
   });
   h+='<tr><td class="rl">ALL</td>';ST.forEach(function(t){h+=cell(SCORE['*|'+t])});h+=cell(SCORE['*|*'])+'</tr></table>';
+  var sr=SCORE['*|@reg'],sp=SCORE['*|@pre'],so=SCORE['*|@post'];
+  if(sp||so){
+    h+='<table class="sc ss"><tr><th>SESSION</th><th>REGULAR</th><th class="xh">PRE-MARKET</th><th class="xh">AFTER-HOURS</th></tr><tr><td class="rl">ALL</td>'+cell(sr)+cell(sp)+cell(so)+'</tr></table>';
+  }else h+='<p>No pre-market or after-hours trades yet (NVDA and AAPL scan those hours).</p>';
   h+='<p>Paper trades only, since the journal started. Green box = best strategy for that ticker (needs 5+ trades). &ldquo;few&rdquo; = too few trades to trust yet.'+(notes.length?'<br>Best so far: '+notes.join(' · '):'')+'</p>';
   el.innerHTML=h;
 }
