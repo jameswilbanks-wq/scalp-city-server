@@ -1050,7 +1050,7 @@ function tickClock(){
   $('clock').textContent='';
   var b=document.createElement('b');b.textContent=(m.open?'MARKET OPEN':'MARKET CLOSED')+' · '+p.hour+':'+p.minute+' ET';$('clock').appendChild(b);
   $('clock').appendChild(document.createElement('br'));
-  var t=document.createTextNode((m.open?hms(m.secs)+' to close':'opens in '+hms(m.secs))+(!m.open&&lastDay&&S.mode==='live'?' · showing '+lastDay.slice(5).replace('-','/')+' session':''));
+  var t=document.createTextNode((m.open?hms(m.secs)+' to close':'opens in '+hms(m.secs))+(!m.open&&lastDay&&S.mode==='live'?' · towers show last session, '+['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][new Date(lastDay+'T12:00:00Z').getUTCDay()]+' '+lastDay.slice(5).replace('-','/'):''));
   $('clock').appendChild(t);
 }
 setInterval(tickClock,1000);
