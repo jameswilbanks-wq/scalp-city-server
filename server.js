@@ -570,4 +570,5 @@ function load(){api('/api/status').then(function(x){s=x;draw()}).catch(function(
   setInterval(() => { fastPos(); }, FAST_MS);
   setInterval(() => { if (!S.connected && !S.connecting && !S.needsLogin) connect(); }, 60000);
   server.listen(PORT, () => console.log('listening on ' + PORT + ' paper mode, running=' + P.ctl.running));
+setTimeout(() => { if (!BT.run && !BT.res) { BT.run = true; backtest(20).then(r => { BT.res = r; return kset('bt', r); }).catch(e => { BT.res = { error: String(e && e.message || e) }; return kset('bt', BT.res); }).catch(() => {}).finally(() => { BT.run = false; }); } }, 90000); // one study per boot, saved to kv key 'bt'
 })();
