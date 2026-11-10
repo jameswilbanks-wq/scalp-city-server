@@ -221,9 +221,15 @@ var Engine = (function () {
       sig = sweepSignal(bars, i, s, c) || crossSignal(b, pr, orH, orL, c);
       if (sig) sig.atr = b.atr;
     }
+    /* EMA filter (study 2026-11-10): an EMA cross that agrees with BOTH the recent EMA slope (5 bars) and the VWAP side lost (41% up, -0.38 ATR at 5 min, n=125). Skip those. */
+    var emaSkip = false;
+    if (sig && sig.trig === 'ema' && c.emaFilter) {
+      var pk5 = bars[i - 5] || pr;
+      if (sig.dir * (b.e50 - pk5.e50) > 0 && sig.dir * (b.c - b.vwap) > 0) { emaSkip = true; sig = null; }
+    }
     var chop = 0;
     for (j = Math.max(s + 1, i - 30); j <= i; j++) if ((bars[j].c - bars[j].vwap) * (bars[j - 1].c - bars[j - 1].vwap) < 0) chop++;
-    return { chop: chop, bar: b, i: i, dayStart: s, day: b.day, orH: orH, orL: orL, signal: sig, atr: b.atr, vwap: b.vwap, e50: b.e50, e9: b.e9, inWindow: b.min >= c.startMin && b.min <= c.lastEntry };
+    return { emaSkip: emaSkip, chop: chop, bar: b, i: i, dayStart: s, day: b.day, orH: orH, orL: orL, signal: sig, atr: b.atr, vwap: b.vwap, e50: b.e50, e9: b.e9, inWindow: b.min >= c.startMin && b.min <= c.lastEntry };
   }
 
   /* Study helper: every entry signal the strategy would have produced over prepared bars (indicators must be filled). */

@@ -144,6 +144,7 @@ const ACCOUNT = process.env.ACCOUNT_NUMBER || '463657817';
    Default (James, 2026-11-10 11:00 CT): sweep + ema, IWM excluded everywhere (EXCLUDE_SYMS). TRIGGERS=all or a list like sweep,ema,vwap changes it. CHOP_MAX skips a signal when price crossed VWAP that many times in the last 30 bars (0 = off). */
 const TRIGS = (process.env.TRIGGERS || 'sweep,ema').split(',').map(x => x.trim());
 const TRIG_CFG = TRIGS.includes('all') ? {} : { vwap: TRIGS.includes('vwap'), ema: TRIGS.includes('ema'), orb: TRIGS.includes('orb') }; // sweep is always on
+const EMA_FILTER = process.env.EMA_FILTER !== '0'; // skip EMA crosses that agree with both EMA slope and VWAP side (EMA_FILTER=0 turns off)
 const CHOP_MAX = +process.env.CHOP_MAX || 0; // off by default: the study found sweep signals in chop did no worse (n=36)
 const CFG = { maxPrem: +process.env.MAX_PREM || 250, dte: process.env.DTE === '0' ? 0 : 1, target: +process.env.DAILY_TARGET || 100, loss: +process.env.DAILY_LOSS || 50,
   syms: (process.env.SYMBOLS || 'QQQ,SPY,IWM').split(',').filter(x => !(process.env.EXCLUDE_SYMS === undefined ? 'IWM' : process.env.EXCLUDE_SYMS).split(',').includes(x)), maxTrades: 6, maxLosers: 3, premStop: .35, tpUp: .40, trailArm: .20, trailGap: .15, timeBars: 15, maxSpread: .12, cooldownMs: 5 * 60000 };
@@ -373,7 +374,7 @@ async function tick() {
     P.scan = open ? CFG.syms : EXT_SYMS;
     for (const s of P.scan) {
       const bars = await pBars(s, !open);
-      if (bars.length >= 60) { P.bars[s] = bars; P.info[s] = Engine.latest(bars, Object.assign({}, TRIG_CFG, open ? {} : ext.cfg)); }
+      if (bars.length >= 60) { P.bars[s] = bars; P.info[s] = Engine.latest(bars, Object.assign({ emaFilter: EMA_FILTER }, TRIG_CFG, open ? {} : ext.cfg)); }
     }
     if (P.rec.pos) await managePos();
     await manageShadows();
