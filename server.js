@@ -157,9 +157,9 @@ function extSession(ms) {
 }
 const symActive = (sym, ms) => CFG.syms.includes(sym) ? marketOpen(ms) : (EXT_SYMS.includes(sym) && !!extSession(ms));
 /* Dollar exits (James, 2026-11-10): the main exits use dollars per 1-contract trade instead of % of the premium.
-   Take profit +$20, hard stop -$20, trail arms at +$12 and exits if it gives back $8 from the peak. Entries are skipped when the
+   Take profit +$25, hard stop -$20, trail arms at +$12 and exits if it gives back $8 from the peak. Entries are skipped when the
    bid/ask spread alone is wider than $10 (it would eat the $20 stop). DOLLAR_EXITS=0 goes back to the percent rules. */
-const USD = process.env.DOLLAR_EXITS === '0' ? null : { stop: 20, tp: 20, trailArm: 12, trailGap: 8, maxSpread: 10 };
+const USD = process.env.DOLLAR_EXITS === '0' ? null : { stop: 20, tp: 25, trailArm: 12, trailGap: 8, maxSpread: 10 };
 CFG.usd = USD;
 const PROFB = { premStop: .12, tpUp: .40, trailArm: .05, trailGap: .06, timeBars: 15 };
 const iso = ms => new Date(ms).toISOString();
