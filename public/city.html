@@ -861,7 +861,7 @@ function updateVault(){
   var n=document.createElement('span');n.className='sub';n.textContent=has?(PNL.trades.length+' closed trades · tap for board'):(PNL.loaded?'no closed trades in this window':'loading');vaultLab.appendChild(n);
 }
 function spanCut(){
-  if(S.span==='today'){var k=dayKey(Date.now()),t=Date.now()-864e5;while(dayKey(t)===k)t-=36e5;return t+36e5}
+  if(S.span==='today'){var k=dayKey(Date.now()),t=Date.now();while(dayKey(t)===k)t-=36e5;return t+36e5}
   return Date.now()-{week:7,month:30,'3month':90,ytd:Math.ceil((Date.now()-Date.UTC(new Date().getUTCFullYear(),0,1))/864e5)}[S.span]*864e5;
 }
 function spanName(s){return{today:'TODAY',week:'1W',month:'1M','3month':'3M',ytd:'YTD'}[s]||s}
