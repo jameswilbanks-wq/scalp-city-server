@@ -143,7 +143,7 @@ const ACCOUNT = process.env.ACCOUNT_NUMBER || '463657817';
 /* Triggers (2026-11-10 study: only the liquidity sweep leaned our way; EMA/VWAP/ORB were coin flips or worse).
    Default: sweep only. TRIGGERS=all brings back vwap/ema/orb. CHOP_MAX skips a signal when price crossed VWAP that many times in the last 30 bars (0 = off). */
 const TRIG_CFG = (process.env.TRIGGERS || 'sweep') === 'all' ? {} : { vwap: false, ema: false, orb: false };
-const CHOP_MAX = process.env.CHOP_MAX === undefined ? 3 : +process.env.CHOP_MAX;
+const CHOP_MAX = +process.env.CHOP_MAX || 0; // off by default: the study found sweep signals in chop did no worse (n=36)
 const CFG = { maxPrem: +process.env.MAX_PREM || 250, dte: process.env.DTE === '0' ? 0 : 1, target: +process.env.DAILY_TARGET || 100, loss: +process.env.DAILY_LOSS || 50,
   syms: (process.env.SYMBOLS || 'QQQ,SPY,IWM').split(','), maxTrades: 6, maxLosers: 3, premStop: .35, tpUp: .40, trailArm: .20, trailGap: .15, timeBars: 15, maxSpread: .12, cooldownMs: 5 * 60000 };
 /* Extended hours (paper): NVDA and AAPL may also be scanned and traded before the open and after the close.
