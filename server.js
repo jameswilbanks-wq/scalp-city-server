@@ -159,7 +159,7 @@ const symActive = (sym, ms) => CFG.syms.includes(sym) ? marketOpen(ms) : (EXT_SY
 /* Dollar exits (James, 2026-11-10): the main exits use dollars per 1-contract trade instead of % of the premium.
    Take profit +$25, hard stop -$20, trail arms at +$12 and exits if it gives back $8 from the peak. Entries are skipped when the
    bid/ask spread alone is wider than $10 (it would eat the $20 stop). DOLLAR_EXITS=0 goes back to the percent rules. */
-const USD = process.env.DOLLAR_EXITS === '0' ? null : { stop: 20, tp: 25, trailArm: 12, trailGap: 8, runGap: 12, maxSpread: 10 };
+const USD = process.env.DOLLAR_EXITS === '0' ? null : { stop: 20, tp: 25, trailArm: 12, trailGap: 5, trailFrac: 0.4, runGap: 12, maxSpread: 10 };
 const QTY = USD ? (+process.env.QTY || 2) : 1; // paper: 2 contracts, sell 1 at +$25 and let the other ride (needs dollar exits)
 CFG.usd = USD;
 const PROFB = { premStop: .12, tpUp: .40, trailArm: .05, trailGap: .06, timeBars: 15 };
@@ -277,7 +277,7 @@ function exitReason(p, prof, bid, info, bars) {
     const d = x => Math.round(x * 100 * 100) / 100, pk = p.peak || bid, gain = d(bid - p.entryAsk), peakGain = d(pk - p.entryAsk), back = d(pk - bid);
     if (!reason && gain <= -prof.usd.stop) reason = 'premium stop';
     if (!reason && !p.half && gain >= prof.usd.tp) reason = 'target';
-    if (!reason && peakGain >= prof.usd.trailArm && back >= (p.half ? prof.usd.runGap : prof.usd.trailGap)) reason = 'trail';
+    if (!reason && peakGain >= prof.usd.trailArm && back >= Math.max(p.half ? prof.usd.runGap : prof.usd.trailGap, prof.usd.trailFrac * peakGain)) reason = 'trail'; // gives back 40% of the peak gain (min $5, runner min $12)
   } else {
     if (!reason && bid <= p.entryAsk * (1 - prof.premStop)) reason = 'premium stop';
     if (!reason && bid >= p.entryAsk * (1 + prof.tpUp)) reason = 'target';
