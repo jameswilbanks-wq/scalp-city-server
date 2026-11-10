@@ -2020,7 +2020,7 @@ function renderAct(){
   var card=$('tradeCard'),fb=$('srvFeed');
   if(S.room||!ACT){card.hidden=true}
   else{
-    var p=ACT.pos,lv=p.live,hasQ=!!(lv&&lv.bid!=null),pn=hasQ?(lv.bid-p.entryAsk)*100:0,pc=hasQ&&p.entryAsk>0?(lv.bid/p.entryAsk-1)*100:0,stale=ACT.age>150000;
+    var p=ACT.pos,lv=p.live,hasQ=!!(lv&&lv.bid!=null),pn=hasQ?(p.half?p.half.pnl:0)+(lv.bid-p.entryAsk)*100*((p.qty||1)-(p.half?1:0)):0,pc=hasQ&&p.entryAsk>0?(lv.bid/p.entryAsk-1)*100:0,stale=ACT.age>150000;
     card.hidden=false;card.className=stale?'stale':(hasQ?(pn>=0?'up':'dn'):'');card.textContent='';
     function add(cls,txt){var d=document.createElement('div');d.className=cls;if(txt!=null)d.textContent=txt;card.appendChild(d);return d}
     add('tcs','ACTIVE TRADE · '+ACT.src);
@@ -2037,7 +2037,7 @@ function renderAct(){
   else if(SRV.state==='needs_ok'){fb.hidden=false;fb.textContent='TAP TO ALLOW SERVER FEED';fb.className='pill bad'}
   else if(SRV.state==='no_conn'){fb.hidden=false;fb.textContent='CONNECT SUPABASE IN SETTINGS FOR SERVER FEED';fb.className='pill bad'}
   else fb.hidden=true;
-  var pp=$('posPill');if(ACT&&(pp.hidden||pp.dataset.srv)&&ACT.src==='SERVER PAPER'){var q=ACT.pos,l=q.live;pp.hidden=false;if(l&&l.bid!=null){var pn2=(l.bid-q.entryAsk)*100;pp.className='pill '+(pn2>=0?'up':'dn');pp.textContent='SERVER '+q.sym+' '+q.strike+(q.type==='call'?'C':'P')+'  '+money(pn2,true)}else{pp.className='pill';pp.textContent='SERVER '+q.sym+' '+q.strike+(q.type==='call'?'C':'P')+' open'}pp.dataset.srv='1'}
+  var pp=$('posPill');if(ACT&&(pp.hidden||pp.dataset.srv)&&ACT.src==='SERVER PAPER'){var q=ACT.pos,l=q.live;pp.hidden=false;if(l&&l.bid!=null){var pn2=(q.half?q.half.pnl:0)+(l.bid-q.entryAsk)*100*((q.qty||1)-(q.half?1:0));pp.className='pill '+(pn2>=0?'up':'dn');pp.textContent='SERVER '+q.sym+' '+q.strike+(q.type==='call'?'C':'P')+'  '+money(pn2,true)}else{pp.className='pill';pp.textContent='SERVER '+q.sym+' '+q.strike+(q.type==='call'?'C':'P')+' open'}pp.dataset.srv='1'}
   else if(pp.dataset.srv&&!(ACT&&ACT.src==='SERVER PAPER')){pp.dataset.srv='';if(!(P.rec&&P.rec.pos))pp.hidden=true}
   var ex=$('tradeExit');ex.hidden=!(WEB&&ACT&&ACT.src==='SERVER PAPER'&&!S.room);if(!ex.hidden){var ar=Date.now()-Web.armed<5000;ex.className=ar?'arm':'';ex.textContent=ar?'TAP AGAIN TO EXIT (PAPER)':'EXIT TRADE NOW'}
   if(ACT)flAttach(ACT.pos.sym);else FL.g.visible=false;

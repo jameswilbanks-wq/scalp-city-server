@@ -159,7 +159,8 @@ const symActive = (sym, ms) => CFG.syms.includes(sym) ? marketOpen(ms) : (EXT_SY
 /* Dollar exits (James, 2026-11-10): the main exits use dollars per 1-contract trade instead of % of the premium.
    Take profit +$25, hard stop -$20, trail arms at +$12 and exits if it gives back $8 from the peak. Entries are skipped when the
    bid/ask spread alone is wider than $10 (it would eat the $20 stop). DOLLAR_EXITS=0 goes back to the percent rules. */
-const USD = process.env.DOLLAR_EXITS === '0' ? null : { stop: 20, tp: 25, trailArm: 12, trailGap: 8, maxSpread: 10 };
+const USD = process.env.DOLLAR_EXITS === '0' ? null : { stop: 20, tp: 25, trailArm: 12, trailGap: 8, runGap: 12, maxSpread: 10 };
+const QTY = USD ? (+process.env.QTY || 2) : 1; // paper: 2 contracts, sell 1 at +$25 and let the other ride (needs dollar exits)
 CFG.usd = USD;
 const PROFB = { premStop: .12, tpUp: .40, trailArm: .05, trailGap: .06, timeBars: 15 };
 const iso = ms => new Date(ms).toISOString();
@@ -256,8 +257,8 @@ function shutCheck() {
   else if (r.losers >= CFG.maxLosers) r.shut = 'losers'; else if (r.trades.length >= CFG.maxTrades) r.shut = 'trades';
 }
 function closePaper(reason, bid, info) {
-  const p = P.rec.pos, pnl = (bid - p.entryAsk) * 100;
-  P.rec.trades.push({ sym: p.sym, type: p.type, strike: p.strike, exp: p.exp, inst: p.inst, entryT: iso(p.t0), entryAsk: p.entryAsk, entryBid: p.entryBid, entryU: p.entryU, exitT: iso(Date.now()), exitBid: bid, exitU: info && info.bar ? info.bar.c : null, pnl: Math.round(pnl * 100) / 100, peakBid: p.peak, reason, trig: p.trig, ext: p.ext, iv: p.iv, delta: p.delta });
+  const p = P.rec.pos, q = p.qty || 1, hf = p.half || null, pnl = (hf ? hf.pnl : 0) + (bid - p.entryAsk) * 100 * (hf ? q - 1 : q);
+  P.rec.trades.push({ qty: q, half: hf || undefined, sym: p.sym, type: p.type, strike: p.strike, exp: p.exp, inst: p.inst, entryT: iso(p.t0), entryAsk: p.entryAsk, entryBid: p.entryBid, entryU: p.entryU, exitT: iso(Date.now()), exitBid: bid, exitU: info && info.bar ? info.bar.c : null, pnl: Math.round(pnl * 100) / 100, peakBid: p.peak, reason, trig: p.trig, ext: p.ext, iv: p.iv, delta: p.delta });
   P.rec.pnl = Math.round((P.rec.pnl + pnl) * 100) / 100; if (pnl < 0) P.rec.losers++;
   if (reason === 'stop' || reason === 'level' || reason === 'premium stop') P.rec.blockUntil = Date.now() + CFG.cooldownMs;
   P.rec.pos = null; shutCheck(); saveRec();
@@ -275,8 +276,8 @@ function exitReason(p, prof, bid, info, bars) {
   if (prof.usd) {
     const d = x => Math.round(x * 100 * 100) / 100, pk = p.peak || bid, gain = d(bid - p.entryAsk), peakGain = d(pk - p.entryAsk), back = d(pk - bid);
     if (!reason && gain <= -prof.usd.stop) reason = 'premium stop';
-    if (!reason && gain >= prof.usd.tp) reason = 'target';
-    if (!reason && peakGain >= prof.usd.trailArm && back >= prof.usd.trailGap) reason = 'trail';
+    if (!reason && !p.half && gain >= prof.usd.tp) reason = 'target';
+    if (!reason && peakGain >= prof.usd.trailArm && back >= (p.half ? prof.usd.runGap : prof.usd.trailGap)) reason = 'trail';
   } else {
     if (!reason && bid <= p.entryAsk * (1 - prof.premStop)) reason = 'premium stop';
     if (!reason && bid >= p.entryAsk * (1 + prof.tpUp)) reason = 'target';
@@ -291,7 +292,9 @@ async function managePos() {
   const bid = +q.bid_price; if (!(bid >= 0)) return;
   if (q.updated_at && Date.now() - Date.parse(q.updated_at) > 180000) return;
   p.live = { bid, ask: +q.ask_price, t: Date.now() }; p.peak = Math.max(p.peak || 0, bid);
-  const reason = exitReason(p, CFG, bid, info, bars); if (reason) closePaper(reason, bid, info);
+  const reason = exitReason(p, CFG, bid, info, bars);
+  if (reason === 'target' && (p.qty || 1) > 1 && !p.half) { p.half = { t: iso(Date.now()), bid, pnl: Math.round((bid - p.entryAsk) * 10000) / 100, qty: 1 }; return; } // sold 1 of 2 at the target, the other rides
+  if (reason) closePaper(reason, bid, info);
 }
 /* fast loop: while a paper position is open, re-price it every 2 s (stops and the screen both see fresh prices) */
 const FAST_MS = +process.env.FAST_MS || 2000;
@@ -335,7 +338,7 @@ async function lookForEntry() {
     if (Date.now() < r.blockUntil) { logSignal(s, sig, inf.bar.c, 'skipped', 'cooling down after a stop'); continue; }
     let pk; try { pk = await pickContract(s, sig.dir, inf.bar.c, P.extNow && EXT_SYMS.includes(s) && !CFG.syms.includes(s) ? EXT_MAXPREM : 0); } catch (e) { pk = { why: 'could not load option data (' + ((e && e.code) || 'error') + ')' }; }
     if (pk.why) { logSignal(s, sig, inf.bar.c, 'skipped', pk.why); continue; }
-    r.pos = { sym: s, dir: sig.dir, type: pk.type, strike: pk.strike, exp: pk.exp, inst: pk.inst, t0: Date.now(), sigT: inf.bar.t, entryAsk: pk.ask, entryBid: pk.bid, entryU: inf.bar.c,
+    r.pos = { sym: s, dir: sig.dir, type: pk.type, strike: pk.strike, exp: pk.exp, inst: pk.inst, t0: Date.now(), sigT: inf.bar.t, entryAsk: pk.ask, entryBid: pk.bid, entryU: inf.bar.c, qty: QTY,
       stopU: sig.stopPx !== undefined ? sig.stopPx : inf.bar.c - sig.dir * Math.max(sig.atr, 0.05), trig: sig.trig, lvl: sig.lvl, peak: pk.bid, iv: pk.iv, delta: pk.delta, flatMin: P.extNow && !CFG.syms.includes(s) ? P.extNow.flat : CFG.dte === 0 ? 935 : 950, ext: P.extNow && !CFG.syms.includes(s) ? P.extNow.name : undefined };
     openShadow(r.pos);
     logSignal(s, sig, inf.bar.c, 'entered', pk.type + ' ' + pk.strike + ' exp ' + pk.exp + ' @ ask $' + pk.ask.toFixed(2));
@@ -410,7 +413,7 @@ async function extraBars(list) {
 }
 function recOut() {
   const r = P.rec;
-  return r ? { shut: r.shut || '', day: r.day, pnl: r.pnl, ntr: r.trades.length, tr: r.trades.slice(-30).map(t => ({ sym: t.sym, k: t.strike, ty: t.type, in: t.entryT, pnl: t.pnl, why: t.reason })), sh: r.sh ? r.sh.pnl : null, upd: new Date(P.lastTick || Date.now()).toISOString(), run: { running: !!P.ctl.running }, pos: r.pos ? { sym: r.pos.sym, strike: r.pos.strike, type: r.pos.type, exp: r.pos.exp, entryAsk: r.pos.entryAsk, entryBid: r.pos.entryBid, peak: r.pos.peak, t0: r.pos.t0, trig: r.pos.trig, live: r.pos.live } : null } : null;
+  return r ? { shut: r.shut || '', day: r.day, pnl: r.pnl, ntr: r.trades.length, tr: r.trades.slice(-30).map(t => ({ sym: t.sym, k: t.strike, ty: t.type, in: t.entryT, pnl: t.pnl, why: t.reason })), sh: r.sh ? r.sh.pnl : null, upd: new Date(P.lastTick || Date.now()).toISOString(), run: { running: !!P.ctl.running }, pos: r.pos ? { sym: r.pos.sym, strike: r.pos.strike, type: r.pos.type, exp: r.pos.exp, entryAsk: r.pos.entryAsk, entryBid: r.pos.entryBid, qty: r.pos.qty || 1, half: r.pos.half || null, peak: r.pos.peak, t0: r.pos.t0, trig: r.pos.trig, live: r.pos.live } : null } : null;
 }
 function liveData() { return { now: Date.now(), run: !!P.ctl.running, market: marketOpen(Date.now()), msg: P.msg, rec: recOut() }; }
 /* scorecard: every closed paper trade, grouped by ticker x strategy (entry trigger: vwap / ema / orb / sweep) */
@@ -450,7 +453,7 @@ function status() {
     robinhood: { connected: S.connected, needsLogin: S.needsLogin, err: S.err, lastOk: S.lastOk }, store: pool ? 'database' : 'MEMORY ONLY',
     day: r && r.day, pnl: r && r.pnl, shut: r && r.shut, trades: (r && r.trades || []).slice(-20), signals: (r && r.signals || []).slice(-12),
     shadow: r && r.sh ? { pnl: r.sh.pnl, closed: r.sh.trades.length, open: r.sh.open.length } : null,
-    pos: p ? { sym: p.sym, type: p.type, strike: p.strike, exp: p.exp, entryAsk: p.entryAsk, t0: p.t0, bid: p.live && p.live.bid, peak: p.peak, asOf: p.live && p.live.t, stopPx: CFG.usd ? p.entryAsk - CFG.usd.stop / 100 : p.entryAsk * (1 - CFG.premStop), targetPx: CFG.usd ? p.entryAsk + CFG.usd.tp / 100 : p.entryAsk * (1 + CFG.tpUp) } : null,
+    pos: p ? { sym: p.sym, type: p.type, strike: p.strike, exp: p.exp, entryAsk: p.entryAsk, qty: p.qty || 1, half: p.half || null, t0: p.t0, bid: p.live && p.live.bid, peak: p.peak, asOf: p.live && p.live.t, stopPx: CFG.usd ? p.entryAsk - CFG.usd.stop / 100 : p.entryAsk * (1 - CFG.premStop), targetPx: CFG.usd ? p.entryAsk + CFG.usd.tp / 100 : p.entryAsk * (1 + CFG.tpUp) } : null,
     limits: { target: CFG.target, loss: CFG.loss, syms: CFG.syms } };
 }
 const authed = (u, req) => ADMIN_KEY && (u.searchParams.get('key') === ADMIN_KEY || req.headers['x-key'] === ADMIN_KEY);
@@ -513,8 +516,8 @@ $('msg').textContent=s.msg+(s.saveErr?' · '+s.saveErr:'');
 var lg=$('login');lg.innerHTML='';if(!s.robinhood.connected){var a=document.createElement('button');a.textContent='CONNECT ROBINHOOD (one-time login)';a.onclick=function(){location.href='/auth?key='+encodeURIComponent(KEY)};lg.appendChild(a)}
 $('pnl').textContent=s.pnl==null?'--':money(s.pnl);$('pnl').className='big '+(s.pnl>0?'up':s.pnl<0?'dn':'');
 $('shadow').textContent=s.shadow?('tight-exit test (B): '+money(s.shadow.pnl)+' on '+s.shadow.closed+' closed'+(s.shadow.open?', '+s.shadow.open+' open':'')):'';
-var p=s.pos,ph=$('pos');ph.innerHTML='';if(p){var has=p.bid!=null,pn=has?(p.bid-p.entryAsk)*100:0,pc=has?(p.bid/p.entryAsk-1)*100:0,d=document.createElement('div');d.className='card';
-d.innerHTML='<div class=dim>OPEN PAPER POSITION · 1 contract</div><div><b>'+p.sym+' '+p.strike+(p.type==='call'?' CALL':' PUT')+'</b> exp '+p.exp+'</div><div class="big '+(pn>=0?'up':'dn')+'">'+(has?money(pn)+' ('+(pc>=0?'+':'')+pc.toFixed(1)+'%)':'waiting for price…')+'</div><div class=dim>bought $'+p.entryAsk.toFixed(2)+' at '+t(p.t0)+' ET'+(has?' · sell price $'+p.bid.toFixed(2)+' · best $'+p.peak.toFixed(2):'')+' · auto-exits: stop $'+p.stopPx.toFixed(2)+' / target $'+p.targetPx.toFixed(2)+'</div>';
+var p=s.pos,ph=$('pos');ph.innerHTML='';if(p){var has=p.bid!=null,pn=has?(p.half?p.half.pnl:0)+(p.bid-p.entryAsk)*100*((p.qty||1)-(p.half?1:0)):0,pc=has?(p.bid/p.entryAsk-1)*100:0,d=document.createElement('div');d.className='card';
+d.innerHTML='<div class=dim>OPEN PAPER POSITION · '+(p.qty||1)+' contract'+((p.qty||1)>1?'s':'')+(p.half?' (1 sold, 1 riding)':'')+'</div><div><b>'+p.sym+' '+p.strike+(p.type==='call'?' CALL':' PUT')+'</b> exp '+p.exp+'</div><div class="big '+(pn>=0?'up':'dn')+'">'+(has?money(pn)+' ('+(pc>=0?'+':'')+pc.toFixed(1)+'%)':'waiting for price…')+'</div><div class=dim>bought $'+p.entryAsk.toFixed(2)+' at '+t(p.t0)+' ET'+(has?' · sell price $'+p.bid.toFixed(2)+' · best $'+p.peak.toFixed(2):'')+' · auto-exits: stop $'+p.stopPx.toFixed(2)+' / target $'+p.targetPx.toFixed(2)+'</div>';
 var c=document.createElement('button');c.textContent=Date.now()-armed<5000?'TAP AGAIN TO CLOSE (PAPER)':'CLOSE THIS TRADE NOW';c.onclick=function(){if(Date.now()-armed<5000){armed=0;api('/api/close','POST').then(load)}else{armed=Date.now();draw();setTimeout(draw,5200)}};d.appendChild(c);ph.appendChild(d)}
 var c=$('ctl');c.textContent=s.running?'STOP':'START PAPER TRADING';c.className=s.running?'stop':'';c.onclick=function(){api('/api/control?run='+(s.running?0:1),'POST').then(function(x){s=x;draw()})};
 var tb=$('tr');tb.innerHTML='<tr><th>Time</th><th>Contract</th><th>Paid</th><th>Sold</th><th>P&L</th><th>Why</th></tr>';s.trades.slice().reverse().forEach(function(x){var r=tb.insertRow();[t(Date.parse(x.entryT))+'-'+t(Date.parse(x.exitT)),x.sym+' '+x.strike+(x.type==='call'?'C':'P'),'$'+(+x.entryAsk).toFixed(2),x.exitBid==null?'--':'$'+(+x.exitBid).toFixed(2),money(x.pnl),x.reason].forEach(function(v,i){var td=r.insertCell();td.textContent=v;if(i===4)td.className=x.pnl>0?'up':x.pnl<0?'dn':''})});
