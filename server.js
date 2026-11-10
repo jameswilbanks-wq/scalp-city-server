@@ -141,11 +141,12 @@ async function rh(tool, args) {
 /* ---------- strategy (same rules as the web page, paper only) ---------- */
 const ACCOUNT = process.env.ACCOUNT_NUMBER || '463657817';
 /* Triggers (2026-11-10 study: only the liquidity sweep leaned our way; EMA/VWAP/ORB were coin flips or worse).
-   Default: sweep only. TRIGGERS=all brings back vwap/ema/orb. CHOP_MAX skips a signal when price crossed VWAP that many times in the last 30 bars (0 = off). */
-const TRIG_CFG = (process.env.TRIGGERS || 'sweep') === 'all' ? {} : { vwap: false, ema: false, orb: false };
+   Default (James, 2026-11-10 11:00 CT): sweep + ema, IWM excluded everywhere (EXCLUDE_SYMS). TRIGGERS=all or a list like sweep,ema,vwap changes it. CHOP_MAX skips a signal when price crossed VWAP that many times in the last 30 bars (0 = off). */
+const TRIGS = (process.env.TRIGGERS || 'sweep,ema').split(',').map(x => x.trim());
+const TRIG_CFG = TRIGS.includes('all') ? {} : { vwap: TRIGS.includes('vwap'), ema: TRIGS.includes('ema'), orb: TRIGS.includes('orb') }; // sweep is always on
 const CHOP_MAX = +process.env.CHOP_MAX || 0; // off by default: the study found sweep signals in chop did no worse (n=36)
 const CFG = { maxPrem: +process.env.MAX_PREM || 250, dte: process.env.DTE === '0' ? 0 : 1, target: +process.env.DAILY_TARGET || 100, loss: +process.env.DAILY_LOSS || 50,
-  syms: (process.env.SYMBOLS || 'QQQ,SPY,IWM').split(','), maxTrades: 6, maxLosers: 3, premStop: .35, tpUp: .40, trailArm: .20, trailGap: .15, timeBars: 15, maxSpread: .12, cooldownMs: 5 * 60000 };
+  syms: (process.env.SYMBOLS || 'QQQ,SPY,IWM').split(',').filter(x => !(process.env.EXCLUDE_SYMS === undefined ? 'IWM' : process.env.EXCLUDE_SYMS).split(',').includes(x)), maxTrades: 6, maxLosers: 3, premStop: .35, tpUp: .40, trailArm: .20, trailGap: .15, timeBars: 15, maxSpread: .12, cooldownMs: 5 * 60000 };
 /* Extended hours (paper): NVDA and AAPL may also be scanned and traded before the open and after the close.
    Windows are ET minutes since midnight (env EXT_PRE / EXT_POST as "start-end"); defaults 7:30-9:25 and 16:00-16:15.
    Entries stop a few minutes before each window ends and every extended-hours trade is flattened before it closes. */
@@ -476,7 +477,7 @@ async function backtest(days) {
     }
     const bars = Engine.prepare(Object.keys(st).map(k => st[k])); Engine.simulate(bars, {}, true); // fills indicators
     const sigs = Engine.signals(bars, {});
-    const sw = Engine.simulate(bars, { vwap: false, ema: false, orb: false }, true), al = Engine.simulate(bars, {}, true), pick = r => ({ days: r.summary.days, trades: r.summary.trades, winRate: Math.round(1000 * r.summary.winRate) / 10, avgWin: Math.round(r.summary.avgWin * 100) / 100, avgLoss: Math.round(r.summary.avgLoss * 100) / 100, pf: Math.round(r.summary.profitFactor * 100) / 100, total: Math.round(r.summary.total * 100) / 100 });
+    const sw = Engine.simulate(bars, { vwap: false, orb: false }, true), al = Engine.simulate(bars, {}, true), pick = r => ({ days: r.summary.days, trades: r.summary.trades, winRate: Math.round(1000 * r.summary.winRate) / 10, avgWin: Math.round(r.summary.avgWin * 100) / 100, avgLoss: Math.round(r.summary.avgLoss * 100) / 100, pf: Math.round(r.summary.profitFactor * 100) / 100, total: Math.round(r.summary.total * 100) / 100 });
     simAll[sym] = { sweepOnly: pick(sw), all: pick(al) };
     const m = out.syms[sym] = {};
     sigs.forEach(g => {
