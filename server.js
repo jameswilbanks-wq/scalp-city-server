@@ -231,7 +231,7 @@ async function pickContract(sym, dir, px, maxPrem) {
     if (ask * 100 > maxPrem) continue;
     if ((ask - bid) / ask > CFG.maxSpread) continue;
     if (CFG.usd && (ask - bid) * 100 > CFG.usd.maxSpread) continue;
-    return { inst: k.id, strike: k.strike, exp, type, ask, bid, iv: +q.implied_volatility || null, delta: +q.delta || null };
+    return { qAge: q.updated_at ? Date.now() - Date.parse(q.updated_at) : null, inst: k.id, strike: k.strike, exp, type, ask, bid, iv: +q.implied_volatility || null, delta: +q.delta || null };
   }
   return { why: cheapest === null ? (stale ? 'option quotes are stale' : 'no live quotes') : 'nothing near the money under $' + maxPrem + ' with a tight spread (cheapest ask $' + (cheapest * 100).toFixed(0) + ')' };
 }
@@ -258,7 +258,7 @@ function shutCheck() {
 }
 function closePaper(reason, bid, info) {
   const p = P.rec.pos, q = p.qty || 1, hf = p.half || null, pnl = (hf ? hf.pnl : 0) + (bid - p.entryAsk) * 100 * (hf ? q - 1 : q);
-  P.rec.trades.push({ qty: q, half: hf || undefined, sym: p.sym, type: p.type, strike: p.strike, exp: p.exp, inst: p.inst, entryT: iso(p.t0), entryAsk: p.entryAsk, entryBid: p.entryBid, entryU: p.entryU, exitT: iso(Date.now()), exitBid: bid, exitU: info && info.bar ? info.bar.c : null, pnl: Math.round(pnl * 100) / 100, peakBid: p.peak, reason, trig: p.trig, ext: p.ext, iv: p.iv, delta: p.delta });
+  P.rec.trades.push({ entryQAge: p.qAge, exitQAge: p.live ? p.live.age : undefined, qty: q, half: hf || undefined, sym: p.sym, type: p.type, strike: p.strike, exp: p.exp, inst: p.inst, entryT: iso(p.t0), entryAsk: p.entryAsk, entryBid: p.entryBid, entryU: p.entryU, exitT: iso(Date.now()), exitBid: bid, exitU: info && info.bar ? info.bar.c : null, pnl: Math.round(pnl * 100) / 100, peakBid: p.peak, reason, trig: p.trig, ext: p.ext, iv: p.iv, delta: p.delta });
   P.rec.pnl = Math.round((P.rec.pnl + pnl) * 100) / 100; if (pnl < 0) P.rec.losers++;
   if (reason === 'stop' || reason === 'level' || reason === 'premium stop') P.rec.blockUntil = Date.now() + CFG.cooldownMs;
   P.rec.pos = null; shutCheck(); saveRec();
@@ -291,7 +291,7 @@ async function managePos() {
   const qd = await rh('get_option_quotes', { instrument_ids: [p.inst] }), q = ((qd.results || [])[0] || {}).quote; if (!q) return;
   const bid = +q.bid_price; if (!(bid >= 0)) return;
   if (q.updated_at && Date.now() - Date.parse(q.updated_at) > 180000) return;
-  p.live = { bid, ask: +q.ask_price, t: Date.now() }; p.peak = Math.max(p.peak || 0, bid);
+  p.live = { bid, ask: +q.ask_price, t: Date.now(), age: q.updated_at ? Date.now() - Date.parse(q.updated_at) : null }; p.peak = Math.max(p.peak || 0, bid);
   const reason = exitReason(p, CFG, bid, info, bars);
   if (reason === 'target' && (p.qty || 1) > 1 && !p.half) { p.half = { t: iso(Date.now()), bid, pnl: Math.round((bid - p.entryAsk) * 10000) / 100, qty: 1 }; return; } // sold 1 of 2 at the target, the other rides
   if (reason) closePaper(reason, bid, info);
@@ -338,7 +338,7 @@ async function lookForEntry() {
     if (Date.now() < r.blockUntil) { logSignal(s, sig, inf.bar.c, 'skipped', 'cooling down after a stop'); continue; }
     let pk; try { pk = await pickContract(s, sig.dir, inf.bar.c, P.extNow && EXT_SYMS.includes(s) && !CFG.syms.includes(s) ? EXT_MAXPREM : 0); } catch (e) { pk = { why: 'could not load option data (' + ((e && e.code) || 'error') + ')' }; }
     if (pk.why) { logSignal(s, sig, inf.bar.c, 'skipped', pk.why); continue; }
-    r.pos = { sym: s, dir: sig.dir, type: pk.type, strike: pk.strike, exp: pk.exp, inst: pk.inst, t0: Date.now(), sigT: inf.bar.t, entryAsk: pk.ask, entryBid: pk.bid, entryU: inf.bar.c, qty: QTY,
+    r.pos = { sym: s, dir: sig.dir, type: pk.type, strike: pk.strike, exp: pk.exp, inst: pk.inst, t0: Date.now(), sigT: inf.bar.t, entryAsk: pk.ask, entryBid: pk.bid, entryU: inf.bar.c, qAge: pk.qAge, qty: QTY,
       stopU: sig.stopPx !== undefined ? sig.stopPx : inf.bar.c - sig.dir * Math.max(sig.atr, 0.05), trig: sig.trig, lvl: sig.lvl, peak: pk.bid, iv: pk.iv, delta: pk.delta, flatMin: P.extNow && !CFG.syms.includes(s) ? P.extNow.flat : CFG.dte === 0 ? 935 : 950, ext: P.extNow && !CFG.syms.includes(s) ? P.extNow.name : undefined };
     openShadow(r.pos);
     logSignal(s, sig, inf.bar.c, 'entered', pk.type + ' ' + pk.strike + ' exp ' + pk.exp + ' @ ask $' + pk.ask.toFixed(2));
@@ -458,6 +458,37 @@ function status() {
 }
 const authed = (u, req) => ADMIN_KEY && (u.searchParams.get('key') === ADMIN_KEY || req.headers['x-key'] === ADMIN_KEY);
 function send(res, code, body, type) { res.writeHead(code, { 'content-type': type || 'application/json', 'cache-control': 'no-store', 'access-control-allow-origin': '*', 'access-control-allow-headers': 'x-key,content-type' }); res.end(typeof body === 'string' ? body : JSON.stringify(body)); }
+const BT = { run: false, res: null };
+/* Read-only study: does price keep going our way after each entry signal? (underlying only, no options). */
+async function backtest(days) {
+  const out = { days, syms: {}, all: {} }, now = Date.now(), H = [1, 3, 5, 10];
+  const add = (m, key, v) => { const c = m[key] = m[key] || { n: 0, w: {}, sum: {}, atr: {} }; c.n++; H.forEach(h => { if (v[h] === undefined) return; c.w[h] = (c.w[h] || 0) + (v[h] > 0 ? 1 : 0); c.sum[h] = (c.sum[h] || 0) + v[h]; c.atr[h] = (c.atr[h] || 0) + v.a[h]; }); };
+  for (const sym of CFG.syms) {
+    const st = {};
+    for (let a = now - days * 864e5; a < now; a += 4 * 864e5) {
+      const d = await rh('get_equity_historicals', { symbols: [sym], start_time: iso(a), end_time: iso(Math.min(a + 4 * 864e5, now)), interval: 'minute', bounds: 'regular' });
+      (((d.results || [])[0] || {}).bars || []).forEach(x => { st[Date.parse(x.begins_at)] = x; });
+    }
+    const bars = Engine.prepare(Object.keys(st).map(k => st[k])); Engine.simulate(bars, {}, true); // fills indicators
+    const sigs = Engine.signals(bars, {});
+    const m = out.syms[sym] = {};
+    sigs.forEach(g => {
+      const k = g.k, b = bars[k], dir = g.sig.dir, v = { a: {} }, tags = [g.sig.trig];
+      H.forEach(h => { if (bars[k + h] && bars[k + h].day === b.day) { v[h] = dir * (bars[k + h].c - b.c); v.a[h] = v[h] / (b.atr || 1); } });
+      // chop: VWAP crossed 3+ times in the last 30 bars
+      let x = 0; for (let j = Math.max(1, k - 30); j <= k; j++) if (bars[j].day === b.day && (bars[j].c - bars[j].vwap) * (bars[j - 1].c - bars[j - 1].vwap) < 0) x++;
+      tags.push(x >= 3 ? 'chop' : 'trend');
+      tags.push('ALL');
+      tags.forEach(t => { add(m, t, v); add(out.all, t, v); });
+      // confirmation variant: next bar must also close beyond the signal bar's close; measure from that bar
+      const n1 = bars[k + 1];
+      if (n1 && n1.day === b.day && dir * (n1.c - b.c) > 0) { const w = { a: {} }; H.forEach(h => { if (bars[k + 1 + h] && bars[k + 1 + h].day === b.day) { w[h] = dir * (bars[k + 1 + h].c - n1.c); w.a[h] = w[h] / (b.atr || 1); } }); add(m, 'confirmed', w); add(out.all, 'confirmed', w); }
+    });
+  }
+  const fin = m => { const r = {}; Object.keys(m).forEach(k => { const c = m[k]; r[k] = { n: c.n }; H.forEach(h => { r[k]['up' + h] = c.n ? Math.round(100 * (c.w[h] || 0) / c.n) : null; r[k]['avg' + h + '$'] = c.n ? Math.round(100 * (c.sum[h] || 0) / c.n) / 100 : null; r[k]['avg' + h + 'ATR'] = c.n ? Math.round(100 * (c.atr[h] || 0) / c.n) / 100 : null; }); }); return r; };
+  Object.keys(out.syms).forEach(s => { out.syms[s] = fin(out.syms[s]); }); out.all = fin(out.all); out.done = new Date().toISOString();
+  return out;
+}
 const server = http.createServer(async (req, res) => {
   const u = new URL(req.url, 'http://x');
   try {
@@ -485,6 +516,11 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && u.pathname === '/api/resumeday') {
       if (!P.rec || P.rec.shut !== 'stopped by you') return send(res, 200, { ok: false, error: 'not stopped by you' });
       P.rec.shut = ''; await saveRec(); setImmediate(tick); return send(res, 200, { ok: true });
+    }
+    if (u.pathname === '/api/bt') {
+      const days = Math.min(+u.searchParams.get('days') || 20, 40);
+      if (!BT.run && (!BT.res || u.searchParams.get('fresh') === '1')) { BT.run = true; BT.res = null; backtest(days).then(r => { BT.res = r; }).catch(e => { BT.res = { error: String(e && e.message || e) }; }).finally(() => { BT.run = false; }); }
+      return send(res, 200, BT.res || { running: true });
     }
     if (u.pathname === '/api/live') { return send(res, 200, liveData()); }
     if (u.pathname === '/api/city') return send(res, 200, await cityData((u.searchParams.get('syms') || '').toUpperCase().split(',').map(x => x.trim()).filter(Boolean)));

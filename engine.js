@@ -224,6 +224,25 @@ var Engine = (function () {
     return { bar: b, i: i, dayStart: s, day: b.day, orH: orH, orL: orL, signal: sig, atr: b.atr, vwap: b.vwap, e50: b.e50, e9: b.e9, inWindow: b.min >= c.startMin && b.min <= c.lastEntry };
   }
 
-  return { simulate: simulate, latest: latest, prepare: prepare, ladderCfg: ladderCfg, DEFAULT: DEFAULT, et: et };
+  /* Study helper: every entry signal the strategy would have produced over prepared bars (indicators must be filled). */
+  function signals(bars, cfg) {
+    var c = {}; for (var k in DEFAULT) c[k] = DEFAULT[k]; for (k in cfg) c[k] = cfg[k];
+    var out = [], i = 0;
+    while (i < bars.length) {
+      var j = i; while (j < bars.length && bars[j].day === bars[i].day) j++;
+      var orH = -Infinity, orL = Infinity, q;
+      for (q = i; q < j; q++) if (bars[q].min < 585) { orH = Math.max(orH, bars[q].h); orL = Math.min(orL, bars[q].l); }
+      for (q = i + 1; q < j; q++) {
+        var b = bars[q];
+        if (b.min < c.startMin || b.min > c.lastEntry) continue;
+        var sig = sweepSignal(bars, q, i, c) || crossSignal(b, bars[q - 1], orH, orL, c);
+        if (sig) out.push({ k: q, sig: sig });
+      }
+      i = j;
+    }
+    return out;
+  }
+
+  return { signals: signals, simulate: simulate, latest: latest, prepare: prepare, ladderCfg: ladderCfg, DEFAULT: DEFAULT, et: et };
 })();
 if (typeof module !== 'undefined') module.exports = Engine;
