@@ -697,6 +697,49 @@ async function backtest2(days) {
   out.orb = fin(ORBM); out.mom = fin(MOMM); out.hold = fin(HOLDM); out.done = new Date().toISOString();
   return out;
 }
+/* ---------- Study 3 (read-only): payoff-shaped exits for sweep and EMA over about a year. Entry next bar open; stop = wick (sweep) or 1/2/3 x ATR; exit = 1R/2R/3R target, a 1R chandelier trail, or a 60-minute time exit; all flat by 15:30 ET. Same-bar stop+target counts as a stop. Option P&L model: 0.45 delta x move x 100 minus $3. Saved to kv 'bt3'. ---------- */
+async function backtest3(days) {
+  const now = Date.now(), out = { days, started: new Date().toISOString(), n: {} }, r2 = x => Math.round(x * 100) / 100, M = {};
+  const acc = (key, net, x) => { const c = M[key] = M[key] || { n: 0, w: 0, gw: 0, gl: 0, net: 0, x: 0 }; c.n++; c.net += net; c.x += x; if (net > 0) { c.w++; c.gw += net; } else c.gl += -net; };
+  for (const sym of CFG.syms) {
+    const st = {};
+    for (let a = now - days * 864e5; a < now; a += 4 * 864e5) {
+      const d = await rh('get_equity_historicals', { symbols: [sym], start_time: iso(a), end_time: iso(Math.min(a + 4 * 864e5, now)), interval: 'minute', bounds: 'regular' });
+      (((d.results || [])[0] || {}).bars || []).forEach(x => { st[Date.parse(x.begins_at)] = x; });
+    }
+    const bars = Engine.prepare(Object.keys(st).map(k => st[k])); if (bars.length < 1000) { out.n[sym] = 'too few bars: ' + bars.length; continue; }
+    Engine.simulate(bars, {}, true);
+    const dayList = []; bars.forEach(b => { if (dayList[dayList.length - 1] !== b.day) dayList.push(b.day); });
+    out.n[sym] = { bars: bars.length, sessions: dayList.length };
+    const halfOf = {}; dayList.forEach((d, ix) => { halfOf[d] = ix < dayList.length / 2 ? 'H1' : 'H2'; });
+    Engine.signals(bars, { vwap: false, orb: false }).forEach(g => {
+      const k = g.k, b = bars[k], dir = g.sig.dir, e = bars[k + 1]; if (!e || e.day !== b.day || !(b.atr > 0)) return;
+      const pk = bars[k - 5] || bars[k - 1], filt = g.sig.trig === 'ema' && dir * (b.e50 - pk.e50) > 0 && dir * (b.c - b.vwap) > 0;
+      const tag = g.sig.trig === 'ema' ? (filt ? 'ema-filtered' : 'ema-pass') : 'sweep', tod = b.min < 630 ? 'open' : b.min < 840 ? 'mid' : 'late';
+      const stops = { atr1: b.atr, atr2: 2 * b.atr, atr3: 3 * b.atr }; if (g.sig.stopPx !== undefined && g.sig.stopPx !== null) stops.wick = Math.abs(e.o - g.sig.stopPx);
+      Object.keys(stops).forEach(sn => {
+        const R = stops[sn]; if (!(R > 0.0001 * e.o)) return;
+        [['1R', 1], ['2R', 2], ['3R', 3], ['trail', 0], ['t60', 0]].forEach(([en, mult]) => {
+          let stop = e.o - dir * R, best = e.o, xr = null;
+          for (let q = k + 1; q < bars.length && bars[q].day === b.day && bars[q].min < 930; q++) {
+            const x = bars[q];
+            if (dir > 0 ? x.l <= stop : x.h >= stop) { xr = dir * (stop - e.o) / R; break; }
+            if (mult && (dir > 0 ? x.h >= e.o + mult * R : x.l <= e.o - mult * R)) { xr = mult; break; }
+            if (en === 'trail') { best = dir > 0 ? Math.max(best, x.h) : Math.min(best, x.l); const ns = best - dir * R; if (dir * (ns - stop) > 0) stop = ns; }
+            xr = dir * (x.c - e.o) / R;
+            if (en === 't60' && q - k >= 60) break;
+          }
+          if (xr === null) return;
+          const net = xr * R * 45 - 3, key = tag + '|' + sn + '|' + en;
+          acc(key + '|ALL', net, xr); acc(key + '|' + halfOf[b.day], net, xr); acc(key + '|' + tod, net, xr); acc(sym + '|' + key, net, xr);
+        });
+      });
+    });
+  }
+  out.res = {}; Object.keys(M).sort().forEach(k => { const c = M[k]; out.res[k] = { n: c.n, win: Math.round(100 * c.w / c.n), avgNet: r2(c.net / c.n), pf: c.gl ? r2(c.gw / c.gl) : null, avgR: r2(c.x / c.n) }; });
+  out.done = new Date().toISOString();
+  return out;
+}
 const server = http.createServer(async (req, res) => {
   const u = new URL(req.url, 'http://x');
   try {
@@ -778,6 +821,7 @@ function load(){api('/api/status').then(function(x){s=x;draw()}).catch(function(
   setInterval(() => { fastPos(); }, FAST_MS);
   setInterval(() => { if (!S.connected && !S.connecting && !S.needsLogin) connect(); }, 60000);
   server.listen(PORT, () => console.log('listening on ' + PORT + ' paper mode, running=' + P.ctl.running));
+setTimeout(async () => { try { if (await kget('bt3')) return; await kset('bt3', await backtest3(+process.env.BT2_DAYS || 365)); } catch (e) { try { await kset('bt3', { error: String(e && e.message || e) }); } catch (e2) {} } }, 120000); // payoff study once, saved to kv 'bt3'
 setTimeout(async () => { try { if (BT2.run || (await kget('bt2'))) return; BT2.run = true; BT2.res = await backtest2(+process.env.BT2_DAYS || 365); await kset('bt2', BT2.res); } catch (e) { BT2.res = { error: String(e && e.message || e) }; try { await kset('bt2', BT2.res); } catch (e2) {} } finally { BT2.run = false; } }, 150000); // year-long study once, saved to kv 'bt2' (delete the key to re-run on next boot)
 setTimeout(() => { if (!BT.run && !BT.res) { BT.run = true; backtest(20).then(r => { BT.res = r; return kset('bt', r); }).catch(e => { BT.res = { error: String(e && e.message || e) }; return kset('bt', BT.res); }).catch(() => {}).finally(() => { BT.run = false; }); } }, 90000); // one study per boot, saved to kv key 'bt'
 })();
