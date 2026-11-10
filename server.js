@@ -142,6 +142,20 @@ async function rh(tool, args) {
 const ACCOUNT = process.env.ACCOUNT_NUMBER || '463657817';
 const CFG = { maxPrem: +process.env.MAX_PREM || 250, dte: process.env.DTE === '0' ? 0 : 1, target: +process.env.DAILY_TARGET || 100, loss: +process.env.DAILY_LOSS || 50,
   syms: (process.env.SYMBOLS || 'QQQ,SPY,IWM').split(','), maxTrades: 6, maxLosers: 3, premStop: .35, tpUp: .40, trailArm: .20, trailGap: .15, timeBars: 15, maxSpread: .12, cooldownMs: 5 * 60000 };
+/* Extended hours (paper): NVDA and AAPL may also be scanned and traded before the open and after the close.
+   Windows are ET minutes since midnight (env EXT_PRE / EXT_POST as "start-end"); defaults 7:30-9:25 and 16:00-16:15.
+   Entries stop a few minutes before each window ends and every extended-hours trade is flattened before it closes. */
+const EXT_SYMS = (process.env.EXT_SYMBOLS === undefined ? 'NVDA,AAPL' : process.env.EXT_SYMBOLS).split(',').map(x => x.trim().toUpperCase()).filter(Boolean);
+const win2 = (v, d) => { const m = /^(\d+)-(\d+)$/.exec(v || ''); return m ? [+m[1], +m[2]] : d; };
+const EXT_WIN = { pre: win2(process.env.EXT_PRE, [450, 565]), post: win2(process.env.EXT_POST, [960, 975]) };
+const EXT_MAXPREM = +process.env.EXT_MAXPREM || 600; // NVDA/AAPL contracts cost more than the ETF cap; paper only
+function extSession(ms) {
+  const wd = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short' }).format(new Date(ms)); if (['Sat', 'Sun'].includes(wd)) return null;
+  const m = Engine.et(ms).min;
+  for (const n of ['pre', 'post']) { const w = EXT_WIN[n]; if (m >= w[0] && m < w[1]) return { name: n, flat: w[1] - 2, cfg: { startMin: w[0] + (n === 'pre' ? 5 : 1), lastEntry: w[1] - 5, orb: false, maxGap: 240000 } }; }
+  return null;
+}
+const symActive = (sym, ms) => CFG.syms.includes(sym) ? marketOpen(ms) : (EXT_SYMS.includes(sym) && !!extSession(ms));
 const PROFB = { premStop: .12, tpUp: .40, trailArm: .05, trailGap: .06, timeBars: 15 };
 const iso = ms => new Date(ms).toISOString();
 const nowET = () => Engine.et(Date.now());
@@ -152,10 +166,10 @@ function marketOpen(ms) {
 let WATCH = null; // tower list shared by every device (null = never set)
 const P = { raw: {}, bars: {}, info: {}, chain: {}, inst: {}, seenSig: {}, rec: null, ctl: { running: false }, lastTick: 0, msg: 'Starting', busy: false, tickErr: '', saveErr: '' };
 
-async function pBars(sym) {
+async function pBars(sym, ext) {
   const now = Date.now(); let st = P.raw[sym];
   async function win(a, b) {
-    const d = await rh('get_equity_historicals', { symbols: [sym], start_time: iso(a), end_time: iso(b), interval: 'minute', bounds: 'regular' });
+    const d = await rh('get_equity_historicals', { symbols: [sym], start_time: iso(a), end_time: iso(b), interval: 'minute', bounds: ext ? 'extended' : 'regular' });
     return ((d.results || [])[0] || {}).bars || [];
   }
   if (!st) {
@@ -168,14 +182,14 @@ async function pBars(sym) {
     const cut = now - 4 * 864e5; Object.keys(st).forEach(k => { if (+k < cut) delete st[k]; });
   }
   const list = Object.keys(st).map(k => st[k]).filter(x => Date.parse(x.begins_at) + 60000 <= Date.now());
-  return Engine.prepare(list, { partial: true });
+  return Engine.prepare(list, { partial: true, ext: !!ext });
 }
 async function getChain(sym) {
-  if (P.chain[sym]) return P.chain[sym];
+  if (P.chain[sym] && Date.now() - P.chain[sym].at < 6 * 3600e3) return P.chain[sym];
   const d = await rh('get_option_chains', { underlying_symbol: sym });
   const ch = (d.chains || []).filter(c => c.can_open_position && !c.settle_on_open)[0];
   if (!ch) throw { code: 'no_chain' };
-  return (P.chain[sym] = { id: ch.id, dates: (ch.expiration_dates || []).slice().sort() });
+  return (P.chain[sym] = { id: ch.id, at: Date.now(), dates: (ch.expiration_dates || []).slice().sort() });
 }
 function pickExpiry(ch, dte) {
   const today = nowET().day, fut = ch.dates.filter(d => d >= today);
@@ -192,7 +206,8 @@ async function getInst(chain, exp, type) {
   }
   return (P.inst[key] = out);
 }
-async function pickContract(sym, dir, px) {
+async function pickContract(sym, dir, px, maxPrem) {
+  maxPrem = maxPrem || CFG.maxPrem;
   const ch = await getChain(sym), exp = pickExpiry(ch, CFG.dte);
   if (!exp) return { why: 'no expiry available' };
   const type = dir > 0 ? 'call' : 'put', list = await getInst(ch, exp, type);
@@ -207,11 +222,11 @@ async function pickContract(sym, dir, px) {
     if (q.updated_at && Date.now() - Date.parse(q.updated_at) > 120000) { stale = true; continue; }
     const ask = +q.ask_price, bid = +q.bid_price; if (!(ask > 0 && bid > 0)) continue;
     if (cheapest === null || ask < cheapest) cheapest = ask;
-    if (ask * 100 > CFG.maxPrem) continue;
+    if (ask * 100 > maxPrem) continue;
     if ((ask - bid) / ask > CFG.maxSpread) continue;
     return { inst: k.id, strike: k.strike, exp, type, ask, bid, iv: +q.implied_volatility || null, delta: +q.delta || null };
   }
-  return { why: cheapest === null ? (stale ? 'option quotes are stale' : 'no live quotes') : 'nothing near the money under $' + CFG.maxPrem + ' with a tight spread (cheapest ask $' + (cheapest * 100).toFixed(0) + ')' };
+  return { why: cheapest === null ? (stale ? 'option quotes are stale' : 'no live quotes') : 'nothing near the money under $' + maxPrem + ' with a tight spread (cheapest ask $' + (cheapest * 100).toFixed(0) + ')' };
 }
 
 function newRec(day) { return { day, trades: [], signals: [], pnl: 0, losers: 0, shut: '', pos: null, blockUntil: 0, sh: { open: [], trades: [], pnl: 0 } }; }
@@ -236,7 +251,7 @@ function shutCheck() {
 }
 function closePaper(reason, bid, info) {
   const p = P.rec.pos, pnl = (bid - p.entryAsk) * 100;
-  P.rec.trades.push({ sym: p.sym, type: p.type, strike: p.strike, exp: p.exp, inst: p.inst, entryT: iso(p.t0), entryAsk: p.entryAsk, entryBid: p.entryBid, entryU: p.entryU, exitT: iso(Date.now()), exitBid: bid, exitU: info && info.bar ? info.bar.c : null, pnl: Math.round(pnl * 100) / 100, peakBid: p.peak, reason, trig: p.trig, iv: p.iv, delta: p.delta });
+  P.rec.trades.push({ sym: p.sym, type: p.type, strike: p.strike, exp: p.exp, inst: p.inst, entryT: iso(p.t0), entryAsk: p.entryAsk, entryBid: p.entryBid, entryU: p.entryU, exitT: iso(Date.now()), exitBid: bid, exitU: info && info.bar ? info.bar.c : null, pnl: Math.round(pnl * 100) / 100, peakBid: p.peak, reason, trig: p.trig, ext: p.ext, iv: p.iv, delta: p.delta });
   P.rec.pnl = Math.round((P.rec.pnl + pnl) * 100) / 100; if (pnl < 0) P.rec.losers++;
   if (reason === 'stop' || reason === 'level' || reason === 'premium stop') P.rec.blockUntil = Date.now() + CFG.cooldownMs;
   P.rec.pos = null; shutCheck(); saveRec();
@@ -268,7 +283,7 @@ async function managePos() {
 /* fast loop: while a paper position is open, re-price it every 2 s (stops and the screen both see fresh prices) */
 const FAST_MS = +process.env.FAST_MS || 2000;
 async function fastPos() {
-  if (P.busy || !P.ctl.running || !S.connected || !P.rec || !P.rec.pos || !marketOpen(Date.now())) return;
+  if (P.busy || !P.ctl.running || !S.connected || !P.rec || !P.rec.pos || !symActive(P.rec.pos.sym, Date.now())) return;
   P.busy = true;
   try { if (P.rec && P.rec.pos) { await managePos(); if (P.rec.pos) saveRecSoon(); } } catch (e) { /* the 20 s tick will retry */ } finally { P.busy = false; }
 }
@@ -295,7 +310,7 @@ async function manageShadows() {
 }
 async function lookForEntry() {
   const r = P.rec, fresh = [];
-  CFG.syms.forEach(s => {
+  (P.scan || CFG.syms).forEach(s => {
     const inf = P.info[s]; if (!inf || !inf.signal) return;
     if (P.seenSig[s] === inf.bar.t) return; P.seenSig[s] = inf.bar.t;
     if (Date.now() - (inf.bar.t + 60000) > 150000) { logSignal(s, inf.signal, inf.bar.c, 'skipped', 'signal was more than 2 minutes old when seen'); return; }
@@ -305,10 +320,10 @@ async function lookForEntry() {
     const s = fresh[i], inf = P.info[s], sig = inf.signal;
     if (r.pos || i > 0) { logSignal(s, sig, inf.bar.c, 'skipped', r.pos ? 'a position is already open' : 'another symbol signaled first'); continue; }
     if (Date.now() < r.blockUntil) { logSignal(s, sig, inf.bar.c, 'skipped', 'cooling down after a stop'); continue; }
-    let pk; try { pk = await pickContract(s, sig.dir, inf.bar.c); } catch (e) { pk = { why: 'could not load option data (' + ((e && e.code) || 'error') + ')' }; }
+    let pk; try { pk = await pickContract(s, sig.dir, inf.bar.c, P.extNow && EXT_SYMS.includes(s) && !CFG.syms.includes(s) ? EXT_MAXPREM : 0); } catch (e) { pk = { why: 'could not load option data (' + ((e && e.code) || 'error') + ')' }; }
     if (pk.why) { logSignal(s, sig, inf.bar.c, 'skipped', pk.why); continue; }
     r.pos = { sym: s, dir: sig.dir, type: pk.type, strike: pk.strike, exp: pk.exp, inst: pk.inst, t0: Date.now(), sigT: inf.bar.t, entryAsk: pk.ask, entryBid: pk.bid, entryU: inf.bar.c,
-      stopU: sig.stopPx !== undefined ? sig.stopPx : inf.bar.c - sig.dir * Math.max(sig.atr, 0.05), trig: sig.trig, lvl: sig.lvl, peak: pk.bid, iv: pk.iv, delta: pk.delta, flatMin: CFG.dte === 0 ? 935 : 950 };
+      stopU: sig.stopPx !== undefined ? sig.stopPx : inf.bar.c - sig.dir * Math.max(sig.atr, 0.05), trig: sig.trig, lvl: sig.lvl, peak: pk.bid, iv: pk.iv, delta: pk.delta, flatMin: P.extNow && !CFG.syms.includes(s) ? P.extNow.flat : CFG.dte === 0 ? 935 : 950, ext: P.extNow && !CFG.syms.includes(s) ? P.extNow.name : undefined };
     openShadow(r.pos);
     logSignal(s, sig, inf.bar.c, 'entered', pk.type + ' ' + pk.strike + ' exp ' + pk.exp + ' @ ask $' + pk.ask.toFixed(2));
   }
@@ -327,12 +342,21 @@ async function tick() {
     if (process.env.ENFORCE_LIMITS !== '1' && P.rec && ['trades', 'losers', 'loss', 'target'].includes(P.rec.shut)) { P.rec.shut = ''; saveRec(); }
     if (!P.ctl.running) { P.msg = 'Stopped. Press START on the dashboard to begin.'; return; }
     if (!S.connected) { P.msg = S.needsLogin ? 'Waiting for Robinhood login.' : 'Reconnecting to Robinhood…'; if (!S.connecting && !S.needsLogin) await connect(); return; }
-    if (!marketOpen(Date.now())) { P.msg = 'Market closed. Running and waiting for the open.'; return; }
-    for (const s of CFG.syms) { const bars = await pBars(s); if (bars.length >= 60) { P.bars[s] = bars; P.info[s] = Engine.latest(bars, {}); } }
+    const open = marketOpen(Date.now()), ext = open ? null : extSession(Date.now());
+    P.extNow = ext;
+    // an extended-hours trade must never be left open past its window: close it at the last price we saw
+    const sp = P.rec.pos;
+    if (sp && !CFG.syms.includes(sp.sym) && !symActive(sp.sym, Date.now())) { const lb = sp.live && sp.live.bid >= 0 ? sp.live.bid : sp.entryBid; closePaper('eod', lb, P.info[sp.sym] || null); }
+    if (!open && !ext) { P.msg = 'Market closed. Running and waiting for the open.'; return; }
+    P.scan = open ? CFG.syms : EXT_SYMS;
+    for (const s of P.scan) {
+      const bars = await pBars(s, !open);
+      if (bars.length >= 60) { P.bars[s] = bars; P.info[s] = Engine.latest(bars, open ? {} : ext.cfg); }
+    }
     if (P.rec.pos) await managePos();
     await manageShadows();
     if (!P.rec.pos && !P.rec.shut) await lookForEntry();
-    P.msg = P.rec.shut ? 'Done for the day (' + P.rec.shut + ').' : 'Running. Last check ' + new Date().toISOString().slice(11, 19) + ' UTC.';
+    P.msg = P.rec.shut ? 'Done for the day (' + P.rec.shut + ').' : (ext ? 'Extended hours (' + ext.name + '-market): scanning ' + EXT_SYMS.join(', ') + '. Last check ' : 'Running. Last check ') + new Date().toISOString().slice(11, 19) + ' UTC.';
     P.tickErr = '';
   } catch (e) {
     P.tickErr = String((e && (e.code || e.message)) || e).slice(0, 160);

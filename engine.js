@@ -32,7 +32,7 @@ var Engine = (function () {
       var t = Date.parse(b.begins_at);
       if (seen[t]) return; seen[t] = 1;
       var e = et(t);
-      if (e.min < 570 || e.min >= 960) return;
+      if (opts && opts.ext ? (e.min < 450 || e.min >= 976) : (e.min < 570 || e.min >= 960)) return;
       out.push({ t: t, o: +b.open_price, h: +b.high_price, l: +b.low_price, c: +b.close_price, v: +b.volume || 0, day: e.day, min: e.min });
     });
     out.sort(function (a, b) { return a.t - b.t; });
@@ -217,7 +217,7 @@ var Engine = (function () {
     var orH = -Infinity, orL = Infinity;
     for (var j = s; j <= i; j++) if (bars[j].min < 585) { orH = Math.max(orH, bars[j].h); orL = Math.min(orL, bars[j].l); }
     var sig = null;
-    if (pr.day === b.day && b.min >= c.startMin && b.min <= c.lastEntry) {
+    if (pr.day === b.day && b.min >= c.startMin && b.min <= c.lastEntry && !(c.maxGap && b.t - pr.t > c.maxGap)) {
       sig = sweepSignal(bars, i, s, c) || crossSignal(b, pr, orH, orL, c);
       if (sig) sig.atr = b.atr;
     }
