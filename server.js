@@ -865,6 +865,7 @@ async function optProbe() {
   }
   return out;
 }
+setTimeout(async () => { try { const cur = await kget('bt7'); if (cur && cur.progress === 'done') return; await kset('bt7', await require('./study0dte2.js')(ap, kset)); } catch (e) { try { await kset('bt7', { error: String(e && e.message || e) }); } catch (e2) {} } }, 30000); // call-spread reliability study, once
 setTimeout(async () => { try { const cur = await kget('bt6'); if (cur && cur.progress === 'done') return; await kset('bt6', await require('./study0dte.js')(ap, kset)); } catch (e) { try { await kset('bt6', { error: String(e && e.message || e) }); } catch (e2) {} } }, 30000); // 0DTE real-option-price study, once
 setTimeout(async () => { try { if (await kget('probe')) return; await kset('probe', await optProbe()); } catch (e) { try { await kset('probe', { error: String(e && e.message || e) }); } catch (e2) {} } }, 20000);
 const server = http.createServer(async (req, res) => {
