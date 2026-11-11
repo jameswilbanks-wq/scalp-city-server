@@ -848,6 +848,24 @@ async function backtest5(days) {
   out.done = new Date().toISOString();
   return out;
 }
+/* ---------- one-time probe: can we get real historical option prices for expired 0DTE contracts from Alpaca? Saved to kv 'probe'. ---------- */
+async function optProbe() {
+  const out = { at: new Date().toISOString(), days: {} };
+  for (const day of ['2026-11-06', '2026-05-15', '2025-03-14', '2024-03-15']) {
+    const o = out.days[day] = {};
+    try {
+      const sb = await ap('/v2/stocks/SPY/bars', { timeframe: '1Day', start: day + 'T00:00:00Z', end: day + 'T23:59:00Z', feed: 'iex', limit: 1 });
+      const px = sb.bars && sb.bars[0] ? sb.bars[0].o : null; o.spyOpen = px; if (!px) continue;
+      const k = Math.round(px), ymd = day.slice(2, 4) + day.slice(5, 7) + day.slice(8, 10);
+      const syms = [k, k + 2, k - 2].map((x, ix) => 'SPY' + ymd + (ix === 2 ? 'P' : 'C') + String(x * 1000).padStart(8, '0')); o.syms = syms;
+      const b = await ap('/v1beta1/options/bars', { symbols: syms.join(','), timeframe: '1Min', start: day + 'T13:30:00Z', end: day + 'T21:00:00Z', limit: 1500 });
+      o.bars = {}; Object.keys(b.bars || {}).forEach(x => { const a = b.bars[x]; o.bars[x] = { n: a.length, first: a[0], last: a[a.length - 1] }; }); o.next = b.next_page_token || null;
+      try { const t = await ap('/v1beta1/options/trades', { symbols: syms[0], start: day + 'T13:30:00Z', end: day + 'T21:00:00Z', limit: 5 }); o.trades = (t.trades && t.trades[syms[0]] || []).length; o.trade0 = t.trades && t.trades[syms[0]] && t.trades[syms[0]][0]; } catch (e) { o.tradesErr = String(e.message).slice(0, 160); }
+    } catch (e) { o.err = String(e && e.message || e).slice(0, 200); }
+  }
+  return out;
+}
+setTimeout(async () => { try { if (await kget('probe')) return; await kset('probe', await optProbe()); } catch (e) { try { await kset('probe', { error: String(e && e.message || e) }); } catch (e2) {} } }, 20000);
 const server = http.createServer(async (req, res) => {
   const u = new URL(req.url, 'http://x');
   try {
