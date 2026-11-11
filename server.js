@@ -385,7 +385,7 @@ async function manageOrb() {
   } catch (e) { /* never disturb the main paper trade */ }
 }
 /* ---------- Call credit spread paper book (CSK). James approved 2026-11-11 after studies bt6/bt7 on real option prices: selling same-day call spreads from 11:00 ET on SPY and QQQ and HOLDING TO THE CLOSE was positive in both the tuning and the locked period on both symbols ($2 wide about +$4 to +$5 per spread per day at $0.01 per leg slippage, about 87-90% winners, worst day about -$200); closing at 15:30 lost and an underlying stop gave up most of the profit. The open question is the real bid/ask cost, so this book records live quotes. One spread per symbol per day: at 11:00 ET sell the call nearest 0.45% above the price and buy the call $2 higher (same-day expiry). Paper fill at the NATURAL price (sell at the bid, buy at the ask); the mid is recorded too. Held to the close and settled on the last price (capped at the width). It also records, without acting on them, the cost to close at 15:30 ET and when the price first closes above the short strike. Assignment and early-close risks at a real broker are NOT modeled. CSK_ON=0 turns it off. ---------- */
-const CSK_ON = process.env.CSK_ON !== '0', CSK = { syms: (process.env.CSK_SYMS || 'SPY,QQQ').split(',').map(x => x.trim().toUpperCase()).filter(Boolean), pct: +process.env.CSK_PCT || 0.0045, width: +process.env.CSK_WIDTH || 2, min: +process.env.CSK_MIN || 660 };
+const CSK_ON = process.env.CSK_ON !== '0', CSK = { syms: (process.env.CSK_SYMS || 'SPY,QQQ').split(',').map(x => x.trim().toUpperCase()).filter(Boolean), pct: +process.env.CSK_PCT || 0.0045, width: +process.env.CSK_WIDTH || 2, min: +process.env.CSK_MIN || 660, stop: process.env.CSK_STOP === '0' ? 0 : (+process.env.CSK_STOP || 3) };
 async function cskQuotes(ids) { const qd = await rh('get_option_quotes', { instrument_ids: ids }), by = {}; (qd.results || []).forEach(z => { if (z.quote) by[z.quote.instrument_id] = z.quote; }); return by; }
 async function cskLook() {
   const r = P.rec; if (!CSK_ON || !r || r.shut || !marketOpen(Date.now())) return;
@@ -411,6 +411,11 @@ async function cskLook() {
   }
   saveRec();
 }
+function cskClose(p, costNat, costMid, u, reason) {
+  const k = P.rec.csk, pnl = Math.round((p.creditNat - costNat) * 10000) / 100, pnlMid = Math.round((p.creditMid - costMid) * 10000) / 100;
+  k.trades.push({ sym: p.sym, type: 'call spread', strike: p.ks, kl: p.kl, exp: p.exp, entryT: iso(p.t0), exitT: iso(Date.now()), entryU: p.entryU, closeU: u, creditNat: p.creditNat, creditMid: p.creditMid, sBid: p.sBid, sAsk: p.sAsk, lBid: p.lBid, lAsk: p.lAsk, closeNat: costNat, closeMid: costMid, pnl, pnlMid, reason, trig: 'cspread', qty: 1, at330: p.at330 || null, ustop: p.ustop || null, pnl330: p.at330 ? Math.round((p.creditNat - p.at330.closeNat) * 10000) / 100 : null, pnlUstop: p.ustop ? Math.round((p.creditNat - p.ustop.closeNat) * 10000) / 100 : null });
+  k.pnl = Math.round((k.pnl + pnl) * 100) / 100; k.open = k.open.filter(x => x !== p);
+}
 async function cskManage() {
   const k = P.rec && P.rec.csk; if (!k || !k.open.length) return;
   const e = nowET();
@@ -419,17 +424,19 @@ async function cskManage() {
       const q = await cskQuotes(k.open.flatMap(p => [p.instS, p.instL]));
       for (const p of k.open) {
         const a = q[p.instS], b = q[p.instL], u = P.info[p.sym] && P.info[p.sym].bar ? P.info[p.sym].bar.c : null; if (u !== null) p.lastU = u;
-        if (a && b) { const nat = Math.round((+a.ask_price - +b.bid_price) * 100) / 100, mid = Math.round(((+a.bid_price + +a.ask_price) / 2 - (+b.bid_price + +b.ask_price) / 2) * 1000) / 1000; p.live = { closeNat: nat, closeMid: mid, t: Date.now(), u };
+        if (a && b) { const nat = Math.round((+a.ask_price - +b.bid_price) * 100) / 100, mid = Math.round(((+a.bid_price + +a.ask_price) / 2 - (+b.bid_price + +b.ask_price) / 2) * 1000) / 1000, fresh = Math.max(Date.now() - Date.parse(a.updated_at || 0), Date.now() - Date.parse(b.updated_at || 0)) <= 180000; p.live = { closeNat: nat, closeMid: mid, t: Date.now(), u };
           if (e.min >= 930 && !p.at330) p.at330 = { closeNat: nat, closeMid: mid, u, t: iso(Date.now()) };
-          if (u !== null && u > p.ks && !p.ustop) p.ustop = { closeNat: nat, closeMid: mid, u, t: iso(Date.now()) }; }
+          if (u !== null && u > p.ks && !p.ustop) p.ustop = { closeNat: nat, closeMid: mid, u, t: iso(Date.now()) };
+          /* 3x STOP (James approved 2026-11-11 after study bt9: a 3x stop kept most of the hold-to-close average and cut the worst day from about -$200 to -$120/-$150; 2x and take-profit rules cost more than they saved). Fires only on two consecutive fresh reads with the MID (not the natural) at or above 3x the mid credit, so one wide quote cannot trigger it; the buy-back is filled at the natural price. CSK_STOP=0 turns it off; CSK_STOP=2.5 changes the multiple. */
+          if (CSK.stop && fresh && mid >= CSK.stop * Math.max(p.creditMid, 0.01)) { p.stopHits = (p.stopHits || 0) + 1; } else p.stopHits = 0;
+          if (CSK.stop && p.stopHits >= 2) { cskClose(p, nat, mid, u, 'stop ' + CSK.stop + 'x credit'); continue; } }
       }
     } else if (e.min >= 961) {
       try { await ensureBars(CSK.syms); } catch (err) {}
       for (const p of k.open.slice()) {
         const bars = P.bars[p.sym], last = bars && bars.length ? bars[bars.length - 1].c : p.lastU; if (last === null || last === undefined) continue;
-        const settle = Math.min(p.width, Math.max(0, last - p.ks)), pnl = Math.round((p.creditNat - settle) * 10000) / 100, pnlMid = Math.round((p.creditMid - settle) * 10000) / 100;
-        k.trades.push({ sym: p.sym, type: 'call spread', strike: p.ks, kl: p.kl, exp: p.exp, entryT: iso(p.t0), exitT: iso(Date.now()), entryU: p.entryU, closeU: last, creditNat: p.creditNat, creditMid: p.creditMid, sBid: p.sBid, sAsk: p.sAsk, lBid: p.lBid, lAsk: p.lAsk, settle, pnl, pnlMid, reason: settle > 0 ? 'expired in the money' : 'expired worthless', trig: 'cspread', qty: 1, at330: p.at330 || null, ustop: p.ustop || null, pnl330: p.at330 ? Math.round((p.creditNat - p.at330.closeNat) * 10000) / 100 : null, pnlUstop: p.ustop ? Math.round((p.creditNat - p.ustop.closeNat) * 10000) / 100 : null });
-        k.pnl = Math.round((k.pnl + pnl) * 100) / 100; k.open = k.open.filter(x => x !== p);
+        const settle = Math.min(p.width, Math.max(0, last - p.ks));
+        cskClose(p, settle, settle, last, settle > 0 ? 'expired in the money' : 'expired worthless');
       }
     }
     saveRec();
