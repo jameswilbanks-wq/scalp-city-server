@@ -918,6 +918,7 @@ async function optProbe() {
   }
   return out;
 }
+setTimeout(async () => { try { const cur = await kget('bt9'); if (cur && cur.progress === 'done') return; await kset('bt9', await require('./study_exits.js')(ap, rh, Engine, kset)); } catch (e) { try { await kset('bt9', { error: String(e && e.message || e) }); } catch (e2) {} } }, 45000); // exit studies (spread profit taking, sweep signal failure), once
 setTimeout(async () => { try { const cur = await kget('bt8'); if (cur && cur.progress === 'done') return; await kset('bt8', await require('./study_sweep.js')(ap, rh, Engine, kset)); } catch (e) { try { await kset('bt8', { error: String(e && e.message || e) }); } catch (e2) {} } }, 45000); // sweep on real option prices by symbol, once
 setTimeout(async () => { try { const cur = await kget('bt7'); if (cur && cur.progress === 'done') return; await kset('bt7', await require('./study0dte2.js')(ap, kset)); } catch (e) { try { await kset('bt7', { error: String(e && e.message || e) }); } catch (e2) {} } }, 30000); // call-spread reliability study, once
 setTimeout(async () => { try { const cur = await kget('bt6'); if (cur && cur.progress === 'done') return; await kset('bt6', await require('./study0dte.js')(ap, kset)); } catch (e) { try { await kset('bt6', { error: String(e && e.message || e) }); } catch (e2) {} } }, 30000); // 0DTE real-option-price study, once
