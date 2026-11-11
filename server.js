@@ -529,7 +529,7 @@ async function extraBars(list) {
 }
 function recOut() {
   const r = P.rec;
-  return r ? { shut: r.shut || '', day: r.day, pnl: r.pnl, ntr: r.trades.length, tr: r.trades.slice(-30).map(t => ({ sym: t.sym, k: t.strike, ty: t.type, in: t.entryT, pnl: t.pnl, why: t.reason })), sh: r.sh ? r.sh.pnl : null, upd: new Date(P.lastTick || Date.now()).toISOString(), run: { running: !!P.ctl.running }, pos: r.pos ? { sym: r.pos.sym, strike: r.pos.strike, type: r.pos.type, exp: r.pos.exp, entryAsk: r.pos.entryAsk, entryBid: r.pos.entryBid, qty: r.pos.qty || 1, half: r.pos.half || null, peak: r.pos.peak, t0: r.pos.t0, trig: r.pos.trig, live: r.pos.live } : null } : null;
+  return r ? { shut: r.shut || '', day: r.day, pnl: r.pnl, ntr: r.trades.length, tr: r.trades.slice(-30).map(t => ({ sym: t.sym, k: t.strike, ty: t.type, in: t.entryT, pnl: t.pnl, why: t.reason })), sh: r.sh ? r.sh.pnl : null, orb: r.orbk ? { pnl: r.orbk.pnl, open: r.orbk.open.map(o => ({ sym: o.sym, strike: o.strike, type: o.type, exp: o.exp, entryAsk: o.entryAsk, t0: o.t0, stopU: o.stopU, tgtU: o.tgtU, live: o.live })), trades: r.orbk.trades.map(t => ({ sym: t.sym, strike: t.strike, type: t.type, entryT: t.entryT, pnl: t.pnl, reason: t.reason })) } : null, upd: new Date(P.lastTick || Date.now()).toISOString(), run: { running: !!P.ctl.running }, pos: r.pos ? { sym: r.pos.sym, strike: r.pos.strike, type: r.pos.type, exp: r.pos.exp, entryAsk: r.pos.entryAsk, entryBid: r.pos.entryBid, qty: r.pos.qty || 1, half: r.pos.half || null, peak: r.pos.peak, t0: r.pos.t0, trig: r.pos.trig, live: r.pos.live } : null } : null;
 }
 function liveData() { return { now: Date.now(), run: !!P.ctl.running, market: marketOpen(Date.now()), msg: P.msg, rec: recOut() }; }
 /* scorecard: every closed paper trade, grouped by ticker x strategy (entry trigger: vwap / ema / orb / sweep) */
@@ -537,7 +537,7 @@ function scoreOf(scan) {
   const cells = {}, add = (k, pnl, day) => { const c = cells[k] = cells[k] || { n: 0, w: 0, pnl: 0, gw: 0, gl: 0, since: day }; c.n++; if (pnl > 0) { c.w++; c.gw += pnl; } else if (pnl < 0) c.gl -= pnl; c.pnl += pnl; if (day < c.since) c.since = day; };
   (scan || []).forEach(x => {
     const day = (x.value && x.value.day) || String(x.key).slice(4);
-    ((x.value && x.value.trades) || []).forEach(t => {
+    ((x.value && x.value.trades) || []).concat((x.value && x.value.orbk && x.value.orbk.trades) || []).forEach(t => { // includes the ORB5 book (trig orb5)
       if (!(t.exitT || t.exitBid != null) || t.unmanaged) return;
       const trig = t.trig || 'ema', pnl = +t.pnl || 0, sym = t.sym || '?';
       add(sym + '|' + trig, pnl, day); add(sym + '|*', pnl, day); add('*|' + trig, pnl, day); add('*|*', pnl, day);
@@ -558,7 +558,7 @@ async function cityData(want) {
   const bars = {}; CFG.syms.forEach(s => { bars[s] = bars5(s); });
   (await extraBars(WATCH || want || [])).forEach(s => { bars[s] = bars5(s); });
   const scan = await kscan('rec:', 200), score = scoreOf(scan);
-  const days = scan.slice(0, 60).map(x => ({ day: x.value.day || x.key.slice(4), trades: (x.value.trades || []).filter(t => t.exitT || t.exitBid != null).map(t => ({ t: Date.parse(t.exitT || t.entryT), sym: t.sym, pnl: +t.pnl || 0 })) }));
+  const days = scan.slice(0, 60).map(x => ({ day: x.value.day || x.key.slice(4), trades: (x.value.trades || []).concat((x.value.orbk && x.value.orbk.trades) || []).filter(t => t.exitT || t.exitBid != null).map(t => ({ t: Date.parse(t.exitT || t.entryT), sym: t.sym, pnl: +t.pnl || 0 })) }));
   return Object.assign(liveData(), { bars, days, watch: WATCH, score });
 }
 
