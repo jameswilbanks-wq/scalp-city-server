@@ -802,6 +802,52 @@ async function backtest4(days) {
   out.done = new Date().toISOString();
   return out;
 }
+/* ---------- Study 5 (read-only): ORB re-check with a train/lock split (first 2/3 of sessions = train, last 1/3 = lock), neighbors (3/5/10/15-minute ranges; 1R/1.5R/2R/3R/hold) and a noise check (same breakout bars, coin-flip direction, symmetric stop at R, 2R target; should come out near minus the $3 cost). Stop is checked before target in the same bar. Saved to kv 'bt5'. ---------- */
+async function backtest5(days) {
+  const now = Date.now(), out = { days, started: new Date().toISOString(), n: {} }, r2 = x => Math.round(x * 100) / 100, M = {};
+  const acc = (key, net, x) => { const c = M[key] = M[key] || { n: 0, w: 0, gw: 0, gl: 0, net: 0, x: 0 }; c.n++; c.net += net; c.x += x; if (net > 0) { c.w++; c.gw += net; } else c.gl += -net; };
+  let seed = 777; const rnd = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
+  for (const sym of CFG.syms) {
+    const st = {};
+    for (let a = now - days * 864e5; a < now; a += 4 * 864e5) {
+      const d = await rh('get_equity_historicals', { symbols: [sym], start_time: iso(a), end_time: iso(Math.min(a + 4 * 864e5, now)), interval: 'minute', bounds: 'regular' });
+      (((d.results || [])[0] || {}).bars || []).forEach(x => { st[Date.parse(x.begins_at)] = x; });
+    }
+    const bars = Engine.prepare(Object.keys(st).map(k => st[k])); if (bars.length < 1000) { out.n[sym] = 'too few bars: ' + bars.length; continue; }
+    const dayList = []; bars.forEach(b => { if (dayList[dayList.length - 1] !== b.day) dayList.push(b.day); });
+    const split = {}; dayList.forEach((d, ix) => { split[d] = ix < dayList.length * 2 / 3 ? 'train' : 'lock'; });
+    out.n[sym] = { bars: bars.length, sessions: dayList.length, lockFrom: dayList[Math.ceil(dayList.length * 2 / 3)] };
+    const play = (k, j, dir, e, stop, risk, mult) => { let xr = null; for (let q = k + 1; q < j && bars[q].min < 930; q++) { const x = bars[q], hitS = dir > 0 ? x.l <= stop : x.h >= stop, hitT = mult && (dir > 0 ? x.h >= e + mult * risk : x.l <= e - mult * risk); if (hitS) { xr = -1; break; } if (hitT) { xr = mult; break; } xr = dir * (x.c - e) / risk; } return xr; };
+    let i = 0;
+    while (i < bars.length) {
+      let j = i; while (j < bars.length && bars[j].day === bars[i].day) j++;
+      const D = bars[i].day;
+      [3, 5, 10, 15].forEach(W => {
+        const or = []; for (let q = i; q < j; q++) if (bars[q].min >= 570 && bars[q].min < 570 + W) or.push(bars[q]);
+        if (or.length !== W) return;
+        const orH = Math.max(...or.map(b => b.h)), orL = Math.min(...or.map(b => b.l));
+        for (let k = i; k < j - 1; k++) {
+          const b = bars[k]; if (b.min < 570 + W || b.min > 900) continue;
+          const dir = b.c > orH ? 1 : b.c < orL ? -1 : 0; if (!dir) continue;
+          const e = bars[k + 1].o, stop = dir > 0 ? orL : orH, risk = Math.abs(e - stop);
+          if (risk > 0.0001 * e && dir * (e - stop) > 0) {
+            [['1R', 1], ['1.5R', 1.5], ['2R', 2], ['3R', 3], ['hold', 0]].forEach(([nm, mult]) => {
+              const xr = play(k, j, dir, e, stop, risk, mult); if (xr === null) return;
+              const net = xr * risk * 45 - 3, key = 'orb' + W + '|' + nm;
+              acc(key + '|ALL', net, xr); acc(key + '|' + split[D], net, xr); acc(key + '|' + sym + '|' + split[D], net, xr); acc(key + '|' + (dir > 0 ? 'long' : 'short') + '|ALL', net, xr);
+            });
+            if (W === 5) for (let rep = 0; rep < 20; rep++) { const nd = rnd() < 0.5 ? 1 : -1, xn = play(k, j, nd, e, e - nd * risk, risk, 2); if (xn !== null) acc('noise5|2R|ALL', xn * risk * 45 - 3, xn); }
+          }
+          break;
+        }
+      });
+      i = j;
+    }
+  }
+  out.res = {}; Object.keys(M).sort().forEach(k => { const c = M[k]; out.res[k] = { n: c.n, win: Math.round(100 * c.w / c.n), avgNet: r2(c.net / c.n), pf: c.gl ? r2(c.gw / c.gl) : null, avgR: r2(c.x / c.n) }; });
+  out.done = new Date().toISOString();
+  return out;
+}
 const server = http.createServer(async (req, res) => {
   const u = new URL(req.url, 'http://x');
   try {
@@ -883,6 +929,7 @@ function load(){api('/api/status').then(function(x){s=x;draw()}).catch(function(
   setInterval(() => { fastPos(); }, FAST_MS);
   setInterval(() => { if (!S.connected && !S.connecting && !S.needsLogin) connect(); }, 60000);
   server.listen(PORT, () => console.log('listening on ' + PORT + ' paper mode, running=' + P.ctl.running));
+setTimeout(async () => { try { if (await kget('bt5')) return; await kset('bt5', await backtest5(+process.env.BT2_DAYS || 365)); } catch (e) { try { await kset('bt5', { error: String(e && e.message || e) }); } catch (e2) {} } }, 100000); // ORB re-check once, saved to kv 'bt5'
 setTimeout(async () => { try { if (await kget('bt4')) return; await kset('bt4', await backtest4(+process.env.BT2_DAYS || 365)); } catch (e) { try { await kset('bt4', { error: String(e && e.message || e) }); } catch (e2) {} } }, 100000); // trail-variant study once, saved to kv 'bt4'
 setTimeout(async () => { try { if (await kget('bt3')) return; await kset('bt3', await backtest3(+process.env.BT2_DAYS || 365)); } catch (e) { try { await kset('bt3', { error: String(e && e.message || e) }); } catch (e2) {} } }, 120000); // payoff study once, saved to kv 'bt3'
 setTimeout(async () => { try { if (BT2.run || (await kget('bt2'))) return; BT2.run = true; BT2.res = await backtest2(+process.env.BT2_DAYS || 365); await kset('bt2', BT2.res); } catch (e) { BT2.res = { error: String(e && e.message || e) }; try { await kset('bt2', BT2.res); } catch (e2) {} } finally { BT2.run = false; } }, 150000); // year-long study once, saved to kv 'bt2' (delete the key to re-run on next boot)
