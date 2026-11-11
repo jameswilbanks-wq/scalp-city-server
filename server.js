@@ -384,6 +384,57 @@ async function manageOrb() {
     saveRec();
   } catch (e) { /* never disturb the main paper trade */ }
 }
+/* ---------- Call credit spread paper book (CSK). James approved 2026-11-11 after studies bt6/bt7 on real option prices: selling same-day call spreads from 11:00 ET on SPY and QQQ and HOLDING TO THE CLOSE was positive in both the tuning and the locked period on both symbols ($2 wide about +$4 to +$5 per spread per day at $0.01 per leg slippage, about 87-90% winners, worst day about -$200); closing at 15:30 lost and an underlying stop gave up most of the profit. The open question is the real bid/ask cost, so this book records live quotes. One spread per symbol per day: at 11:00 ET sell the call nearest 0.45% above the price and buy the call $2 higher (same-day expiry). Paper fill at the NATURAL price (sell at the bid, buy at the ask); the mid is recorded too. Held to the close and settled on the last price (capped at the width). It also records, without acting on them, the cost to close at 15:30 ET and when the price first closes above the short strike. Assignment and early-close risks at a real broker are NOT modeled. CSK_ON=0 turns it off. ---------- */
+const CSK_ON = process.env.CSK_ON !== '0', CSK = { syms: (process.env.CSK_SYMS || 'SPY,QQQ').split(',').map(x => x.trim().toUpperCase()).filter(Boolean), pct: +process.env.CSK_PCT || 0.0045, width: +process.env.CSK_WIDTH || 2, min: +process.env.CSK_MIN || 660 };
+async function cskQuotes(ids) { const qd = await rh('get_option_quotes', { instrument_ids: ids }), by = {}; (qd.results || []).forEach(z => { if (z.quote) by[z.quote.instrument_id] = z.quote; }); return by; }
+async function cskLook() {
+  const r = P.rec; if (!CSK_ON || !r || r.shut || !marketOpen(Date.now())) return;
+  r.csk = r.csk || { open: [], trades: [], pnl: 0, done: {} };
+  const e = nowET(); if (e.min < CSK.min || e.min >= CSK.min + 20) return;
+  for (const s of CSK.syms) {
+    if (r.csk.done[s]) continue; const inf = P.info[s]; if (!inf || !inf.bar) continue;
+    r.csk.done[s] = true; const px = inf.bar.c, fake = { dir: -1, trig: 'cspread' };
+    try {
+      const ch = await getChain(s), today = e.day; if (!ch.dates.includes(today)) { logSignal(s, fake, px, 'skipped', 'call spread: no same-day expiry'); continue; }
+      const list = (await getInst(ch, today, 'call')).slice().sort((a, b) => a.strike - b.strike), want = px * (1 + CSK.pct);
+      const sh = list.filter(x => x.strike >= px + 0.5).sort((a, b) => Math.abs(a.strike - want) - Math.abs(b.strike - want))[0], lg = sh && list.find(x => Math.abs(x.strike - (sh.strike + CSK.width)) < 0.01);
+      if (!sh || !lg) { logSignal(s, fake, px, 'skipped', 'call spread: strikes not listed'); continue; }
+      const q = await cskQuotes([sh.id, lg.id]), a = q[sh.id], b = q[lg.id];
+      if (!a || !b) { logSignal(s, fake, px, 'skipped', 'call spread: no quotes'); continue; }
+      const age = Math.max(Date.now() - Date.parse(a.updated_at || 0), Date.now() - Date.parse(b.updated_at || 0));
+      if (age > 180000) { logSignal(s, fake, px, 'skipped', 'call spread: quotes are stale'); continue; }
+      const sB = +a.bid_price, sA = +a.ask_price, lB = +b.bid_price, lA = +b.ask_price, nat = Math.round((sB - lA) * 100) / 100, mid = Math.round(((sB + sA) / 2 - (lB + lA) / 2) * 1000) / 1000;
+      if (!(nat >= 0.03)) { logSignal(s, fake, px, 'skipped', 'call spread: credit under 3 cents at the bid/ask (' + nat.toFixed(2) + ', mid ' + mid.toFixed(2) + ')'); continue; }
+      r.csk.open.push({ sym: s, exp: today, ks: sh.strike, kl: lg.strike, instS: sh.id, instL: lg.id, t0: Date.now(), entryU: px, sBid: sB, sAsk: sA, lBid: lB, lAsk: lA, creditNat: nat, creditMid: mid, qAge: age, width: lg.strike - sh.strike });
+      logSignal(s, fake, px, 'entered', 'sold call spread ' + sh.strike + '/' + lg.strike + ' exp ' + today + ' for $' + nat.toFixed(2) + ' at the bid/ask (mid $' + mid.toFixed(2) + ')');
+    } catch (err) { logSignal(s, fake, px, 'skipped', 'call spread: could not load option data (' + ((err && err.code) || (err && err.message) || 'error') + ')'); }
+  }
+  saveRec();
+}
+async function cskManage() {
+  const k = P.rec && P.rec.csk; if (!k || !k.open.length) return;
+  const e = nowET();
+  try {
+    if (e.min < 960 && marketOpen(Date.now())) {
+      const q = await cskQuotes(k.open.flatMap(p => [p.instS, p.instL]));
+      for (const p of k.open) {
+        const a = q[p.instS], b = q[p.instL], u = P.info[p.sym] && P.info[p.sym].bar ? P.info[p.sym].bar.c : null; if (u !== null) p.lastU = u;
+        if (a && b) { const nat = Math.round((+a.ask_price - +b.bid_price) * 100) / 100, mid = Math.round(((+a.bid_price + +a.ask_price) / 2 - (+b.bid_price + +b.ask_price) / 2) * 1000) / 1000; p.live = { closeNat: nat, closeMid: mid, t: Date.now(), u };
+          if (e.min >= 930 && !p.at330) p.at330 = { closeNat: nat, closeMid: mid, u, t: iso(Date.now()) };
+          if (u !== null && u > p.ks && !p.ustop) p.ustop = { closeNat: nat, closeMid: mid, u, t: iso(Date.now()) }; }
+      }
+    } else if (e.min >= 961) {
+      try { await ensureBars(CSK.syms); } catch (err) {}
+      for (const p of k.open.slice()) {
+        const bars = P.bars[p.sym], last = bars && bars.length ? bars[bars.length - 1].c : p.lastU; if (last === null || last === undefined) continue;
+        const settle = Math.min(p.width, Math.max(0, last - p.ks)), pnl = Math.round((p.creditNat - settle) * 10000) / 100, pnlMid = Math.round((p.creditMid - settle) * 10000) / 100;
+        k.trades.push({ sym: p.sym, type: 'call spread', strike: p.ks, kl: p.kl, exp: p.exp, entryT: iso(p.t0), exitT: iso(Date.now()), entryU: p.entryU, closeU: last, creditNat: p.creditNat, creditMid: p.creditMid, sBid: p.sBid, sAsk: p.sAsk, lBid: p.lBid, lAsk: p.lAsk, settle, pnl, pnlMid, reason: settle > 0 ? 'expired in the money' : 'expired worthless', trig: 'cspread', qty: 1, at330: p.at330 || null, ustop: p.ustop || null, pnl330: p.at330 ? Math.round((p.creditNat - p.at330.closeNat) * 10000) / 100 : null, pnlUstop: p.ustop ? Math.round((p.creditNat - p.ustop.closeNat) * 10000) / 100 : null });
+        k.pnl = Math.round((k.pnl + pnl) * 100) / 100; k.open = k.open.filter(x => x !== p);
+      }
+    }
+    saveRec();
+  } catch (err) { P.cskErr = String(err && err.message || err).slice(0, 120); }
+}
 /* ---------- Variant tracker (VT): logs EVERY raw sweep/EMA signal (taken or not, EMA-filtered or not, extra symbols too) and scores hypothetical exits on the underlying. Never trades; saved to kv key 'vt'. P&L model: 0.45 delta x underlying move x 100, minus $3 cost. ---------- */
 const VT_EXTRA = (process.env.VT_EXTRA === undefined ? 'IWM' : process.env.VT_EXTRA).split(',').map(x => x.trim().toUpperCase()).filter(Boolean);
 const VT_VARS = [['none', 5], ['none', 10], ['none', 15], ['wick', 10], ['wick', 15], ['atr1', 10]];
@@ -485,6 +536,7 @@ async function tick() {
     }
     if (P.rec.pos) await managePos();
     await manageShadows();
+    try { if (open) await cskLook(); await cskManage(); } catch (e) { P.cskErr = String(e && e.message || e).slice(0, 120); }
     if (open) { try { await orbLook(); await manageOrb(); } catch (e) { P.orbErr = String(e && e.message || e).slice(0, 120); } } else { try { await manageOrb(); } catch (e) {} }
     if (open) { try { await vtTick(); } catch (e) { P.vtErr = String(e && e.message || e).slice(0, 120); } }
     if (!P.rec.pos && !P.rec.shut) await lookForEntry();
@@ -569,6 +621,7 @@ function status() {
     robinhood: { connected: S.connected, needsLogin: S.needsLogin, err: S.err, lastOk: S.lastOk }, store: pool ? 'database' : 'MEMORY ONLY',
     day: r && r.day, pnl: r && r.pnl, shut: r && r.shut, trades: (r && r.trades || []).slice(-20), signals: (r && r.signals || []).slice(-12),
     orb: r && r.orbk ? { pnl: r.orbk.pnl, closed: r.orbk.trades.length, open: r.orbk.open.length, on: ORB_ON } : null,
+    callSpreads: r && r.csk ? { pnl: r.csk.pnl, closed: r.csk.trades.length, open: r.csk.open.length, on: CSK_ON, err: P.cskErr } : null,
     shadow: r && r.sh ? { pnl: r.sh.pnl, closed: r.sh.trades.length, open: r.sh.open.length } : null,
     pos: p ? { sym: p.sym, type: p.type, strike: p.strike, exp: p.exp, entryAsk: p.entryAsk, qty: p.qty || 1, half: p.half || null, t0: p.t0, bid: p.live && p.live.bid, peak: p.peak, asOf: p.live && p.live.t, stopPx: CFG.usd ? p.entryAsk - CFG.usd.stop / 100 : p.entryAsk * (1 - CFG.premStop), targetPx: CFG.usd ? p.entryAsk + CFG.usd.tp / 100 : p.entryAsk * (1 + CFG.tpUp) } : null,
     limits: { target: CFG.target, loss: CFG.loss, syms: CFG.syms } };
@@ -865,6 +918,7 @@ async function optProbe() {
   }
   return out;
 }
+setTimeout(async () => { try { const cur = await kget('bt8'); if (cur && cur.progress === 'done') return; await kset('bt8', await require('./study_sweep.js')(ap, rh, Engine, kset)); } catch (e) { try { await kset('bt8', { error: String(e && e.message || e) }); } catch (e2) {} } }, 45000); // sweep on real option prices by symbol, once
 setTimeout(async () => { try { const cur = await kget('bt7'); if (cur && cur.progress === 'done') return; await kset('bt7', await require('./study0dte2.js')(ap, kset)); } catch (e) { try { await kset('bt7', { error: String(e && e.message || e) }); } catch (e2) {} } }, 30000); // call-spread reliability study, once
 setTimeout(async () => { try { const cur = await kget('bt6'); if (cur && cur.progress === 'done') return; await kset('bt6', await require('./study0dte.js')(ap, kset)); } catch (e) { try { await kset('bt6', { error: String(e && e.message || e) }); } catch (e2) {} } }, 30000); // 0DTE real-option-price study, once
 setTimeout(async () => { try { if (await kget('probe')) return; await kset('probe', await optProbe()); } catch (e) { try { await kset('probe', { error: String(e && e.message || e) }); } catch (e2) {} } }, 20000);
