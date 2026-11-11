@@ -756,6 +756,52 @@ async function backtest3(days) {
   out.done = new Date().toISOString();
   return out;
 }
+/* ---------- Study 4 (read-only): tighter-trail variants for the sweep run exit, with a train/lock split (first 2/3 of sessions = train, last 1/3 = lock, look at lock once). Wick stop, entry next bar open, flat 15:30 ET. Stop is checked against the level set before each bar; after the trail moves, a close below the new stop exits at that close. 'noise' = same bars with a coin-flip direction (should come out near minus the $3 cost). Saved to kv 'bt4'. ---------- */
+async function backtest4(days) {
+  const now = Date.now(), out = { days, started: new Date().toISOString(), n: {} }, r2 = x => Math.round(x * 100) / 100, M = {};
+  const acc = (key, net, x) => { const c = M[key] = M[key] || { n: 0, w: 0, gw: 0, gl: 0, net: 0, x: 0 }; c.n++; c.net += net; c.x += x; if (net > 0) { c.w++; c.gw += net; } else c.gl += -net; };
+  // variant: [name, initial trail in R, arm level in R (null = none), trail after arm in R, breakeven at arm, fixed target in R]
+  const V = [['base-1R', 1, null, 1, false, 0], ['arm1-0.5R', 1, 1, 0.5, false, 0], ['arm1-0.33R', 1, 1, 0.33, false, 0], ['arm1-BE', 1, 1, 1, true, 0], ['arm0.5-0.5R', 1, 0.5, 0.5, false, 0], ['flat-0.5R', 0.5, null, 0.5, false, 0], ['arm2-0.5R', 1, 2, 0.5, false, 0], ['tgt-1R', 1, null, 1, false, 1], ['tgt-2R', 1, null, 1, false, 2]];
+  let seed = 12345; const rnd = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
+  for (const sym of CFG.syms) {
+    const st = {};
+    for (let a = now - days * 864e5; a < now; a += 4 * 864e5) {
+      const d = await rh('get_equity_historicals', { symbols: [sym], start_time: iso(a), end_time: iso(Math.min(a + 4 * 864e5, now)), interval: 'minute', bounds: 'regular' });
+      (((d.results || [])[0] || {}).bars || []).forEach(x => { st[Date.parse(x.begins_at)] = x; });
+    }
+    const bars = Engine.prepare(Object.keys(st).map(k => st[k])); if (bars.length < 1000) { out.n[sym] = 'too few bars: ' + bars.length; continue; }
+    Engine.simulate(bars, {}, true);
+    const dayList = []; bars.forEach(b => { if (dayList[dayList.length - 1] !== b.day) dayList.push(b.day); });
+    const split = {}; dayList.forEach((d, ix) => { split[d] = ix < dayList.length * 2 / 3 ? 'train' : 'lock'; });
+    out.n[sym] = { bars: bars.length, sessions: dayList.length, lockFrom: dayList[Math.ceil(dayList.length * 2 / 3)] };
+    const run = (k, dir, R, v) => {
+      const e = bars[k + 1], b = bars[k]; let stop = e.o - dir * R, best = e.o, xr = null, armed = false;
+      for (let q = k + 1; q < bars.length && bars[q].day === b.day && bars[q].min < 930; q++) {
+        const x = bars[q];
+        if (dir > 0 ? x.l <= stop : x.h >= stop) { xr = dir * (stop - e.o) / R; break; }
+        if (v[5] && (dir > 0 ? x.h >= e.o + v[5] * R : x.l <= e.o - v[5] * R)) { xr = v[5]; break; }
+        if (!v[5]) {
+          best = dir > 0 ? Math.max(best, x.h) : Math.min(best, x.l);
+          if (v[2] !== null && !armed && dir * (best - e.o) >= v[2] * R) armed = true;
+          let ns = best - dir * (armed ? v[3] : v[1]) * R; if (armed && v[4] && dir * (e.o - ns) > 0) ns = e.o;
+          if (dir * (ns - stop) > 0) stop = ns;
+          if (dir * (x.c - stop) < 0) { xr = dir * (x.c - e.o) / R; break; }
+        }
+        xr = dir * (x.c - e.o) / R;
+      }
+      return xr;
+    };
+    Engine.signals(bars, { vwap: false, orb: false, ema: false }).forEach(g => {
+      const k = g.k, b = bars[k], e = bars[k + 1]; if (g.sig.trig !== 'sweep' || !e || e.day !== b.day || g.sig.stopPx === undefined || g.sig.stopPx === null) return;
+      const R = Math.abs(e.o - g.sig.stopPx); if (!(R > 0.0001 * e.o)) return;
+      V.forEach(v => { const xr = run(k, g.sig.dir, R, v); if (xr === null) return; const net = xr * R * 45 - 3; acc(v[0] + '|ALL', net, xr); acc(v[0] + '|' + split[b.day], net, xr); acc(v[0] + '|' + sym, net, xr); acc(v[0] + '|' + sym + '|' + split[b.day], net, xr); });
+      const nd = rnd() < 0.5 ? 1 : -1, xn = run(k, nd, R, V[0]); if (xn !== null) acc('noise|ALL', xn * R * 45 - 3, xn);
+    });
+  }
+  out.res = {}; Object.keys(M).sort().forEach(k => { const c = M[k]; out.res[k] = { n: c.n, win: Math.round(100 * c.w / c.n), avgNet: r2(c.net / c.n), pf: c.gl ? r2(c.gw / c.gl) : null, avgR: r2(c.x / c.n) }; });
+  out.done = new Date().toISOString();
+  return out;
+}
 const server = http.createServer(async (req, res) => {
   const u = new URL(req.url, 'http://x');
   try {
@@ -837,6 +883,7 @@ function load(){api('/api/status').then(function(x){s=x;draw()}).catch(function(
   setInterval(() => { fastPos(); }, FAST_MS);
   setInterval(() => { if (!S.connected && !S.connecting && !S.needsLogin) connect(); }, 60000);
   server.listen(PORT, () => console.log('listening on ' + PORT + ' paper mode, running=' + P.ctl.running));
+setTimeout(async () => { try { if (await kget('bt4')) return; await kset('bt4', await backtest4(+process.env.BT2_DAYS || 365)); } catch (e) { try { await kset('bt4', { error: String(e && e.message || e) }); } catch (e2) {} } }, 100000); // trail-variant study once, saved to kv 'bt4'
 setTimeout(async () => { try { if (await kget('bt3')) return; await kset('bt3', await backtest3(+process.env.BT2_DAYS || 365)); } catch (e) { try { await kset('bt3', { error: String(e && e.message || e) }); } catch (e2) {} } }, 120000); // payoff study once, saved to kv 'bt3'
 setTimeout(async () => { try { if (BT2.run || (await kget('bt2'))) return; BT2.run = true; BT2.res = await backtest2(+process.env.BT2_DAYS || 365); await kset('bt2', BT2.res); } catch (e) { BT2.res = { error: String(e && e.message || e) }; try { await kset('bt2', BT2.res); } catch (e2) {} } finally { BT2.run = false; } }, 150000); // year-long study once, saved to kv 'bt2' (delete the key to re-run on next boot)
 setTimeout(() => { if (!BT.run && !BT.res) { BT.run = true; backtest(20).then(r => { BT.res = r; return kset('bt', r); }).catch(e => { BT.res = { error: String(e && e.message || e) }; return kset('bt', BT.res); }).catch(() => {}).finally(() => { BT.run = false; }); } }, 90000); // one study per boot, saved to kv key 'bt'
