@@ -485,6 +485,75 @@ async function x9Manage() {
     saveRec();
   } catch (err) { P.x9Err = String(err && err.message || err).slice(0, 120); }
 }
+/* ---------- FP paper book: "fair pricing theory" (JJ Simon interview, youtu.be/KHEQ5g55dQ4, shared by James 2026-11-12). He trades NQ futures on 1-minute candles, first 90 minutes of the session; fair price = the 9:30 ET open price.
+   Trade 1, continuation (once a day): in the direction of the first 1-minute candle, if it agrees with the higher-timeframe bias (the opposite of the overnight move: prior close -> today's open).
+     His NQ numbers: stop 25 points, target 38 (about 0.10% and 0.15% of price); if the first candle is bigger than 25 points, both double (50/76).
+   Trades 2+, reversion to the open (9:31-11:00 ET): a 1-minute DISPLACEMENT candle toward the open = body bigger than the previous candle's body AND closes beyond the previous candle's wick.
+     Stop 0.10% of price, target the open price; taken only when the open is at least 1.5x the stop away (his 1:1.5 minimum). Stop for the day after 3 losses in a row.
+   Here: same-day at-the-money call/put on SPY and QQQ, 1 contract, exits on the UNDERLYING stop/target, a -50% premium safety stop, out by 11:30 ET (his window ends 11:00), one position per symbol.
+   Not used from the video: 8:30 ET news trades (before options open), the Asia and afternoon sessions, prop-firm sizing. Own book (journal field fpk). FP_ON=0 disables. ---------- */
+const FP_ON = process.env.FP_ON !== '0', FP = { syms: (process.env.FP_SYMS || 'SPY,QQQ').split(',').map(x => x.trim().toUpperCase()).filter(Boolean), stopPct: +process.env.FP_STOP || 0.10, tgtPct: +process.env.FP_TGT || 0.15, bias: process.env.FP_BIAS !== '0' };
+async function fpLook() {
+  const r = P.rec; if (!FP_ON || !r || r.shut || !marketOpen(Date.now())) return;
+  r.fpk = r.fpk || { open: [], trades: [], pnl: 0, st: {} };
+  const e = nowET(); if (e.min < 571 || e.min > 660) return;
+  for (const s of FP.syms) {
+    const bars = P.bars[s]; if (!bars || !bars.length) continue;
+    const today = bars.filter(b => b.day === e.day), first = today.find(b => b.min === 570); if (!first || today.length < 2) continue;
+    const st = r.fpk.st[s] = r.fpk.st[s] || { fair: first.o, cont: false, losses: 0, last: null };
+    st.fair = first.o;
+    if (r.fpk.open.some(p => p.sym === s)) continue;
+    const prev = bars.filter(b => b.day < e.day), prevClose = prev.length ? prev[prev.length - 1].c : null;
+    const q = bars.length - 1, b = bars[q], p = bars[q - 1]; if (b.day !== e.day || st.last === b.t) continue;
+    if (Date.now() - (b.t + 60000) > 150000) continue;
+    let plan = null;
+    if (!st.cont) {
+      st.cont = true; // decided once, on the first chance
+      const dir = first.c > first.o ? 1 : first.c < first.o ? -1 : 0, bias = prevClose ? (first.o > prevClose ? -1 : first.o < prevClose ? 1 : 0) : 0;
+      const big = (first.h - first.l) > first.o * FP.stopPct / 100, mult = big ? 2 : 1;
+      if (!dir) logSignal(s, { dir: 1, trig: 'fp' }, first.c, 'skipped', 'fp continuation: first candle had no color');
+      else if (FP.bias && bias && bias !== dir) logSignal(s, { dir, trig: 'fp' }, first.c, 'skipped', 'fp continuation: first candle disagrees with the overnight-reversion bias');
+      else if (b.min <= 572) plan = { kind: 'cont', dir, stopU: b.c - dir * b.c * FP.stopPct * mult / 100, tgtU: b.c + dir * b.c * FP.tgtPct * mult / 100 };
+    }
+    if (!plan && st.cont && st.losses < 3 && p && p.day === e.day && b.min >= 571 && b.min < 660) {
+      const bodyB = Math.abs(b.c - b.o), bodyP = Math.abs(p.c - p.o), stopD = b.c * FP.stopPct / 100;
+      if (b.c > st.fair && b.c < b.o && bodyB > bodyP && b.c < p.l && b.c - st.fair >= 1.5 * stopD) plan = { kind: 'rev', dir: -1, stopU: b.c + stopD, tgtU: st.fair };
+      if (b.c < st.fair && b.c > b.o && bodyB > bodyP && b.c > p.h && st.fair - b.c >= 1.5 * stopD) plan = { kind: 'rev', dir: 1, stopU: b.c - stopD, tgtU: st.fair };
+    }
+    if (!plan) continue;
+    st.last = b.t;
+    const sig = { dir: plan.dir, trig: 'fp' };
+    let pk; try { pk = await pickContract(s, plan.dir, b.c, 0); } catch (err) { pk = { why: 'could not load option data (' + ((err && err.code) || 'error') + ')' }; }
+    if (pk.why) { logSignal(s, sig, b.c, 'skipped', 'fp ' + plan.kind + ': ' + pk.why); continue; }
+    r.fpk.open.push({ sym: s, kind: plan.kind, dir: plan.dir, type: pk.type, strike: pk.strike, exp: pk.exp, inst: pk.inst, t0: Date.now(), sigT: b.t, entryAsk: pk.ask, entryBid: pk.bid, entryU: b.c, stopU: plan.stopU, tgtU: plan.tgtU, fair: st.fair, qAge: pk.qAge, trig: 'fp', peak: pk.bid });
+    logSignal(s, sig, b.c, 'entered', 'fp ' + (plan.kind === 'cont' ? 'continuation' : 'reversion to the open ' + st.fair.toFixed(2)) + ': ' + pk.type + ' ' + pk.strike + ' @ ask $' + pk.ask.toFixed(2) + ', stop ' + plan.stopU.toFixed(2) + ', target ' + plan.tgtU.toFixed(2));
+  }
+  saveRec();
+}
+async function fpManage() {
+  const k = P.rec && P.rec.fpk; if (!k || !k.open.length) return;
+  try {
+    const qd = await rh('get_option_quotes', { instrument_ids: k.open.map(x => x.inst) }), by = {};
+    (qd.results || []).forEach(z => { if (z.quote) by[z.quote.instrument_id] = z.quote; });
+    const e = nowET();
+    for (const p of k.open.slice()) {
+      const q = by[p.inst]; if (!q) continue; const bid = +q.bid_price; if (!(bid >= 0)) continue;
+      if (q.updated_at && Date.now() - Date.parse(q.updated_at) > 180000) continue;
+      p.peak = Math.max(p.peak || 0, bid); p.live = { bid, ask: +q.ask_price, t: Date.now(), age: q.updated_at ? Date.now() - Date.parse(q.updated_at) : null };
+      const bars = (P.bars[p.sym] || []).filter(b => b.t > p.sigT); let reason = '';
+      for (const x of bars) { if (p.dir > 0 ? x.l <= p.stopU : x.h >= p.stopU) { reason = 'stop'; break; } if (p.dir > 0 ? x.h >= p.tgtU : x.l <= p.tgtU) { reason = 'target'; break; } }
+      if (!reason && bid <= p.entryAsk * 0.5) reason = 'premium stop';
+      if (!reason && (e.min >= 690 || !marketOpen(Date.now()))) reason = 'time';
+      if (reason) {
+        const pnl = Math.round((bid - p.entryAsk) * 10000) / 100, st = k.st[p.sym] || {};
+        k.trades.push({ sym: p.sym, type: p.type, strike: p.strike, exp: p.exp, kind: p.kind, entryT: iso(p.t0), entryAsk: p.entryAsk, exitT: iso(Date.now()), exitBid: bid, pnl, peakBid: p.peak, reason, trig: 'fp', qty: 1, entryU: p.entryU, stopU: p.stopU, tgtU: p.tgtU, fair: p.fair, entryQAge: p.qAge, exitQAge: p.live.age });
+        k.pnl = Math.round((k.pnl + pnl) * 100) / 100; k.open = k.open.filter(x => x !== p);
+        if (p.kind === 'rev') st.losses = pnl > 0 ? 0 : (st.losses || 0) + 1;
+      }
+    }
+    saveRec();
+  } catch (err) { P.fpErr = String(err && err.message || err).slice(0, 120); }
+}
 /* ---------- Variant tracker (VT): logs EVERY raw sweep/EMA signal (taken or not, EMA-filtered or not, extra symbols too) and scores hypothetical exits on the underlying. Never trades; saved to kv key 'vt'. P&L model: 0.45 delta x underlying move x 100, minus $3 cost. ---------- */
 const VT_EXTRA = (process.env.VT_EXTRA === undefined ? 'IWM' : process.env.VT_EXTRA).split(',').map(x => x.trim().toUpperCase()).filter(Boolean);
 const VT_VARS = [['none', 5], ['none', 10], ['none', 15], ['wick', 10], ['wick', 15], ['atr1', 10]];
@@ -586,6 +655,7 @@ async function tick() {
     }
     if (P.rec.pos) await managePos();
     await manageShadows();
+    try { if (open) await fpLook(); await fpManage(); } catch (e) { P.fpErr = String(e && e.message || e).slice(0, 120); }
     try { if (open) await x9Look(); await x9Manage(); } catch (e) { P.x9Err = String(e && e.message || e).slice(0, 120); }
     try { if (open) await cskLook(); await cskManage(); } catch (e) { P.cskErr = String(e && e.message || e).slice(0, 120); }
     if (open) { try { await orbLook(); await manageOrb(); } catch (e) { P.orbErr = String(e && e.message || e).slice(0, 120); } } else { try { await manageOrb(); } catch (e) {} }
@@ -672,6 +742,7 @@ function status() {
     robinhood: { connected: S.connected, needsLogin: S.needsLogin, err: S.err, lastOk: S.lastOk }, store: pool ? 'database' : 'MEMORY ONLY',
     day: r && r.day, pnl: r && r.pnl, shut: r && r.shut, trades: (r && r.trades || []).slice(-20), signals: (r && r.signals || []).slice(-12),
     orb: r && r.orbk ? { pnl: r.orbk.pnl, closed: r.orbk.trades.length, open: r.orbk.open.length, on: ORB_ON } : null,
+    fairPrice: r && r.fpk ? { pnl: r.fpk.pnl, closed: r.fpk.trades.length, open: r.fpk.open.length, on: FP_ON, err: P.fpErr } : null,
     x9: r && r.x9k ? { pnl: r.x9k.pnl, closed: r.x9k.trades.length, open: r.x9k.open.length, on: X9_ON, err: P.x9Err } : null,
     callSpreads: r && r.csk ? { pnl: r.csk.pnl, closed: r.csk.trades.length, open: r.csk.open.length, on: CSK_ON, err: P.cskErr } : null,
     shadow: r && r.sh ? { pnl: r.sh.pnl, closed: r.sh.trades.length, open: r.sh.open.length } : null,
