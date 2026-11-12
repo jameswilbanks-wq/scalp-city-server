@@ -280,7 +280,7 @@ select:focus-visible,input:focus-visible,button:focus-visible{outline:2px solid 
     <h3>SERVER &middot; ALWAYS-ON PAPER BOT</h3>
     <p class="mode" id="srvStatus">Loading…</p>
     <p class="mode" id="srvSum"></p>
-    <div class="tbl"><table id="srvTbl"><thead><tr><th>Time (ET)</th><th>Contract</th><th>P&amp;L</th><th>Why closed</th></tr></thead><tbody></tbody></table></div>
+    <div class="tbl"><table id="srvTbl"><thead><tr><th>Time (ET)</th><th>Contract</th><th>Strategy</th><th>P&amp;L</th><th>Why closed</th></tr></thead><tbody></tbody></table></div>
     <div id="srvCtl" hidden>
       <button class="btn" id="srvRun" type="button" style="width:100%;margin:4px 0"></button>
       <button class="btn" id="srvClose" type="button" style="width:100%;margin:4px 0" hidden></button>
@@ -2127,10 +2127,12 @@ function srvPanelRender(){renderOrb();
   sm.textContent=r?('Today: '+money(r.pnl||0,true)+' · '+(r.ntr||0)+' closed'+(r.pos?' · 1 open ('+r.pos.sym+' '+r.pos.strike+(r.pos.type==='call'?'C':'P')+')':'')+(r.sh!=null?' · tight-exit test (B): '+money(r.sh,true):'')+(r.orb?' · ORB book: '+money(+r.orb.pnl||0,true)+' ('+(r.orb.trades||[]).length+' closed, '+(r.orb.open||[]).length+' open)':'')):'';
   sm.className='mode '+(r&&r.pnl>0?'up':r&&r.pnl<0?'dn':'');
   tb.textContent='';
-  ((r&&r.orb&&r.orb.open)||[]).forEach(function(o){var p=orbPnl(o),tr=document.createElement('tr');tdTxt(tr,hm(new Date(o.t0).toISOString()));tdTxt(tr,'ORB '+o.sym+' '+o.strike+(o.type==='call'?'C':'P'));tdTxt(tr,p==null?'…':money(p,true),p>0?'up':p<0?'dn':'flat');tdTxt(tr,'OPEN · stop '+(+o.stopU).toFixed(2)+' · target '+(+o.tgtU).toFixed(2));tb.appendChild(tr)});
-  var orbRows=((r&&r.orb&&r.orb.trades)||[]).map(function(t){return{in:t.entryT,sym:'ORB '+t.sym,k:t.strike,ty:t.type,pnl:t.pnl,why:t.reason}});
-  (r&&r.tr||[]).concat(orbRows).sort(function(a,b){return a.in<b.in?-1:1}).reverse().forEach(function(t){var tr=document.createElement('tr');tdTxt(tr,hm(t.in));tdTxt(tr,t.sym+' '+t.k+(t.ty==='call'?'C':'P'));tdTxt(tr,money(+t.pnl,true),t.pnl>0?'up':t.pnl<0?'dn':'flat');tdTxt(tr,t.why||'');tb.appendChild(tr)});
-  if(!tb.children.length){var tr0=document.createElement('tr'),c0=document.createElement('td');c0.colSpan=4;c0.textContent='No closed server trades yet today';tr0.appendChild(c0);tb.appendChild(tr0)}
+  ((r&&r.orb&&r.orb.open)||[]).forEach(function(o){var p=orbPnl(o),tr=document.createElement('tr');tdTxt(tr,hm(new Date(o.t0).toISOString()));tdTxt(tr,'ORB '+o.sym+' '+o.strike+(o.type==='call'?'C':'P'));tdTxt(tr,'ORB');tdTxt(tr,p==null?'…':money(p,true),p>0?'up':p<0?'dn':'flat');tdTxt(tr,'OPEN · stop '+(+o.stopU).toFixed(2)+' · target '+(+o.tgtU).toFixed(2));tb.appendChild(tr)});
+  var STRAT_NM={ema:'EMA',sweep:'Sweep',orb5:'ORB',orb15:'ORB'};
+  function stratLabel(s){if(!s)return'';var base=s.split(' ')[0],run=s.indexOf('run')>=0;return(STRAT_NM[base]||base)+(run?' (run)':'')}
+  var orbRows=((r&&r.orb&&r.orb.trades)||[]).map(function(t){return{in:t.entryT,sym:'ORB '+t.sym,k:t.strike,ty:t.type,pnl:t.pnl,why:t.reason,strat:'ORB'}});
+  (r&&r.tr||[]).concat(orbRows).sort(function(a,b){return a.in<b.in?-1:1}).reverse().forEach(function(t){var tr=document.createElement('tr');tdTxt(tr,hm(t.in));tdTxt(tr,t.sym+' '+t.k+(t.ty==='call'?'C':'P'));tdTxt(tr,t.strat!=null?stratLabel(t.strat):'');tdTxt(tr,money(+t.pnl,true),t.pnl>0?'up':t.pnl<0?'dn':'flat');tdTxt(tr,t.why||'');tb.appendChild(tr)});
+  if(!tb.children.length){var tr0=document.createElement('tr'),c0=document.createElement('td');c0.colSpan=5;c0.textContent='No closed server trades yet today';tr0.appendChild(c0);tb.appendChild(tr0)}
   var key='';try{key=$('srvKey').value.trim()}catch(e){}
   var L=$('srvLink');L.textContent='';
   if(key){var a=document.createElement('a');a.href='https://scalp-city-server.onrender.com/?key='+encodeURIComponent(key);a.target='_blank';a.rel='noopener';a.textContent='Open the server page (start / stop / close now)';a.style.color='var(--cyan)';L.appendChild(a)}
