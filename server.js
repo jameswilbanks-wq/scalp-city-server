@@ -442,6 +442,49 @@ async function cskManage() {
     saveRec();
   } catch (err) { P.cskErr = String(err && err.message || err).slice(0, 120); }
 }
+/* ---------- X9 paper book: EMA9 x VWAP crossover (reel shared by James 2026-11-11, "@austin.daytrades" via "@algo.jan"; the reviewer's backtest claimed 174 trades, 55.8% winners, profit factor 2.17, +200% in about 8 months; the original trader claimed +$215k in October 2026). Rules as shown: EMA9 crosses above VWAP -> buy a call; EMA9 crosses below VWAP -> buy a put; exit when a 1-minute candle closes back through EMA9 against the trade, or at -30% on the premium; no take-profit shown. Added: an opposite cross also exits, flat before the close, same-day at-the-money contract, 1 contract, one position per symbol in this book, entries 9:45 to 15:30 ET. Runs as its own book (journal field x9k) so it never blocks the other books. X9_ON=0 disables. ---------- */
+const X9_ON = process.env.X9_ON !== '0', X9 = { syms: (process.env.X9_SYMS || '').split(',').map(x => x.trim().toUpperCase()).filter(Boolean), stopPct: +process.env.X9_STOP || 30 };
+async function x9Look() {
+  const r = P.rec; if (!X9_ON || !r || r.shut || !marketOpen(Date.now())) return;
+  r.x9k = r.x9k || { open: [], trades: [], pnl: 0 };
+  const e = nowET(); if (e.min < 585 || e.min > 930) return;
+  for (const s of (X9.syms.length ? X9.syms : CFG.syms)) {
+    const bars = P.bars[s]; if (!bars || bars.length < 20) continue;
+    const q = bars.length - 1, b = bars[q]; if (b.day !== e.day || r.x9k.open.some(p => p.sym === s)) continue;
+    const sig = Engine.x9At(bars, q); if (!sig) continue;
+    const id = s + ':' + b.t; if (r.x9k.last === id) continue; r.x9k.last = id;
+    if (Date.now() - (b.t + 60000) > 150000) { logSignal(s, sig, b.c, 'skipped', 'x9 signal was more than 2 minutes old when seen'); continue; }
+    let pk; try { pk = await pickContract(s, sig.dir, b.c, 0); } catch (err) { pk = { why: 'could not load option data (' + ((err && err.code) || 'error') + ')' }; }
+    if (pk.why) { logSignal(s, sig, b.c, 'skipped', 'x9: ' + pk.why); continue; }
+    r.x9k.open.push({ sym: s, dir: sig.dir, type: pk.type, strike: pk.strike, exp: pk.exp, inst: pk.inst, t0: Date.now(), sigT: b.t, entryAsk: pk.ask, entryBid: pk.bid, entryU: b.c, qAge: pk.qAge, e9: Math.round(b.e9 * 100) / 100, trig: 'x9', peak: pk.bid, iv: pk.iv, delta: pk.delta, flatMin: CFG.dte === 0 ? 935 : 950 });
+    logSignal(s, sig, b.c, 'entered', 'x9 ' + pk.type + ' ' + pk.strike + ' exp ' + pk.exp + ' @ ask $' + pk.ask.toFixed(2) + ' (EMA9 ' + b.e9.toFixed(2) + ' crossed ' + (sig.dir > 0 ? 'above' : 'below') + ' VWAP ' + b.vwap.toFixed(2) + ')');
+  }
+  saveRec();
+}
+async function x9Manage() {
+  const k = P.rec && P.rec.x9k; if (!k || !k.open.length) return;
+  try {
+    const qd = await rh('get_option_quotes', { instrument_ids: k.open.map(x => x.inst) }), by = {};
+    (qd.results || []).forEach(z => { if (z.quote) by[z.quote.instrument_id] = z.quote; });
+    const e = nowET();
+    for (const p of k.open.slice()) {
+      const q = by[p.inst]; if (!q) continue; const bid = +q.bid_price; if (!(bid >= 0)) continue;
+      if (q.updated_at && Date.now() - Date.parse(q.updated_at) > 180000) continue;
+      p.peak = Math.max(p.peak || 0, bid); p.live = { bid, ask: +q.ask_price, t: Date.now(), age: q.updated_at ? Date.now() - Date.parse(q.updated_at) : null };
+      const bars = P.bars[p.sym], last = bars && bars.length ? bars[bars.length - 1] : null; let reason = '';
+      if (last && last.t > p.sigT) { if (Engine.x9Exit(last, p.dir)) reason = 'level'; else { const x = Engine.x9At(bars, bars.length - 1); if (x && x.dir === -p.dir) reason = 'reverse'; } }
+      if (!reason && bid <= p.entryAsk * (1 - X9.stopPct / 100)) reason = 'premium stop';
+      if (!reason && e.min >= p.flatMin) reason = 'eod';
+      if (!reason && !marketOpen(Date.now())) reason = 'eod';
+      if (reason) {
+        const pnl = Math.round((bid - p.entryAsk) * 10000) / 100;
+        k.trades.push({ sym: p.sym, type: p.type, strike: p.strike, exp: p.exp, entryT: iso(p.t0), entryAsk: p.entryAsk, exitT: iso(Date.now()), exitBid: bid, pnl, peakBid: p.peak, reason, trig: 'x9', qty: 1, entryU: p.entryU, exitU: last ? last.c : null, entryQAge: p.qAge, exitQAge: p.live.age });
+        k.pnl = Math.round((k.pnl + pnl) * 100) / 100; k.open = k.open.filter(x => x !== p);
+      }
+    }
+    saveRec();
+  } catch (err) { P.x9Err = String(err && err.message || err).slice(0, 120); }
+}
 /* ---------- Variant tracker (VT): logs EVERY raw sweep/EMA signal (taken or not, EMA-filtered or not, extra symbols too) and scores hypothetical exits on the underlying. Never trades; saved to kv key 'vt'. P&L model: 0.45 delta x underlying move x 100, minus $3 cost. ---------- */
 const VT_EXTRA = (process.env.VT_EXTRA === undefined ? 'IWM' : process.env.VT_EXTRA).split(',').map(x => x.trim().toUpperCase()).filter(Boolean);
 const VT_VARS = [['none', 5], ['none', 10], ['none', 15], ['wick', 10], ['wick', 15], ['atr1', 10]];
@@ -543,6 +586,7 @@ async function tick() {
     }
     if (P.rec.pos) await managePos();
     await manageShadows();
+    try { if (open) await x9Look(); await x9Manage(); } catch (e) { P.x9Err = String(e && e.message || e).slice(0, 120); }
     try { if (open) await cskLook(); await cskManage(); } catch (e) { P.cskErr = String(e && e.message || e).slice(0, 120); }
     if (open) { try { await orbLook(); await manageOrb(); } catch (e) { P.orbErr = String(e && e.message || e).slice(0, 120); } } else { try { await manageOrb(); } catch (e) {} }
     if (open) { try { await vtTick(); } catch (e) { P.vtErr = String(e && e.message || e).slice(0, 120); } }
@@ -628,6 +672,7 @@ function status() {
     robinhood: { connected: S.connected, needsLogin: S.needsLogin, err: S.err, lastOk: S.lastOk }, store: pool ? 'database' : 'MEMORY ONLY',
     day: r && r.day, pnl: r && r.pnl, shut: r && r.shut, trades: (r && r.trades || []).slice(-20), signals: (r && r.signals || []).slice(-12),
     orb: r && r.orbk ? { pnl: r.orbk.pnl, closed: r.orbk.trades.length, open: r.orbk.open.length, on: ORB_ON } : null,
+    x9: r && r.x9k ? { pnl: r.x9k.pnl, closed: r.x9k.trades.length, open: r.x9k.open.length, on: X9_ON, err: P.x9Err } : null,
     callSpreads: r && r.csk ? { pnl: r.csk.pnl, closed: r.csk.trades.length, open: r.csk.open.length, on: CSK_ON, err: P.cskErr } : null,
     shadow: r && r.sh ? { pnl: r.sh.pnl, closed: r.sh.trades.length, open: r.sh.open.length } : null,
     pos: p ? { sym: p.sym, type: p.type, strike: p.strike, exp: p.exp, entryAsk: p.entryAsk, qty: p.qty || 1, half: p.half || null, t0: p.t0, bid: p.live && p.live.bid, peak: p.peak, asOf: p.live && p.live.t, stopPx: CFG.usd ? p.entryAsk - CFG.usd.stop / 100 : p.entryAsk * (1 - CFG.premStop), targetPx: CFG.usd ? p.entryAsk + CFG.usd.tp / 100 : p.entryAsk * (1 + CFG.tpUp) } : null,
@@ -925,6 +970,7 @@ async function optProbe() {
   }
   return out;
 }
+setTimeout(async () => { try { const cur = await kget('bt11'); if (cur && cur.progress === 'done') return; await kset('bt11', await require('./study_x9.js')(ap, rh, Engine, kset)); } catch (e) { try { await kset('bt11', { error: String(e && e.message || e) }); } catch (e2) {} } }, 45000); // EMA9 x VWAP reel strategy on real 0DTE prices, once
 setTimeout(async () => { try { const cur = await kget('bt10'); if (cur && cur.progress === 'done') return; await kset('bt10', await require('./study_lock.js')(ap, rh, Engine, kset)); } catch (e) { try { await kset('bt10', { error: String(e && e.message || e) }); } catch (e2) {} } }, 45000); // profit-lock study on real 0DTE prices, once
 setTimeout(async () => { try { const cur = await kget('bt9'); if (cur && cur.progress === 'done') return; await kset('bt9', await require('./study_exits.js')(ap, rh, Engine, kset)); } catch (e) { try { await kset('bt9', { error: String(e && e.message || e) }); } catch (e2) {} } }, 45000); // exit studies (spread profit taking, sweep signal failure), once
 setTimeout(async () => { try { const cur = await kget('bt8'); if (cur && cur.progress === 'done') return; await kset('bt8', await require('./study_sweep.js')(ap, rh, Engine, kset)); } catch (e) { try { await kset('bt8', { error: String(e && e.message || e) }); } catch (e2) {} } }, 45000); // sweep on real option prices by symbol, once

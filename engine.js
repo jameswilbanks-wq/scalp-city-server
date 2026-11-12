@@ -263,6 +263,23 @@ var Engine = (function () {
     return out;
   }
 
-  return { signals: signals, simulate: simulate, latest: latest, prepare: prepare, ladderCfg: ladderCfg, DEFAULT: DEFAULT, et: et };
+  /* EMA9 x VWAP crossover (reel shared 2026-11-11, @austin.daytrades via @algo.jan): "if VWAP crosses above EMA9 take puts; if VWAP crosses below EMA9 take calls";
+     stop = a candle closes back through EMA9 (or -30% on the premium). So: EMA9 crossing ABOVE VWAP -> call, EMA9 crossing BELOW VWAP -> put. Momentum-following.
+     x9At(bars, q): the signal on bar q (q must be inside the day, not its first bar). x9Exit(bars, q, dir): true when bar q closes through EMA9 against the trade. */
+  function x9At(bars, q) {
+    var b = bars[q], p = bars[q - 1]; if (!p || p.day !== b.day) return null;
+    var now = b.e9 - b.vwap, prev = p.e9 - p.vwap;
+    if (now > 0 && prev <= 0) return { dir: 1, trig: 'x9', atr: b.atr, lvl: b.e9 };
+    if (now < 0 && prev >= 0) return { dir: -1, trig: 'x9', atr: b.atr, lvl: b.e9 };
+    return null;
+  }
+  function x9Exit(b, dir) { return dir > 0 ? b.c < b.e9 : b.c > b.e9; }
+  function x9Signals(bars, startMin, lastEntry) {
+    var out = [];
+    for (var q = 1; q < bars.length; q++) { var b = bars[q]; if (b.min < (startMin || 585) || b.min > (lastEntry || 930)) continue; var s = x9At(bars, q); if (s) out.push({ k: q, sig: s }); }
+    return out;
+  }
+
+  return { signals: signals, simulate: simulate, latest: latest, prepare: prepare, ladderCfg: ladderCfg, DEFAULT: DEFAULT, et: et, x9At: x9At, x9Exit: x9Exit, x9Signals: x9Signals };
 })();
 if (typeof module !== 'undefined') module.exports = Engine;
