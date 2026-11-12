@@ -1,6 +1,10 @@
 'use strict';
-/* Scalp City server: always-on PAPER trading. It never places, cancels or changes a real order:
-   the only Robinhood tools it is allowed to call are read-only (see READ_ONLY below). */
+/* Scalp City server: always-on PAPER trading. It never places, cancels or changes an order at a real broker:
+   the only Robinhood tools it is allowed to call are read-only (see READ_ONLY below). The one exception (James
+   approved 2026-11-12) is the sweep real-order pilot below: it submits real orders, but only to Alpaca's own
+   PAPER trading account (paper-api.alpaca.markets, hardcoded, see ALPACA_PAPER_TRADING_BASE) to validate whether
+   our simulated fills are realistic before anything goes live. No money, real or otherwise, is actually at risk;
+   SWEEP_REAL_ORDERS=0 turns it off and sweep reverts to the same simulated fills as every other book. */
 const http = require('http');
 const crypto = require('crypto');
 const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
@@ -89,6 +93,22 @@ async function ap(path, qs) {
   return r.json();
 }
 function occ(sym) { const m = /^(.*?)(\d{6})([CP])(\d{8})$/.exec(sym); return m ? { root: m[1], exp: '20' + m[2].slice(0, 2) + '-' + m[2].slice(2, 4) + '-' + m[2].slice(4, 6), type: m[3] === 'C' ? 'call' : 'put', strike: +m[4] / 1000 } : null; }
+/* ---------- Alpaca PAPER trading orders (sweep pilot, James approved 2026-11-12): real orders against Alpaca's own paper
+   account, to test whether our simulated fills (ask-at-signal, bid-at-exit) are realistic before going live. SAFETY: the
+   base URL below is hardcoded to the paper endpoint and never read from env or any variable, so even a live-account key
+   pasted here fails auth instead of risking a real order; this is the only place that ever talks to Alpaca's trading API
+   (as opposed to the data feed in ap() above). SWEEP_REAL_ORDERS=0 turns this off and sweep reverts to simulated fills. */
+const ALPACA_PAPER_TRADING_BASE = 'https://paper-api.alpaca.markets';
+const SWEEP_REAL_ORDERS = process.env.SWEEP_REAL_ORDERS !== '0';
+async function apTrade(method, path, body) {
+  const r = await fetch(ALPACA_PAPER_TRADING_BASE + path, { method, headers: Object.assign({ 'APCA-API-KEY-ID': AK, 'APCA-API-SECRET-KEY': AS, accept: 'application/json' }, body ? { 'content-type': 'application/json' } : {}), body: body ? JSON.stringify(body) : undefined });
+  const txt = await r.text(); let j; try { j = txt ? JSON.parse(txt) : {}; } catch (e) { j = { raw: txt }; }
+  if (!r.ok) throw Object.assign(new Error('alpaca trade ' + r.status + ' ' + JSON.stringify(j).slice(0, 200)), { code: 'tool_error', status: r.status });
+  return j;
+}
+async function alpacaBuy1(sym, qty, cid) { return apTrade('POST', '/v2/orders', { symbol: sym, qty: String(qty), side: 'buy', type: 'market', time_in_force: 'day', client_order_id: cid }); }
+async function alpacaSell1(sym, qty, cid) { return apTrade('POST', '/v2/orders', { symbol: sym, qty: String(qty), side: 'sell', type: 'market', time_in_force: 'day', client_order_id: cid }); }
+async function alpacaOrderStatus(id) { return apTrade('GET', '/v2/orders/' + id); }
 async function optSnaps(under, qs) {
   const out = {}; let tok = '';
   for (let i = 0; i < 8; i++) {
@@ -310,15 +330,49 @@ function exitReason(p, prof, bid, info, bars) {
   if (!reason && Date.now() - p.t0 >= prof.timeBars * 60000 && bid < p.entryAsk * 1.05) reason = 'time';
   return reason;
 }
+/* Sweep real-order pilot: resolve a pending Alpaca order (entry or exit fill) before any further management.
+   Safe across restarts: the order id is persisted in the journal, so a redeploy just re-polls the same order next tick. */
+async function pollSweepReal() {
+  const p = P.rec.pos; if (!p || !p.real || !p.real.pending) return;
+  let o; try { o = await alpacaOrderStatus(p.real.pending === 'entry' ? p.real.entryOrderId : p.real.exitOrderId); } catch (e) { return; } // transient error: retry next tick
+  if (p.real.pending === 'entry') {
+    if (o.status === 'filled') {
+      const px = +o.filled_avg_price; p.entryAsk = px; p.entryBid = px; p.peak = px; p.real.pending = null; saveRec();
+    } else if (['canceled', 'expired', 'rejected'].includes(o.status)) {
+      logSignal(p.sym, { trig: 'sweep', dir: p.dir }, p.entryU, 'skipped', 'sweep real entry order ' + o.status + ', never filled'); P.rec.pos = null; saveRec();
+    } else if (Date.now() - p.real.since > 60000) {
+      try { await apTrade('DELETE', '/v2/orders/' + p.real.entryOrderId); } catch (e) {} // give up after a minute of no fill
+      logSignal(p.sym, { trig: 'sweep', dir: p.dir }, p.entryU, 'skipped', 'sweep real entry order never filled within 60s, canceled'); P.rec.pos = null; saveRec();
+    }
+  } else { // pending exit
+    if (o.status === 'filled') { closePaper(p.real.exitReason, +o.filled_avg_price, p.real.exitInfo); }
+    else if (['canceled', 'expired', 'rejected'].includes(o.status) && Date.now() - p.real.since > 10000) {
+      // position is still open at Alpaca and still needs closing: resubmit with a fresh client order id
+      const cid = 'sweep-exit-retry-' + Date.now();
+      try { const o2 = await alpacaSell1(p.inst, p.qty || 1, cid); p.real.exitOrderId = o2.id; p.real.exitCid = cid; p.real.since = Date.now(); saveRec(); } catch (e) {}
+    }
+  }
+}
 async function managePos() {
-  const p = P.rec.pos, info = P.info[p.sym], bars = P.bars[p.sym];
+  const p = P.rec.pos;
+  if (p.trig === 'sweep' && p.real && p.real.pending) { await pollSweepReal(); return; } // real-order pilot: an entry or exit fill is still in flight, resolved above
+  const info = P.info[p.sym], bars = P.bars[p.sym];
   const qd = await rh('get_option_quotes', { instrument_ids: [p.inst] }), q = ((qd.results || [])[0] || {}).quote; if (!q) return;
   const bid = +q.bid_price; if (!(bid >= 0)) return;
   if (q.updated_at && Date.now() - Date.parse(q.updated_at) > 180000) return;
   p.live = { bid, ask: +q.ask_price, t: Date.now(), age: q.updated_at ? Date.now() - Date.parse(q.updated_at) : null }; p.peak = Math.max(p.peak || 0, bid);
   const reason = exitReason(p, CFG, bid, info, bars);
   if (reason === 'target' && (p.qty || 1) > 1 && !p.half) { p.half = { t: iso(Date.now()), bid, pnl: Math.round((bid - p.entryAsk) * 10000) / 100, qty: 1 }; return; } // sold 1 of 2 at the target, the other rides
-  if (reason) closePaper(reason, bid, info);
+  if (!reason) return;
+  if (p.trig === 'sweep' && p.real) { // real-order pilot: submit a real sell to close instead of using the quote bid as the exit price
+    const cid = 'sweep-exit-' + p.t0 + '-' + Date.now();
+    try {
+      const o = await alpacaSell1(p.inst, p.qty || 1, cid);
+      p.real.pending = 'exit'; p.real.exitOrderId = o.id; p.real.exitCid = cid; p.real.since = Date.now(); p.real.exitReason = reason; p.real.exitInfo = info; saveRec();
+    } catch (e) { /* position stays open at Alpaca; retry submitting the close next tick */ }
+    return;
+  }
+  closePaper(reason, bid, info);
 }
 /* fast loop: while a paper position is open, re-price it every 2 s (stops and the screen both see fresh prices) */
 const FAST_MS = +process.env.FAST_MS || 2000;
@@ -640,8 +694,18 @@ async function lookForEntry() {
     if (pk.why) { logSignal(s, sig, inf.bar.c, 'skipped', pk.why); continue; }
     r.pos = { sym: s, dir: sig.dir, type: pk.type, strike: pk.strike, exp: pk.exp, inst: pk.inst, t0: Date.now(), sigT: inf.bar.t, entryAsk: pk.ask, entryBid: pk.bid, entryU: inf.bar.c, qAge: pk.qAge, qty: QTY,
       trailR: SWEEP_RUN && sig.trig === 'sweep' && sig.stopPx !== undefined && Math.abs(inf.bar.c - sig.stopPx) > 0.0001 * inf.bar.c ? Math.abs(inf.bar.c - sig.stopPx) : undefined, stopU: sig.stopPx !== undefined ? sig.stopPx : inf.bar.c - sig.dir * Math.max(sig.atr, 0.05), trig: sig.trig, lvl: sig.lvl, peak: pk.bid, iv: pk.iv, delta: pk.delta, flatMin: P.extNow && !CFG.syms.includes(s) ? P.extNow.flat : CFG.dte === 0 ? 935 : 950, ext: P.extNow && !CFG.syms.includes(s) ? P.extNow.name : undefined };
+    if (SWEEP_REAL_ORDERS && sig.trig === 'sweep') {
+      const cid = 'sweep-entry-' + r.pos.t0;
+      try {
+        const o = await alpacaBuy1(pk.inst, r.pos.qty, cid);
+        r.pos.real = { entryOrderId: o.id, entryCid: cid, pending: 'entry', since: Date.now() };
+      } catch (e) {
+        logSignal(s, sig, inf.bar.c, 'skipped', 'sweep real order failed: ' + String(e && e.message || e).slice(0, 160));
+        r.pos = null; continue;
+      }
+    }
     openShadow(r.pos);
-    logSignal(s, sig, inf.bar.c, 'entered', pk.type + ' ' + pk.strike + ' exp ' + pk.exp + ' @ ask $' + pk.ask.toFixed(2));
+    logSignal(s, sig, inf.bar.c, 'entered', pk.type + ' ' + pk.strike + ' exp ' + pk.exp + ' @ ask $' + pk.ask.toFixed(2) + (r.pos.real ? ' (real Alpaca paper order, pending fill)' : ''));
   }
   saveRec();
 }
@@ -651,7 +715,10 @@ async function tick() {
     P.lastTick = Date.now();
     const day = nowET().day;
     if (!P.rec || P.rec.day !== day) {
-      if (P.rec && P.rec.pos) { P.rec.trades.push({ sym: P.rec.pos.sym, type: P.rec.pos.type, strike: P.rec.pos.strike, exp: P.rec.pos.exp, entryT: iso(P.rec.pos.t0), entryAsk: P.rec.pos.entryAsk, exitBid: null, pnl: 0, reason: 'unmanaged: left open overnight (paper)', unmanaged: true }); P.rec.pos = null; await saveRec(); }
+      if (P.rec && P.rec.pos) {
+        if (P.rec.pos.trig === 'sweep' && P.rec.pos.real) { try { await alpacaSell1(P.rec.pos.inst, P.rec.pos.qty || 1, 'sweep-flatten-eod-' + Date.now()); } catch (e) { /* best effort: log the gap below either way */ } }
+        P.rec.trades.push({ sym: P.rec.pos.sym, type: P.rec.pos.type, strike: P.rec.pos.strike, exp: P.rec.pos.exp, entryT: iso(P.rec.pos.t0), entryAsk: P.rec.pos.entryAsk, exitBid: null, pnl: 0, reason: 'unmanaged: left open overnight (paper)', unmanaged: true }); P.rec.pos = null; await saveRec();
+      }
       P.seenSig = {}; await loadDay(day);
     }
     // limits are off for paper: lift any automatic stop-for-the-day left in today's journal (keeps the manual one)
