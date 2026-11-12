@@ -290,7 +290,7 @@ function exitReason(p, prof, bid, info, bars) {
   }
   if (!reason && bars) {
     let adv = null;
-    for (let i = bars.length - 1; i >= 0 && bars[i].t > p.sigT; i--) { const x = dir > 0 ? bars[i].l : bars[i].h; adv = adv === null ? x : (dir > 0 ? Math.min(adv, x) : Math.max(adv, x)); }
+    for (let i = bars.length - 1; i >= 0 && bars[i].t > (p.beT || p.sigT); i--) { const x = dir > 0 ? bars[i].l : bars[i].h; adv = adv === null ? x : (dir > 0 ? Math.min(adv, x) : Math.max(adv, x)); }
     if (adv !== null && dir * (adv - p.stopU) <= 0) reason = 'stop';
     const last = info && info.bar;
     if (!reason && p.trig === 'orb5' && p.tgtU !== undefined) { let fav = null; for (let i = bars.length - 1; i >= 0 && bars[i].t > p.sigT; i--) { const x = dir > 0 ? bars[i].h : bars[i].l; fav = fav === null ? x : (dir > 0 ? Math.max(fav, x) : Math.min(fav, x)); } if (fav !== null && dir * (fav - p.tgtU) >= 0) reason = 'orb target'; }
@@ -349,19 +349,34 @@ async function manageShadows() {
   } catch (e) { /* never disturb the main paper trade */ }
 }
 /* ---------- ORB5 paper book (James approved 2026-11-10 after a year of data: profit factor about 1.08 with a 2R target, positive in both halves of the year, QQQ better than SPY; edge is small). Runs as its OWN 1-contract paper book next to the main sweep/EMA position, so neither blocks the other. Entry: first close beyond the 9:30-9:34 ET range after 9:35. Stop: opposite side of the range. Target: 2R on the underlying. Flat before the close. One trade per symbol per day. ORB_ON=0 turns it off. ---------- */
-const ORB_ON = process.env.ORB_ON !== '0', ORB_R = +process.env.ORB_R || 2;
+const ORB_ON = process.env.ORB_ON !== '0', ORB_MODE = process.env.ORB_MODE === '5' ? '5' : '15', ORB_R = +process.env.ORB_R || (ORB_MODE === '15' ? 1.25 : 2), ORB_BE = process.env.ORB_BE === undefined ? (ORB_MODE === '15' ? 0.5 : 0) : +process.env.ORB_BE;
+/* ORB15 (James approved 2026-11-12 after study bt13 on real 0DTE prices: positive in 2024-25 and in 2026 on SPY and QQQ, about +$7.50 to +$9 per trade, profit factor 1.11-1.19).
+   Range = 9:30-9:44 ET. Signal = the FIRST 15-minute candle (9:45, 10:00, ...; starting by 15:00) that closes beyond the range. Stop = other side of the range, target 1.25R,
+   stop moved to the entry once the trade has gone +0.5R. Out at 15:30 ET. ORB_MODE=5 brings back the old 5-minute version. */
+function orb15Sig(s) {
+  const bars = P.bars[s]; if (!bars || !bars.length) return null;
+  const e = nowET(), today = bars.filter(b => b.day === e.day), rng = today.filter(b => b.min >= 570 && b.min <= 584); if (rng.length < 15) return null;
+  const b = today[today.length - 1]; if (b.min < 599 || (b.min - 584) % 15 !== 0 || b.min > 914) return null;
+  const oH = Math.max(...rng.map(x => x.h)), oL = Math.min(...rng.map(x => x.l));
+  for (const x of today) { if (x.t >= b.t) break; if (x.min >= 599 && (x.min - 584) % 15 === 0 && (x.c > oH || x.c < oL)) return null; } // an earlier 15-minute close already broke out
+  const dir = b.c > oH ? 1 : b.c < oL ? -1 : 0; if (!dir) return null;
+  const stopPx = dir > 0 ? oL : oH; if (!(Math.abs(b.c - stopPx) > 0.0001 * b.c)) return null;
+  return { sig: { dir, trig: 'orb5', stopPx, oH, oL }, bar: b };
+}
 async function orbLook() {
   const r = P.rec; if (!ORB_ON || !r || r.shut || !marketOpen(Date.now())) return;
   r.orbk = r.orbk || { open: [], trades: [], pnl: 0, done: {} };
   for (const s of CFG.syms) {
-    const inf = P.info[s], sig = inf && inf.orb5; if (!sig || r.orbk.done[s]) continue;
+    let inf = P.info[s], sig = inf && inf.orb5;
+    if (ORB_MODE === '15') { const o = orb15Sig(s); sig = o && o.sig; inf = o ? Object.assign({}, inf, { bar: o.bar }) : inf; }
+    if (!sig || r.orbk.done[s]) continue;
     r.orbk.done[s] = true; // one per symbol per day, taken or skipped
     if (Date.now() - (inf.bar.t + 60000) > 150000) { logSignal(s, sig, inf.bar.c, 'skipped', 'orb5 signal was more than 2 minutes old when seen'); continue; }
     let pk; try { pk = await pickContract(s, sig.dir, inf.bar.c, 0); } catch (e) { pk = { why: 'could not load option data (' + ((e && e.code) || 'error') + ')' }; }
     if (pk.why) { logSignal(s, sig, inf.bar.c, 'skipped', 'orb5: ' + pk.why); continue; }
     const risk = Math.abs(inf.bar.c - sig.stopPx);
-    r.orbk.open.push({ sym: s, dir: sig.dir, type: pk.type, strike: pk.strike, exp: pk.exp, inst: pk.inst, t0: Date.now(), sigT: inf.bar.t, entryAsk: pk.ask, entryBid: pk.bid, entryU: inf.bar.c, qAge: pk.qAge, stopU: sig.stopPx, tgtU: inf.bar.c + sig.dir * ORB_R * risk, riskU: Math.round(risk * 100) / 100, trig: 'orb5', peak: pk.bid, iv: pk.iv, delta: pk.delta, flatMin: CFG.dte === 0 ? 935 : 950 });
-    logSignal(s, sig, inf.bar.c, 'entered', 'orb5 ' + pk.type + ' ' + pk.strike + ' exp ' + pk.exp + ' @ ask $' + pk.ask.toFixed(2) + ', stop ' + sig.stopPx.toFixed(2) + ', target ' + (inf.bar.c + sig.dir * ORB_R * risk).toFixed(2));
+    r.orbk.open.push({ sym: s, dir: sig.dir, type: pk.type, strike: pk.strike, exp: pk.exp, inst: pk.inst, t0: Date.now(), sigT: inf.bar.t, entryAsk: pk.ask, entryBid: pk.bid, entryU: inf.bar.c, qAge: pk.qAge, stopU: sig.stopPx, tgtU: inf.bar.c + sig.dir * ORB_R * risk, riskU: Math.round(risk * 100) / 100, trig: 'orb5', orbV: ORB_MODE, be: ORB_BE, peak: pk.bid, iv: pk.iv, delta: pk.delta, flatMin: ORB_MODE === '15' ? 930 : CFG.dte === 0 ? 935 : 950 });
+    logSignal(s, sig, inf.bar.c, 'entered', 'orb' + ORB_MODE + ' ' + pk.type + ' ' + pk.strike + ' exp ' + pk.exp + ' @ ask $' + pk.ask.toFixed(2) + ', stop ' + sig.stopPx.toFixed(2) + ', target ' + (inf.bar.c + sig.dir * ORB_R * risk).toFixed(2));
   }
   saveRec();
 }
@@ -374,10 +389,11 @@ async function manageOrb() {
       const q = by[p.inst]; if (!q) continue; const bid = +q.bid_price; if (!(bid >= 0)) continue;
       if (q.updated_at && Date.now() - Date.parse(q.updated_at) > 180000) continue;
       p.peak = Math.max(p.peak || 0, bid); p.live = { bid, ask: +q.ask_price, t: Date.now(), age: q.updated_at ? Date.now() - Date.parse(q.updated_at) : null };
+      if (p.be && !p.beT) { for (const x of (P.bars[p.sym] || [])) { if (x.t <= p.sigT) continue; if (p.dir > 0 ? x.l <= p.stopU : x.h >= p.stopU) break; if (p.dir * ((p.dir > 0 ? x.h : x.l) - p.entryU) >= p.be * p.riskU) { p.stopU = p.entryU; p.beT = x.t; break; } } } // break-even: from the bar AFTER the one that reached +0.5R
       const reason = exitReason(p, {}, bid, P.info[p.sym], P.bars[p.sym]);
       if (reason) {
         const pnl = Math.round((bid - p.entryAsk) * 10000) / 100;
-        ob.trades.push({ sym: p.sym, type: p.type, strike: p.strike, exp: p.exp, entryT: iso(p.t0), entryAsk: p.entryAsk, exitT: iso(Date.now()), exitBid: bid, pnl, peakBid: p.peak, reason, trig: 'orb5', qty: 1, entryU: p.entryU, stopU: p.stopU, tgtU: p.tgtU, riskU: p.riskU, entryQAge: p.qAge, exitQAge: p.live.age });
+        ob.trades.push({ sym: p.sym, type: p.type, strike: p.strike, exp: p.exp, entryT: iso(p.t0), entryAsk: p.entryAsk, exitT: iso(Date.now()), exitBid: bid, pnl, peakBid: p.peak, reason: reason === 'stop' && p.beT ? 'breakeven' : reason, trig: 'orb5', orbV: p.orbV, qty: 1, entryU: p.entryU, stopU: p.stopU, tgtU: p.tgtU, riskU: p.riskU, entryQAge: p.qAge, exitQAge: p.live.age });
         ob.pnl = Math.round((ob.pnl + pnl) * 100) / 100; ob.open = ob.open.filter(x => x !== p);
       }
     }
@@ -741,7 +757,7 @@ function status() {
   return { now: Date.now(), running: !!P.ctl.running, mode: 'PAPER', msg: P.msg, tickErr: P.tickErr, saveErr: P.saveErr, lastTick: P.lastTick, market: marketOpen(Date.now()),
     robinhood: { connected: S.connected, needsLogin: S.needsLogin, err: S.err, lastOk: S.lastOk }, store: pool ? 'database' : 'MEMORY ONLY',
     day: r && r.day, pnl: r && r.pnl, shut: r && r.shut, trades: (r && r.trades || []).slice(-20), signals: (r && r.signals || []).slice(-12),
-    orb: r && r.orbk ? { pnl: r.orbk.pnl, closed: r.orbk.trades.length, open: r.orbk.open.length, on: ORB_ON } : null,
+    orb: r && r.orbk ? { pnl: r.orbk.pnl, closed: r.orbk.trades.length, open: r.orbk.open.length, on: ORB_ON, mode: ORB_MODE, r: ORB_R, be: ORB_BE } : null,
     fairPrice: r && r.fpk ? { pnl: r.fpk.pnl, closed: r.fpk.trades.length, open: r.fpk.open.length, on: FP_ON, err: P.fpErr } : null,
     x9: r && r.x9k ? { pnl: r.x9k.pnl, closed: r.x9k.trades.length, open: r.x9k.open.length, on: X9_ON, err: P.x9Err } : null,
     callSpreads: r && r.csk ? { pnl: r.csk.pnl, closed: r.csk.trades.length, open: r.csk.open.length, on: CSK_ON, err: P.cskErr } : null,
