@@ -2,7 +2,7 @@
    Entry: EMA9 crosses above VWAP -> buy the at-the-money same-day call; crosses below -> put. Entries 9:45 to 15:30 ET, one position per symbol at a time.
    Exit: a candle closes back through EMA9 against the trade, an opposite cross, -30% on the premium, or 15:30 ET.
    Variants: '1min' (as the live book), '5min' (same rules on 5-minute candles), '1min-nostop' (no -30% stop), '1min-tp40' (plus a +40% take-profit).
-   $0.01 per fill each way. Split: first 2/3 of sessions = train, last 1/3 = lock. Saved to kv 'bt11'. */
+   $0.01 per fill each way. Split: first 2/3 of sessions = train, last 1/3 = lock. Saved to kv opts.key (default 'bt11'). Run bt12 = VWAP on (O+H+L+C)/4 as in the reel; bt11 was (H+L+C)/3. */
 module.exports = async function studyX9(ap, rh, Engine, kset, opts) {
   opts = opts || {};
   const sleep = ms => new Promise(r => setTimeout(r, ms)), gap = opts.gap === undefined ? 400 : opts.gap, iso = t => new Date(t).toISOString();
@@ -11,7 +11,7 @@ module.exports = async function studyX9(ap, rh, Engine, kset, opts) {
   const acc = (key, pnl) => { const c = M[key] = M[key] || { n: 0, w: 0, gw: 0, gl: 0, net: 0, worst: 0, best: 0 }; c.n++; c.net += pnl; if (pnl > 0) { c.w++; c.gw += pnl; } else c.gl += -pnl; if (pnl < c.worst) c.worst = pnl; if (pnl > c.best) c.best = pnl; };
   const skip = k => { out.skipped[k] = (out.skipped[k] || 0) + 1; };
   const fin = () => { const r2 = x => Math.round(x * 100) / 100; out.res = {}; Object.keys(M).sort().forEach(k => { const c = M[k]; out.res[k] = { n: c.n, win: Math.round(100 * c.w / c.n), avg: r2(c.net / c.n), pf: c.gl > 0.01 ? r2(c.gw / c.gl) : null, worst: Math.round(c.worst), best: Math.round(c.best) }; }); };
-  const save = async () => { fin(); try { await kset('bt11', out); } catch (e) {} };
+  const save = async () => { fin(); try { await kset(opts.key || 'bt11', out); } catch (e) {} };
   const optBars = async (syms, start, end) => {
     const m = {}; let pt;
     for (let i = 0; i < syms.length; i += 90) {

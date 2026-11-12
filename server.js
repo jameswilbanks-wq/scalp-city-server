@@ -457,7 +457,7 @@ async function x9Look() {
     let pk; try { pk = await pickContract(s, sig.dir, b.c, 0); } catch (err) { pk = { why: 'could not load option data (' + ((err && err.code) || 'error') + ')' }; }
     if (pk.why) { logSignal(s, sig, b.c, 'skipped', 'x9: ' + pk.why); continue; }
     r.x9k.open.push({ sym: s, dir: sig.dir, type: pk.type, strike: pk.strike, exp: pk.exp, inst: pk.inst, t0: Date.now(), sigT: b.t, entryAsk: pk.ask, entryBid: pk.bid, entryU: b.c, qAge: pk.qAge, e9: Math.round(b.e9 * 100) / 100, trig: 'x9', peak: pk.bid, iv: pk.iv, delta: pk.delta, flatMin: CFG.dte === 0 ? 935 : 950 });
-    logSignal(s, sig, b.c, 'entered', 'x9 ' + pk.type + ' ' + pk.strike + ' exp ' + pk.exp + ' @ ask $' + pk.ask.toFixed(2) + ' (EMA9 ' + b.e9.toFixed(2) + ' crossed ' + (sig.dir > 0 ? 'above' : 'below') + ' VWAP ' + b.vwap.toFixed(2) + ')');
+    logSignal(s, sig, b.c, 'entered', 'x9 ' + pk.type + ' ' + pk.strike + ' exp ' + pk.exp + ' @ ask $' + pk.ask.toFixed(2) + ' (EMA9 ' + b.e9.toFixed(2) + ' crossed ' + (sig.dir > 0 ? 'above' : 'below') + ' VWAP(OHLC/4) ' + b.vwap4.toFixed(2) + ')');
   }
   saveRec();
 }
@@ -970,7 +970,7 @@ async function optProbe() {
   }
   return out;
 }
-setTimeout(async () => { try { const cur = await kget('bt11'); if (cur && cur.progress === 'done') return; await kset('bt11', await require('./study_x9.js')(ap, rh, Engine, kset)); } catch (e) { try { await kset('bt11', { error: String(e && e.message || e) }); } catch (e2) {} } }, 45000); // EMA9 x VWAP reel strategy on real 0DTE prices, once
+setTimeout(async () => { try { const cur = await kget('bt12'); if (cur && cur.progress === 'done') return; await kset('bt12', await require('./study_x9.js')(ap, rh, Engine, kset, { key: 'bt12' })); } catch (e) { try { await kset('bt11', { error: String(e && e.message || e) }); } catch (e2) {} } }, 45000); // EMA9 x VWAP reel strategy on real 0DTE prices, once
 setTimeout(async () => { try { const cur = await kget('bt10'); if (cur && cur.progress === 'done') return; await kset('bt10', await require('./study_lock.js')(ap, rh, Engine, kset)); } catch (e) { try { await kset('bt10', { error: String(e && e.message || e) }); } catch (e2) {} } }, 45000); // profit-lock study on real 0DTE prices, once
 setTimeout(async () => { try { const cur = await kget('bt9'); if (cur && cur.progress === 'done') return; await kset('bt9', await require('./study_exits.js')(ap, rh, Engine, kset)); } catch (e) { try { await kset('bt9', { error: String(e && e.message || e) }); } catch (e2) {} } }, 45000); // exit studies (spread profit taking, sweep signal failure), once
 setTimeout(async () => { try { const cur = await kget('bt8'); if (cur && cur.progress === 'done') return; await kset('bt8', await require('./study_sweep.js')(ap, rh, Engine, kset)); } catch (e) { try { await kset('bt8', { error: String(e && e.message || e) }); } catch (e2) {} } }, 45000); // sweep on real option prices by symbol, once

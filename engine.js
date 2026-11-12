@@ -43,15 +43,15 @@ var Engine = (function () {
   }
 
   function indicators(bars) {
-    var e50 = 0, e9 = 0, k50 = 2 / 51, k9 = 2 / 10, tr = [], pv = 0, vv = 0, day = '';
+    var e50 = 0, e9 = 0, k50 = 2 / 51, k9 = 2 / 10, tr = [], pv = 0, pv4 = 0, vv = 0, day = '';
     for (var i = 0; i < bars.length; i++) {
       var b = bars[i];
-      if (b.day !== day) { day = b.day; pv = 0; vv = 0; }
+      if (b.day !== day) { day = b.day; pv = 0; pv4 = 0; vv = 0; }
       e50 = i ? b.c * k50 + e50 * (1 - k50) : b.c;
       e9 = i ? b.c * k9 + e9 * (1 - k9) : b.c;
       b.e50 = e50; b.e9 = e9;
-      var tp = (b.h + b.l + b.c) / 3; pv += tp * b.v; vv += b.v;
-      b.vwap = vv ? pv / vv : b.c;
+      var tp = (b.h + b.l + b.c) / 3; pv += tp * b.v; pv4 += (b.o + b.h + b.l + b.c) / 4 * b.v; vv += b.v;
+      b.vwap = vv ? pv / vv : b.c; b.vwap4 = vv ? pv4 / vv : b.c; // vwap4 = session VWAP on (O+H+L+C)/4, the setting shown in the EMA9/VWAP reel
       var pc = i ? bars[i - 1].c : b.o;
       tr.push(Math.max(b.h - b.l, Math.abs(b.h - pc), Math.abs(b.l - pc)));
       var n = Math.min(14, tr.length), s = 0;
@@ -268,7 +268,7 @@ var Engine = (function () {
      x9At(bars, q): the signal on bar q (q must be inside the day, not its first bar). x9Exit(bars, q, dir): true when bar q closes through EMA9 against the trade. */
   function x9At(bars, q) {
     var b = bars[q], p = bars[q - 1]; if (!p || p.day !== b.day) return null;
-    var now = b.e9 - b.vwap, prev = p.e9 - p.vwap;
+    var now = b.e9 - b.vwap4, prev = p.e9 - p.vwap4;
     if (now > 0 && prev <= 0) return { dir: 1, trig: 'x9', atr: b.atr, lvl: b.e9 };
     if (now < 0 && prev >= 0) return { dir: -1, trig: 'x9', atr: b.atr, lvl: b.e9 };
     return null;
