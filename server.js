@@ -731,7 +731,12 @@ function scoreOf(scan) {
   const cells = {}, add = (k, pnl, day) => { const c = cells[k] = cells[k] || { n: 0, w: 0, pnl: 0, gw: 0, gl: 0, since: day }; c.n++; if (pnl > 0) { c.w++; c.gw += pnl; } else if (pnl < 0) c.gl -= pnl; c.pnl += pnl; if (day < c.since) c.since = day; };
   (scan || []).forEach(x => {
     const day = (x.value && x.value.day) || String(x.key).slice(4);
-    ((x.value && x.value.trades) || []).concat((x.value && x.value.orbk && x.value.orbk.trades) || []).forEach(t => { // includes the ORB5 book (trig orb5)
+    ((x.value && x.value.trades) || [])
+      .concat((x.value && x.value.orbk && x.value.orbk.trades) || [])
+      .concat((x.value && x.value.csk && x.value.csk.trades) || [])
+      .concat((x.value && x.value.x9k && x.value.x9k.trades) || [])
+      .concat((x.value && x.value.fpk && x.value.fpk.trades) || [])
+      .forEach(t => { // includes the ORB, CSK (call spread), X9, and FP books
       if (!(t.exitT || t.exitBid != null) || t.unmanaged) return;
       const trig = t.trig || 'ema', pnl = +t.pnl || 0, sym = t.sym || '?';
       add(sym + '|' + trig, pnl, day); add(sym + '|*', pnl, day); add('*|' + trig, pnl, day); add('*|*', pnl, day);
@@ -752,7 +757,12 @@ async function cityData(want) {
   const bars = {}; CFG.syms.forEach(s => { bars[s] = bars5(s); });
   (await extraBars(WATCH || want || [])).forEach(s => { bars[s] = bars5(s); });
   const scan = await kscan('rec:', 200), score = scoreOf(scan);
-  const days = scan.slice(0, 60).map(x => ({ day: x.value.day || x.key.slice(4), trades: (x.value.trades || []).concat((x.value.orbk && x.value.orbk.trades) || []).filter(t => t.exitT || t.exitBid != null).map(t => ({ t: Date.parse(t.exitT || t.entryT), sym: t.sym, pnl: +t.pnl || 0 })) }));
+  const days = scan.slice(0, 60).map(x => ({ day: x.value.day || x.key.slice(4), trades: (x.value.trades || [])
+    .concat((x.value.orbk && x.value.orbk.trades) || [])
+    .concat((x.value.csk && x.value.csk.trades) || [])
+    .concat((x.value.x9k && x.value.x9k.trades) || [])
+    .concat((x.value.fpk && x.value.fpk.trades) || [])
+    .filter(t => t.exitT || t.exitBid != null).map(t => ({ t: Date.parse(t.exitT || t.entryT), sym: t.sym, pnl: +t.pnl || 0 })) }));
   return Object.assign(liveData(), { bars, days, watch: WATCH, score });
 }
 

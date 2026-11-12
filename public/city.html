@@ -1001,7 +1001,7 @@ function renderScore(){
   var el=$('score');if(!el)return;
   if(!window.__WEB__||!SCORE){el.hidden=true;return}
   el.hidden=false;
-  var ST=['vwap','ema','orb','orb5','sweep'],SN={vwap:'VWAP',ema:'EMA 50',orb:'15-MIN BREAK',orb5:'ORB BOOK',sweep:'SWEEP'},syms={};
+  var ST=['vwap','ema','orb','orb5','sweep','cspread','x9','fp'],SN={vwap:'VWAP',ema:'EMA 50',orb:'15-MIN BREAK',orb5:'ORB BOOK',sweep:'SWEEP',cspread:'CSK',x9:'X9',fp:'FP'},syms={};
   Object.keys(SCORE).forEach(function(k){var a=k.split('|');if(a[0]!=='*')syms[a[0]]=1});
   var rows=Object.keys(syms).sort();
   var h='<h3>SCORECARD · TICKER × STRATEGY</h3><table class="sc"><tr><th></th>';
