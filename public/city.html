@@ -178,8 +178,7 @@ select:focus-visible,input:focus-visible,button:focus-visible{outline:2px solid 
         <option value="today">TODAY</option>
         <option value="week">1 WEEK</option>
         <option value="month">1 MONTH</option>
-        <option value="3month">3 MONTHS</option>
-        <option value="ytd">YEAR TO DATE</option>
+        <option value="all">ALL</option>
       </select>
     </div>
     <div class="row" id="posRow"><button class="pill" id="posPill" type="button" hidden></button><button class="pill" id="orbPill" type="button" hidden title="Opening-range breakout book (separate 1-contract paper trades)"></button></div>
@@ -202,7 +201,8 @@ select:focus-visible,input:focus-visible,button:focus-visible{outline:2px solid 
   <section class="board" id="board" hidden aria-label="Heatmap and leaderboard">
     <div class="bgrid">
       <div><h3>WORKER HEATMAP</h3><p class="mode" id="modeA"></p><div class="hexes" id="hexes"></div></div>
-      <div><h3>LEADERBOARD</h3><p class="mode" id="modeB"></p><ol class="rank" id="rank"></ol></div>
+      <div><h3>LEADERBOARD · TICKER</h3><p class="mode" id="modeB"></p><ol class="rank" id="rank"></ol></div>
+      <div><h3>LEADERBOARD · STRATEGY</h3><p class="mode" id="modeC"></p><ol class="rank" id="rankStrat"></ol></div>
     </div>
     <div id="score" hidden></div>
     <div class="add">
@@ -559,7 +559,7 @@ function hms(s){var h=Math.floor(s/3600),m=Math.floor(s%3600/60);return h>=24?Ma
 /* ---------- state ---------- */
 var S={mode:'demo',reason:'',watch:['QQQ','SPY','IWM'],span:'today',acct:null,accounts:[],room:null,board:false};
 try{var w=JSON.parse(localStorage.getItem('scalp.watch')||'null');if(Array.isArray(w)&&w.length)S.watch=w.slice(0,8);var sp=localStorage.getItem('scalp.span2');if(sp)S.span=sp}catch(e){}
-var Q={},A={},PNL={total:0,trades:[],points:[],bySym:{},loaded:false};
+var Q={},A={},PNL={total:0,trades:[],points:[],bySym:{},byStrat:{},loaded:false};
 
 /* ---------- indicators ---------- */
 function analyze(raw){
@@ -862,9 +862,10 @@ function updateVault(){
 }
 function spanCut(){
   if(S.span==='today'){var k=dayKey(Date.now()),t=Date.now();while(dayKey(t)===k)t-=36e5;return t+36e5}
+  if(S.span==='all')return 0;
   return Date.now()-{week:7,month:30,'3month':90,ytd:Math.ceil((Date.now()-Date.UTC(new Date().getUTCFullYear(),0,1))/864e5)}[S.span]*864e5;
 }
-function spanName(s){return{today:'TODAY',week:'1W',month:'1M','3month':'3M',ytd:'YTD'}[s]||s}
+function spanName(s){return{today:'TODAY',week:'1W',month:'1M','3month':'3M',ytd:'YTD',all:'ALL'}[s]||s}
 
 var tmp=new THREE.Vector3();
 function placeLabels(){
@@ -978,10 +979,21 @@ function rankData(){
   var syms=Object.keys(PNL.bySym);
   if(syms.length){
     mode='REALIZED · '+spanName(S.span);
-    syms.forEach(function(s){rows.push({sym:s,v:PNL.bySym[s].gain,txt:money(PNL.bySym[s].gain,true)})});
+    syms.forEach(function(s){rows.push({sym:s,v:PNL.bySym[s].gain,txt:money(PNL.bySym[s].gain,true),n:PNL.bySym[s].n})});
   }else{
     mode='NO CLOSED TRADES · SHOWING TODAY’S MOVE';
     S.watch.forEach(function(s){if(Q[s])rows.push({sym:s,v:Q[s].pct,txt:pct(Q[s].pct)})});
+  }
+  rows.sort(function(a,b){return b.v-a.v});
+  return{rows:rows.slice(0,8),mode:mode};
+}
+function rankDataStrat(){
+  var rows=[],mode,ks=Object.keys(PNL.byStrat);
+  if(ks.length){
+    mode='REALIZED · '+spanName(S.span);
+    ks.forEach(function(k){rows.push({sym:k,v:PNL.byStrat[k].gain,txt:money(PNL.byStrat[k].gain,true),n:PNL.byStrat[k].n})});
+  }else{
+    mode='NO CLOSED TRADES · '+spanName(S.span);
   }
   rows.sort(function(a,b){return b.v-a.v});
   return{rows:rows.slice(0,8),mode:mode};
@@ -992,7 +1004,14 @@ function renderBoard(){
   d.rows.forEach(function(r){var h=document.createElement('div');h.className='hex '+(r.v>0?'g':r.v<0?'r':'z');var b=document.createElement('b');b.textContent=r.sym;var t=document.createElement('span');t.textContent=r.txt;h.appendChild(b);h.appendChild(t);hx.appendChild(h)});
   if(!d.rows.length){hx.textContent='Waiting for data'}
   var ol=$('rank');ol.textContent='';
-  d.rows.forEach(function(r,i){var li=document.createElement('li');var a=document.createElement('span');a.textContent=i+1;var b=document.createElement('span');b.textContent=r.sym;var c=document.createElement('span');c.textContent=r.txt;c.className=r.v>0?'up':r.v<0?'dn':'flat';li.appendChild(a);li.appendChild(b);li.appendChild(c);ol.appendChild(li)});
+  d.rows.forEach(function(r,i){var li=document.createElement('li');var a=document.createElement('span');a.textContent=i+1;var b=document.createElement('span');b.textContent=r.sym;var c=document.createElement('span');c.textContent=r.txt+(r.n?' · '+r.n+'tr':'');c.className=r.v>0?'up':r.v<0?'dn':'flat';li.appendChild(a);li.appendChild(b);li.appendChild(c);ol.appendChild(li)});
+  var ds=rankDataStrat();var mc=$('modeC');if(mc)mc.textContent=ds.mode;
+  var ols=$('rankStrat');
+  if(ols){
+    ols.textContent='';
+    ds.rows.forEach(function(r,i){var li=document.createElement('li');var a=document.createElement('span');a.textContent=i+1;var b=document.createElement('span');b.textContent=r.sym;var c=document.createElement('span');c.textContent=r.txt+(r.n?' · '+r.n+'tr':'');c.className=r.v>0?'up':r.v<0?'dn':'flat';li.appendChild(a);li.appendChild(b);li.appendChild(c);ols.appendChild(li)});
+    if(!ds.rows.length){var li=document.createElement('li');li.textContent='Waiting for data';ols.appendChild(li)}
+  }
   var ch=$('chips');ch.textContent='';
   S.watch.forEach(function(s){var c=document.createElement('button');c.type='button';c.className='chip';c.textContent=s+' ✕';c.setAttribute('aria-label','Remove '+s);c.addEventListener('click',function(){if(S.watch.length>1)setWatch(S.watch.filter(function(x){return x!==s}))});ch.appendChild(c)});
 }
@@ -1105,8 +1124,12 @@ var Demo={
 };
 
 function applyPnl(trades,points,total){
-  PNL.trades=trades;PNL.points=points;PNL.total=total;PNL.loaded=true;PNL.bySym={};
-  trades.forEach(function(t){var k=t.symbol||'OPTIONS',b=PNL.bySym[k]||(PNL.bySym[k]={gain:0,n:0,w:0});b.gain+=t.gain;b.n++;if(t.gain>0)b.w++});
+  PNL.trades=trades;PNL.points=points;PNL.total=total;PNL.loaded=true;PNL.bySym={};PNL.byStrat={};
+  trades.forEach(function(t){
+    var k=t.symbol||'OPTIONS',b=PNL.bySym[k]||(PNL.bySym[k]={gain:0,n:0,w:0});b.gain+=t.gain;b.n++;if(t.gain>0)b.w++;
+    var sk=(typeof stratLabel==='function'&&t.strat)?stratLabel(t.strat):(t.strat||'');
+    if(sk){var s=PNL.byStrat[sk]||(PNL.byStrat[sk]={gain:0,n:0,w:0});s.gain+=t.gain;s.n++;if(t.gain>0)s.w++}
+  });
 }
 function refreshAll(light){
   updateTowers();updateVault();renderStrip();
@@ -1127,7 +1150,7 @@ function failMsg(e){
 }
 function goneLive(){
   if(S.mode==='live')return;
-  Demo.stop();S.mode='live';Q={};A={};PNL={total:0,trades:[],points:[],bySym:{},loaded:false};
+  Demo.stop();S.mode='live';Q={};A={};PNL={total:0,trades:[],points:[],bySym:{},byStrat:{},loaded:false};
   setStatus('live','LIVE · ROBINHOOD');
 }
 var Data={
@@ -1201,7 +1224,7 @@ function fillAccts(){
   if(S.acct)sel.value=S.acct;
 }
 $('acct').addEventListener('change',function(){
-  if(S.mode==='live'||liveOK){S.acct=this.value;PNL={total:0,trades:[],points:[],bySym:{},loaded:false};refreshAll();Data.loadPnl()}
+  if(S.mode==='live'||liveOK){S.acct=this.value;PNL={total:0,trades:[],points:[],bySym:{},byStrat:{},loaded:false};refreshAll();Data.loadPnl()}
 });
 $('span').value=S.span;
 $('span').addEventListener('change',function(){
@@ -2245,7 +2268,7 @@ var Web={dayArm:0,timer:null,key:'',trades:[],armed:0,last:null,
       if(a){var dk=a.day,prev=null;for(var i=a.all.length-1;i>=0;i--){if(dayKey(a.all[i].t)!==dk){prev=a.all[i].c;break}}prev=prev||a.sess[0].o;
         Q[sym]={price:a.last.c,prev:prev,chg:a.last.c-prev,pct:(a.last.c-prev)/prev*100}}
     });
-    Web.trades=[];(d.days||[]).forEach(function(x){(x.trades||[]).forEach(function(t){Web.trades.push({t:t.t,symbol:t.sym||'',side:'sell',qty:1,price:1,gain:t.pnl})})});
+    Web.trades=[];(d.days||[]).forEach(function(x){(x.trades||[]).forEach(function(t){Web.trades.push({t:t.t,symbol:t.sym||'',side:'sell',qty:1,price:1,gain:t.pnl,strat:t.strat||''})})});
     Web.pnl();
     SRV.rec=d.rec||null;SRV.state='ok';SRV.at=Date.now();
     var mb=$('modeBar');$('app').setAttribute('data-mode',d.run?'paper':'idle');mb.textContent=d.run?'SERVER · PAPER TRADING · PRETEND MONEY':'SERVER STOPPED · NO TRADING IS RUNNING';

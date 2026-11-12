@@ -757,12 +757,12 @@ async function cityData(want) {
   const bars = {}; CFG.syms.forEach(s => { bars[s] = bars5(s); });
   (await extraBars(WATCH || want || [])).forEach(s => { bars[s] = bars5(s); });
   const scan = await kscan('rec:', 200), score = scoreOf(scan);
-  const days = scan.slice(0, 60).map(x => ({ day: x.value.day || x.key.slice(4), trades: (x.value.trades || [])
+  const days = scan.map(x => ({ day: x.value.day || x.key.slice(4), trades: (x.value.trades || [])
     .concat((x.value.orbk && x.value.orbk.trades) || [])
     .concat((x.value.csk && x.value.csk.trades) || [])
     .concat((x.value.x9k && x.value.x9k.trades) || [])
     .concat((x.value.fpk && x.value.fpk.trades) || [])
-    .filter(t => t.exitT || t.exitBid != null).map(t => ({ t: Date.parse(t.exitT || t.entryT), sym: t.sym, pnl: +t.pnl || 0 })) }));
+    .filter(t => t.exitT || t.exitBid != null).map(t => ({ t: Date.parse(t.exitT || t.entryT), sym: t.sym, pnl: +t.pnl || 0, strat: t.trig + (t.run ? ' run' : '') })) }));
   return Object.assign(liveData(), { bars, days, watch: WATCH, score });
 }
 
