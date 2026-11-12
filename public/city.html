@@ -1020,7 +1020,7 @@ function renderScore(){
   var el=$('score');if(!el)return;
   if(!window.__WEB__||!SCORE){el.hidden=true;return}
   el.hidden=false;
-  var ST=['vwap','ema','orb','orb5','sweep','cspread','x9','fp'],SN={vwap:'VWAP',ema:'EMA 50',orb:'15-MIN BREAK',orb5:'ORB BOOK',sweep:'SWEEP',cspread:'CSK',x9:'X9',fp:'FP'},syms={};
+  var ST=['vwap','ema','orb','orb5','sweep','cspread','x9','fp','condor'],SN={vwap:'VWAP',ema:'EMA 50',orb:'15-MIN BREAK',orb5:'ORB BOOK',sweep:'SWEEP',cspread:'CSK',x9:'X9',fp:'FP',condor:'CDR'},syms={};
   Object.keys(SCORE).forEach(function(k){var a=k.split('|');if(a[0]!=='*')syms[a[0]]=1});
   var rows=Object.keys(syms).sort();
   var h='<h3>SCORECARD · TICKER × STRATEGY</h3><table class="sc"><tr><th></th>';
@@ -1946,7 +1946,7 @@ function frame(now){
 /* ---------- server feed: the always-on paper bot, lit up in the city ---------- */
 var SRV={rec:null,at:0,state:'idle',asked:false,stop:null};
 var SRV_PROJECT='rmktbayxhplkuonifxfw';
-var SRV_SQL="select jsonb_build_object('day',value->>'day','pnl',value->'pnl','ntr',jsonb_array_length(value->'trades'),'tr',(select coalesce(jsonb_agg(jsonb_build_object('sym',t->>'sym','k',t->>'strike','ty',t->>'type','in',t->>'entryT','pnl',t->'pnl','why',t->>'reason','strat',(t->>'trig')||case when (t->>'run')='true' then ' run' else '' end) order by t->>'entryT'),'[]'::jsonb) from jsonb_array_elements(value->'trades') t),'pos',value->'pos','sh',value->'sh'->'pnl','orb',value->'orbk','csk',value->'csk','x9',value->'x9k','fp',value->'fpk','upd',updated,'run',(select value->'running' from scalp.kv where key='control')) as r from scalp.kv where key='rec:'||to_char(now() at time zone 'America/New_York','YYYY-MM-DD')";
+var SRV_SQL="select jsonb_build_object('day',value->>'day','pnl',value->'pnl','ntr',jsonb_array_length(value->'trades'),'tr',(select coalesce(jsonb_agg(jsonb_build_object('sym',t->>'sym','k',t->>'strike','ty',t->>'type','in',t->>'entryT','pnl',t->'pnl','why',t->>'reason','strat',(t->>'trig')||case when (t->>'run')='true' then ' run' else '' end) order by t->>'entryT'),'[]'::jsonb) from jsonb_array_elements(value->'trades') t),'pos',value->'pos','sh',value->'sh'->'pnl','orb',value->'orbk','csk',value->'csk','x9',value->'x9k','fp',value->'fpk','cdr',value->'cdrk','upd',updated,'run',(select value->'running' from scalp.kv where key='control')) as r from scalp.kv where key='rec:'||to_char(now() at time zone 'America/New_York','YYYY-MM-DD')";
 var SRV_RULES={stop:.35,target:.40};
 function srvParse(res){
   var p=res&&res.payload,t=typeof p==='string'?p:(p&&typeof p.result==='string'?p.result:null);
@@ -2032,7 +2032,7 @@ function flAttach(sym){
   if(FL.parent!==t.g){flRestore();if(FL.parent)FL.parent.remove(FL.g);t.g.add(FL.g);FL.parent=t.g;FL.g.position.set(0,0,0);FL.tw=t.g.children.filter(function(o){return o.isMesh&&o.material&&o.material.map===WT})}
 }
 var ACT=null,ACT_LIST=[];
-var STRAT_NM={ema:'EMA',sweep:'Sweep',orb5:'ORB',orb15:'ORB',cspread:'CSK',x9:'X9',fp:'FP'};
+var STRAT_NM={ema:'EMA',sweep:'Sweep',orb5:'ORB',orb15:'ORB',cspread:'CSK',x9:'X9',fp:'FP',condor:'CDR'};
 function stratLabel(s){if(!s)return'';var base=String(s).split(' ')[0],run=String(s).indexOf('run')>=0;return(STRAT_NM[base]||base)+(run?' (run)':'')}
 /* normalize one open position (any book) for the beam + side card. CSK holds a call spread, not a single call/put, so its P&L and labels are special-cased. */
 function posPnl(e){
@@ -2072,6 +2072,7 @@ function openPositions(){
     ((r.csk&&r.csk.open)||[]).forEach(function(o){out.push({src:'SERVER PAPER',strat:'CSK',pos:o,pnlToday:r.csk.pnl,nToday:(r.csk.trades||[]).length,age:age(o),run:run})});
     ((r.x9&&r.x9.open)||[]).forEach(function(o){out.push({src:'SERVER PAPER',strat:'X9',pos:o,pnlToday:r.x9.pnl,nToday:(r.x9.trades||[]).length,age:age(o),run:run})});
     ((r.fp&&r.fp.open)||[]).forEach(function(o){out.push({src:'SERVER PAPER',strat:'FP',pos:o,pnlToday:r.fp.pnl,nToday:(r.fp.trades||[]).length,age:age(o),run:run})});
+    ((r.cdr&&r.cdr.open)||[]).forEach(function(o){out.push({src:'SERVER PAPER',strat:'CDR',pos:o,pnlToday:r.cdr.pnl,nToday:(r.cdr.trades||[]).length,age:age(o),run:run})});
   }
   return out;
 }
@@ -2194,7 +2195,7 @@ function srvPanelRender(){renderOrb();
     st.className='mode '+(run&&age!=null&&age<180000?'up':'warn');
   }
   function bookBit(label,b){return b?(' · '+label+': '+money(+b.pnl||0,true)+' ('+(b.trades||[]).length+' closed, '+(b.open||[]).length+' open)'):''}
-  sm.textContent=r?('Today: '+money(r.pnl||0,true)+' · '+(r.ntr||0)+' closed'+(r.pos?' · 1 open ('+r.pos.sym+' '+r.pos.strike+(r.pos.type==='call'?'C':'P')+')':'')+(r.sh!=null?' · tight-exit test (B): '+money(r.sh,true):'')+bookBit('ORB book',r.orb)+bookBit('CSK book',r.csk)+bookBit('X9 book',r.x9)+bookBit('FP book',r.fp)):'';
+  sm.textContent=r?('Today: '+money(r.pnl||0,true)+' · '+(r.ntr||0)+' closed'+(r.pos?' · 1 open ('+r.pos.sym+' '+r.pos.strike+(r.pos.type==='call'?'C':'P')+')':'')+(r.sh!=null?' · tight-exit test (B): '+money(r.sh,true):'')+bookBit('ORB book',r.orb)+bookBit('CSK book',r.csk)+bookBit('X9 book',r.x9)+bookBit('FP book',r.fp)+bookBit('Condor book',r.cdr)):'';
   sm.className='mode '+(r&&r.pnl>0?'up':r&&r.pnl<0?'dn':'');
   tb.textContent='';
   function addOpenRow(label,o,contract,pnl,detail){var tr=document.createElement('tr');tdTxt(tr,hm(new Date(o.t0).toISOString()));tdTxt(tr,label+' '+contract);tdTxt(tr,label);tdTxt(tr,pnl==null?'…':money(pnl,true),pnl>0?'up':pnl<0?'dn':'flat');tdTxt(tr,'OPEN'+(detail?' · '+detail:''));tb.appendChild(tr)}
@@ -2202,11 +2203,13 @@ function srvPanelRender(){renderOrb();
   ((r&&r.csk&&r.csk.open)||[]).forEach(function(o){var p=o.live&&o.creditNat!=null?Math.round((o.creditNat-o.live.closeNat)*100)/100:null;addOpenRow('CSK',o,o.sym+' '+o.ks+'/'+o.kl+'C',p,'short call spread, held to the close')});
   ((r&&r.x9&&r.x9.open)||[]).forEach(function(o){var p=o.live&&o.entryAsk!=null?Math.round((o.live.bid-o.entryAsk)*100)/100:null;addOpenRow('X9',o,o.sym+' '+o.strike+(o.type==='call'?'C':'P'),p)});
   ((r&&r.fp&&r.fp.open)||[]).forEach(function(o){var p=o.live&&o.entryAsk!=null?Math.round((o.live.bid-o.entryAsk)*100)/100:null;addOpenRow('FP',o,o.sym+' '+o.strike+(o.type==='call'?'C':'P')+(o.kind?' ('+o.kind+')':''),p)});
+  ((r&&r.cdr&&r.cdr.open)||[]).forEach(function(o){var p=o.live&&o.credit!=null&&o.live.closeDebit!=null?Math.round((o.credit-o.live.closeDebit)*100)/100:null;addOpenRow('CDR',o,o.sym+' '+o.klp+'/'+o.ksp+'P '+o.ksc+'/'+o.klc+'C',p,'iron condor, $'+o.width+' wings')});
   var orbRows=((r&&r.orb&&r.orb.trades)||[]).map(function(t){return{in:t.entryT,sym:'ORB '+t.sym,k:t.strike,ty:t.type,pnl:t.pnl,why:t.reason,strat:'ORB'}});
   var cskRows=((r&&r.csk&&r.csk.trades)||[]).map(function(t){return{in:t.entryT,sym:'CSK '+t.sym,k:(t.ks||t.strike)+'/'+t.kl+'C',ty:null,pnl:t.pnl,why:t.reason,strat:'CSK'}});
   var x9Rows=((r&&r.x9&&r.x9.trades)||[]).map(function(t){return{in:t.entryT,sym:'X9 '+t.sym,k:t.strike,ty:t.type,pnl:t.pnl,why:t.reason,strat:'X9'}});
   var fpRows=((r&&r.fp&&r.fp.trades)||[]).map(function(t){return{in:t.entryT,sym:'FP '+t.sym,k:t.strike,ty:t.type,pnl:t.pnl,why:(t.reason||'')+(t.kind?' · '+t.kind:''),strat:'FP'}});
-  (r&&r.tr||[]).concat(orbRows).concat(cskRows).concat(x9Rows).concat(fpRows).sort(function(a,b){return a.in<b.in?-1:1}).reverse().forEach(function(t){var tr=document.createElement('tr');tdTxt(tr,hm(t.in));tdTxt(tr,t.sym+(t.k!=null?' '+t.k+(t.ty==='call'?'C':t.ty==='put'?'P':''):''));tdTxt(tr,t.strat!=null?stratLabel(t.strat):'');tdTxt(tr,money(+t.pnl,true),t.pnl>0?'up':t.pnl<0?'dn':'flat');tdTxt(tr,t.why||'');tb.appendChild(tr)});
+  var cdrRows=((r&&r.cdr&&r.cdr.trades)||[]).map(function(t){return{in:t.entryT,sym:'CDR '+t.sym,k:t.klp+'/'+t.ksp+'P '+t.ksc+'/'+t.klc+'C',ty:null,pnl:t.pnl,why:t.reason,strat:'CDR'}});
+  (r&&r.tr||[]).concat(orbRows).concat(cskRows).concat(x9Rows).concat(fpRows).concat(cdrRows).sort(function(a,b){return a.in<b.in?-1:1}).reverse().forEach(function(t){var tr=document.createElement('tr');tdTxt(tr,hm(t.in));tdTxt(tr,t.sym+(t.k!=null?' '+t.k+(t.ty==='call'?'C':t.ty==='put'?'P':''):''));tdTxt(tr,t.strat!=null?stratLabel(t.strat):'');tdTxt(tr,money(+t.pnl,true),t.pnl>0?'up':t.pnl<0?'dn':'flat');tdTxt(tr,t.why||'');tb.appendChild(tr)});
   if(!tb.children.length){var tr0=document.createElement('tr'),c0=document.createElement('td');c0.colSpan=5;c0.textContent='No closed server trades yet today';tr0.appendChild(c0);tb.appendChild(tr0)}
   var key='';try{key=$('srvKey').value.trim()}catch(e){}
   var L=$('srvLink');L.textContent='';

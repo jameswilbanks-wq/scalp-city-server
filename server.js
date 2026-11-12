@@ -263,8 +263,8 @@ async function pickContract(sym, dir, px, maxPrem) {
   return { why: cheapest === null ? (stale ? 'option quotes are stale' : 'no live quotes') : 'nothing near the money under $' + maxPrem + ' with a tight spread (cheapest ask $' + (cheapest * 100).toFixed(0) + ')' };
 }
 
-function newRec(day) { return { day, trades: [], signals: [], pnl: 0, losers: 0, shut: '', pos: null, blockUntil: 0, sh: { open: [], trades: [], pnl: 0 }, orbk: { open: [], trades: [], pnl: 0, done: {} } }; }
-async function loadDay(day) { P.rec = (await kget('rec:' + day)) || newRec(day); P.rec.sh = P.rec.sh || { open: [], trades: [], pnl: 0 }; P.rec.orbk = P.rec.orbk || { open: [], trades: [], pnl: 0, done: {} }; }
+function newRec(day) { return { day, trades: [], signals: [], pnl: 0, losers: 0, shut: '', pos: null, blockUntil: 0, sh: { open: [], trades: [], pnl: 0 }, orbk: { open: [], trades: [], pnl: 0, done: {} }, cdrk: { open: [], trades: [], pnl: 0, done: {}, haltedToday: false } }; }
+async function loadDay(day) { P.rec = (await kget('rec:' + day)) || newRec(day); P.rec.sh = P.rec.sh || { open: [], trades: [], pnl: 0 }; P.rec.orbk = P.rec.orbk || { open: [], trades: [], pnl: 0, done: {} }; P.rec.cdrk = P.rec.cdrk || { open: [], trades: [], pnl: 0, done: {}, haltedToday: false }; }
 let saveQ = Promise.resolve();
 function saveRec() {
   if (!P.rec) return saveQ; const rec = JSON.parse(JSON.stringify(P.rec)); rec.updated = iso(Date.now());
@@ -512,6 +512,128 @@ async function cskManage() {
     saveRec();
   } catch (err) { P.cskErr = String(err && err.message || err).slice(0, 120); }
 }
+/* ---------- Opening-range iron condor paper book (CDR). James shared a standalone, test-covered Python prototype
+   (bot.py/test_bot.py) on 2026-11-12 and asked to add it; ported here as a new book so it runs on the same always-on
+   server as everything else, journaled the same way, instead of a separate kept-awake local process. One difference
+   from the prototype: this port uses SIMULATED fills (natural bid/ask, like CSK/ORB/X9/FP) rather than submitting real
+   Alpaca paper orders -- consistent with how every other book started, and simpler for a strategy that has not yet
+   been backtested on real 0DTE option prices (the prototype's own unit tests cover order-handling mechanics only, per
+   its README, not profitability). One attempt per symbol per day: the first opening hour (9:30-10:30 ET) must look
+   choppy -- a narrow range (0.15%-1% of the midpoint), crossed at least 3 times, with a rejection wick near both the
+   top and bottom of the range -- then, 70-180 minutes after the open while price is still back in the middle half of
+   that range, sell an iron condor (short strikes beyond the range by $0.50 or 10% of range width, whichever is
+   larger) at the best credit/width ratio found among $1/$2/$3 wings. Exits: 50% profit target, a $140-per-trade stop,
+   two consecutive completed 5-minute closes outside the range, or a time exit 70 minutes before the close. Per-trade
+   risk is capped at $200 (including a $20 fee/slippage reserve) and the day's reserved risk (realized losses, not
+   reduced by realized profits, plus open risk) is capped at $400; a $280 combined realized daily loss halts the book
+   for the rest of the day. CDR_ON=0 turns it off. ---------- */
+const CDR_ON = process.env.CDR_ON !== '0';
+const CDR = {
+  syms: (process.env.CDR_SYMS || 'SPY,QQQ').split(',').map(x => x.trim().toUpperCase()).filter(Boolean),
+  fee: +process.env.CDR_FEE || 20, tradeMax: +process.env.CDR_TRADE_MAX || 200, dailyMax: +process.env.CDR_DAILY_MAX || 400,
+  tradeStop: +process.env.CDR_TRADE_STOP || 140, dailyStop: +process.env.CDR_DAILY_STOP || 280,
+  entryFrom: 640, entryTo: 750, timeExit: 890, // ET minutes since midnight: 70-180 min after the 9:30 open; time exit 70 min before the 16:00 close
+};
+function fiveMin(bars, fromMin, toMin) {
+  const out = [];
+  for (let m = fromMin; m < toMin; m += 5) {
+    const g = bars.filter(b => b.min >= m && b.min < m + 5); if (g.length < 5) continue;
+    out.push({ o: g[0].o, h: Math.max(...g.map(x => x.h)), l: Math.min(...g.map(x => x.l)), c: g[g.length - 1].c, min: m });
+  }
+  return out;
+}
+function cdrRangeSig(sym) {
+  const bars = P.bars[sym]; if (!bars || !bars.length) return null;
+  const e = nowET(), today = bars.filter(b => b.day === e.day);
+  const five = fiveMin(today, 570, 630); if (five.length !== 12) return null; // needs all 12 completed 5-min bars of the opening hour
+  const low = Math.min(...five.map(b => b.l)), high = Math.max(...five.map(b => b.h)), mid = (low + high) / 2, width = high - low;
+  if (!(width / mid >= 0.0015 && width / mid <= 0.01)) return null;
+  const closes = five.map(b => b.c); let crosses = 0;
+  for (let i = 1; i < closes.length; i++) if ((closes[i - 1] < mid) !== (closes[i] < mid)) crosses++;
+  const rejHigh = five.some(b => b.h >= high - width * 0.15 && b.c < high - width * 0.25);
+  const rejLow = five.some(b => b.l <= low + width * 0.15 && b.c > low + width * 0.25);
+  if (crosses < 3 || !rejHigh || !rejLow) return null;
+  const post = today.filter(b => b.min >= 630); if (!post.length) return null; // need at least one bar after the opening hour
+  if (post.some(b => b.c < low || b.c > high)) return null; // an earlier breakout invalidates the day
+  const last = post[post.length - 1];
+  if (!(last.c >= low + width * 0.25 && last.c <= high - width * 0.25)) return null; // must currently be back in the middle half
+  return { low, high, width };
+}
+async function cdrSelect(sym, bounds) {
+  const e = nowET(), today = e.day, { low, high } = bounds, padding = Math.max(0.5, (high - low) * 0.1);
+  const ch = await getChain(sym); if (!ch.dates.includes(today)) return { why: 'no same-day expiry' };
+  const puts = await getInst(ch, today, 'put'), calls = await getInst(ch, today, 'call');
+  const pCand = puts.filter(x => x.strike < low - padding).sort((a, b) => b.strike - a.strike).slice(0, 5);
+  const cCand = calls.filter(x => x.strike > high + padding).sort((a, b) => a.strike - b.strike).slice(0, 5);
+  if (!pCand.length || !cCand.length) return { why: 'no strikes listed beyond the range' };
+  const byStrike = (list, k) => list.find(x => Math.abs(x.strike - k) < 0.01);
+  const need = new Set();
+  pCand.forEach(p => { need.add(p.id); [1, 2, 3].forEach(w => { const lp = byStrike(puts, p.strike - w); if (lp) need.add(lp.id); }); });
+  cCand.forEach(c => { need.add(c.id); [1, 2, 3].forEach(w => { const lc = byStrike(calls, c.strike + w); if (lc) need.add(lc.id); }); });
+  const q = await cskQuotes([...need]);
+  const fresh = id => { const z = q[id]; return z && z.updated_at && Date.now() - Date.parse(z.updated_at) <= 180000 && +z.bid_price >= 0 && +z.ask_price >= +z.bid_price; };
+  let best = null;
+  for (const sp of pCand) for (const sc of cCand) for (const w of [1, 2, 3]) {
+    const lp = byStrike(puts, sp.strike - w), lc = byStrike(calls, sc.strike + w); if (!lp || !lc) continue;
+    if (![sp.id, lp.id, sc.id, lc.id].every(fresh)) continue;
+    const credit = Math.floor((+q[sp.id].bid_price + +q[sc.id].bid_price - +q[lp.id].ask_price - +q[lc.id].ask_price) * 100 + 1e-7) / 100;
+    const risk = (w - credit) * 100 + CDR.fee;
+    if (!(credit >= 0.20 && credit < w && credit / w >= 0.20 && risk <= CDR.tradeMax)) continue;
+    const ratio = credit / w; if (!best || ratio > best.ratio) best = { shortPut: sp, longPut: lp, shortCall: sc, longCall: lc, width: w, credit, risk, ratio };
+  }
+  return best || { why: 'no condor met the credit/risk thresholds' };
+}
+function cdrReserved(k) { return k.trades.reduce((s, t) => s + Math.max(0, -t.pnl + CDR.fee), 0) + k.open.reduce((s, p) => s + p.risk, 0); } // realized losses (+fee reserve), not reduced by realized profits, plus open risk
+async function cdrLook() {
+  const r = P.rec; if (!CDR_ON || !r || r.shut || !marketOpen(Date.now())) return;
+  r.cdrk = r.cdrk || { open: [], trades: [], pnl: 0, done: {}, haltedToday: false };
+  const k = r.cdrk, e = nowET(); if (k.haltedToday || e.min < CDR.entryFrom || e.min > CDR.entryTo) return;
+  for (const s of CDR.syms) {
+    if (k.done[s]) continue; const bars = P.bars[s]; if (!bars || !bars.length) continue;
+    const bounds = cdrRangeSig(s); if (!bounds) continue;
+    k.done[s] = true; // one attempt per symbol per day, taken or skipped
+    const px = bars[bars.length - 1].c, fake = { dir: 0, trig: 'condor' };
+    let pick; try { pick = await cdrSelect(s, bounds); } catch (err) { pick = { why: 'could not load option data (' + ((err && err.code) || 'error') + ')' }; }
+    if (pick.why) { logSignal(s, fake, px, 'skipped', 'condor: ' + pick.why); continue; }
+    if (cdrReserved(k) + pick.risk > CDR.dailyMax) { logSignal(s, fake, px, 'skipped', 'condor: would exceed the $' + CDR.dailyMax + ' daily budget'); continue; }
+    k.open.push({ sym: s, exp: e.day, low: bounds.low, high: bounds.high, width: pick.width, credit: pick.credit, risk: pick.risk,
+      ksp: pick.shortPut.strike, klp: pick.longPut.strike, ksc: pick.shortCall.strike, klc: pick.longCall.strike,
+      instSP: pick.shortPut.id, instLP: pick.longPut.id, instSC: pick.shortCall.id, instLC: pick.longCall.id, t0: Date.now() });
+    logSignal(s, fake, px, 'entered', 'condor ' + pick.longPut.strike + '/' + pick.shortPut.strike + '/' + pick.shortCall.strike + '/' + pick.longCall.strike + ' exp ' + e.day + ', $' + pick.width + ' wings, credit $' + pick.credit.toFixed(2) + ', budgeted risk $' + pick.risk.toFixed(2));
+  }
+  saveRec();
+}
+function cdrClose(p, debit, reason) {
+  const k = P.rec.cdrk, pnl = Math.round((p.credit - debit) * 10000) / 100;
+  k.trades.push({ sym: p.sym, type: 'condor', width: p.width, ksp: p.ksp, klp: p.klp, ksc: p.ksc, klc: p.klc, exp: p.exp, entryT: iso(p.t0), exitT: iso(Date.now()), credit: p.credit, closeDebit: debit, pnl, reason, trig: 'condor', qty: 1 });
+  k.pnl = Math.round((k.pnl + pnl) * 100) / 100; k.open = k.open.filter(x => x !== p);
+}
+async function cdrManage() {
+  const k = P.rec && P.rec.cdrk; if (!k) return;
+  const dayLoss = k.trades.reduce((s, t) => s + Math.max(0, -t.pnl), 0); if (dayLoss >= CDR.dailyStop) k.haltedToday = true;
+  if (!k.open.length) return;
+  try {
+    const q = await cskQuotes(k.open.flatMap(p => [p.instSP, p.instLP, p.instSC, p.instLC])), e = nowET();
+    for (const p of k.open.slice()) {
+      const ids = [p.instSP, p.instLP, p.instSC, p.instLC];
+      const have = ids.every(id => q[id] && q[id].updated_at && Date.now() - Date.parse(q[id].updated_at) <= 180000 && +q[id].ask_price >= 0);
+      const debit = have ? Math.max(0.01, Math.ceil((+q[p.instLP].ask_price + +q[p.instLC].ask_price - +q[p.instSP].bid_price - +q[p.instSC].bid_price) * 100) / 100) : null;
+      p.live = debit === null ? p.live : { closeDebit: debit, t: Date.now() };
+      let reason = null;
+      if (k.haltedToday) reason = 'daily halt';
+      else if (e.min >= CDR.timeExit) reason = 'time exit';
+      else if (debit === null) reason = 'stale/missing quotes';
+      else if ((debit - p.credit) * 100 + CDR.fee >= CDR.tradeStop) reason = 'trade stop';
+      else if (debit <= p.credit * 0.5) reason = 'profit target';
+      else {
+        const bars5 = fiveMin((P.bars[p.sym] || []).filter(b => b.day === e.day), 570, 1440);
+        if (bars5.length >= 2) { const last2 = bars5.slice(-2); if (last2.every(b => b.c > p.high) || last2.every(b => b.c < p.low)) reason = 'range break'; }
+      }
+      if (reason) cdrClose(p, debit === null ? p.width : Math.min(p.width, debit), reason);
+    }
+    saveRec();
+  } catch (err) { P.cdrErr = String(err && err.message || err).slice(0, 120); }
+}
 /* ---------- X9 paper book: EMA9 x VWAP crossover (reel shared by James 2026-11-11, "@austin.daytrades" via "@algo.jan"; the reviewer's backtest claimed 174 trades, 55.8% winners, profit factor 2.17, +200% in about 8 months; the original trader claimed +$215k in October 2026). Rules as shown: EMA9 crosses above VWAP -> buy a call; EMA9 crosses below VWAP -> buy a put; exit when a 1-minute candle closes back through EMA9 against the trade, or at -30% on the premium; no take-profit shown. Added: an opposite cross also exits, flat before the close, same-day at-the-money contract, 1 contract, one position per symbol in this book, entries 9:45 to 15:30 ET. Runs as its own book (journal field x9k) so it never blocks the other books. X9_ON=0 disables. ---------- */
 const X9_ON = process.env.X9_ON !== '0', X9 = { syms: (process.env.X9_SYMS || '').split(',').map(x => x.trim().toUpperCase()).filter(Boolean), stopPct: +process.env.X9_STOP || 30 };
 async function x9Look() {
@@ -741,6 +863,7 @@ async function tick() {
     try { if (open) await fpLook(); await fpManage(); } catch (e) { P.fpErr = String(e && e.message || e).slice(0, 120); }
     try { if (open) await x9Look(); await x9Manage(); } catch (e) { P.x9Err = String(e && e.message || e).slice(0, 120); }
     try { if (open) await cskLook(); await cskManage(); } catch (e) { P.cskErr = String(e && e.message || e).slice(0, 120); }
+    try { if (open) await cdrLook(); await cdrManage(); } catch (e) { P.cdrErr = String(e && e.message || e).slice(0, 120); }
     if (open) { try { await orbLook(); await manageOrb(); } catch (e) { P.orbErr = String(e && e.message || e).slice(0, 120); } } else { try { await manageOrb(); } catch (e) {} }
     if (open) { try { await vtTick(); } catch (e) { P.vtErr = String(e && e.message || e).slice(0, 120); } }
     if (!P.rec.pos && !P.rec.shut) await lookForEntry();
@@ -790,6 +913,7 @@ function recOut() {
     csk: r.csk ? { pnl: r.csk.pnl, on: CSK_ON, open: r.csk.open.map(o => ({ sym: o.sym, ks: o.ks, kl: o.kl, exp: o.exp, t0: o.t0, creditNat: o.creditNat, live: o.live })), trades: r.csk.trades.map(t => ({ sym: t.sym, ks: t.strike, kl: t.kl, entryT: t.entryT, pnl: t.pnl, reason: t.reason })) } : null,
     x9: r.x9k ? { pnl: r.x9k.pnl, on: X9_ON, open: r.x9k.open.map(o => ({ sym: o.sym, strike: o.strike, type: o.type, exp: o.exp, entryAsk: o.entryAsk, t0: o.t0, live: o.live })), trades: r.x9k.trades.map(t => ({ sym: t.sym, strike: t.strike, type: t.type, entryT: t.entryT, pnl: t.pnl, reason: t.reason })) } : null,
     fp: r.fpk ? { pnl: r.fpk.pnl, on: FP_ON, open: r.fpk.open.map(o => ({ sym: o.sym, strike: o.strike, type: o.type, exp: o.exp, kind: o.kind, entryAsk: o.entryAsk, t0: o.t0, live: o.live })), trades: r.fpk.trades.map(t => ({ sym: t.sym, strike: t.strike, type: t.type, kind: t.kind, entryT: t.entryT, pnl: t.pnl, reason: t.reason })) } : null,
+    cdr: r.cdrk ? { pnl: r.cdrk.pnl, on: CDR_ON, open: r.cdrk.open.map(o => ({ sym: o.sym, ksp: o.ksp, klp: o.klp, ksc: o.ksc, klc: o.klc, exp: o.exp, t0: o.t0, credit: o.credit, width: o.width, live: o.live })), trades: r.cdrk.trades.map(t => ({ sym: t.sym, ksp: t.ksp, klp: t.klp, ksc: t.ksc, klc: t.klc, entryT: t.entryT, pnl: t.pnl, reason: t.reason })) } : null,
     upd: new Date(P.lastTick || Date.now()).toISOString(), run: { running: !!P.ctl.running }, pos: r.pos ? { sym: r.pos.sym, strike: r.pos.strike, type: r.pos.type, exp: r.pos.exp, entryAsk: r.pos.entryAsk, entryBid: r.pos.entryBid, qty: r.pos.qty || 1, half: r.pos.half || null, peak: r.pos.peak, t0: r.pos.t0, trig: r.pos.trig, live: r.pos.live } : null } : null;
 }
 function liveData() { return { now: Date.now(), run: !!P.ctl.running, market: marketOpen(Date.now()), msg: P.msg, rec: recOut() }; }
@@ -803,7 +927,8 @@ function scoreOf(scan) {
       .concat((x.value && x.value.csk && x.value.csk.trades) || [])
       .concat((x.value && x.value.x9k && x.value.x9k.trades) || [])
       .concat((x.value && x.value.fpk && x.value.fpk.trades) || [])
-      .forEach(t => { // includes the ORB, CSK (call spread), X9, and FP books
+      .concat((x.value && x.value.cdrk && x.value.cdrk.trades) || [])
+      .forEach(t => { // includes the ORB, CSK (call spread), X9, FP, and CDR (condor) books
       if (!(t.exitT || t.exitBid != null) || t.unmanaged) return;
       const trig = t.trig || 'ema', pnl = +t.pnl || 0, sym = t.sym || '?';
       add(sym + '|' + trig, pnl, day); add(sym + '|*', pnl, day); add('*|' + trig, pnl, day); add('*|*', pnl, day);
@@ -829,6 +954,7 @@ async function cityData(want) {
     .concat((x.value.csk && x.value.csk.trades) || [])
     .concat((x.value.x9k && x.value.x9k.trades) || [])
     .concat((x.value.fpk && x.value.fpk.trades) || [])
+    .concat((x.value.cdrk && x.value.cdrk.trades) || [])
     .filter(t => t.exitT || t.exitBid != null).map(t => ({ t: Date.parse(t.exitT || t.entryT), sym: t.sym, pnl: +t.pnl || 0, strat: t.trig + (t.run ? ' run' : '') })) }));
   return Object.assign(liveData(), { bars, days, watch: WATCH, score });
 }
@@ -843,6 +969,7 @@ function status() {
     fairPrice: r && r.fpk ? { pnl: r.fpk.pnl, closed: r.fpk.trades.length, open: r.fpk.open.length, on: FP_ON, err: P.fpErr } : null,
     x9: r && r.x9k ? { pnl: r.x9k.pnl, closed: r.x9k.trades.length, open: r.x9k.open.length, on: X9_ON, err: P.x9Err } : null,
     callSpreads: r && r.csk ? { pnl: r.csk.pnl, closed: r.csk.trades.length, open: r.csk.open.length, on: CSK_ON, err: P.cskErr } : null,
+    condor: r && r.cdrk ? { pnl: r.cdrk.pnl, closed: r.cdrk.trades.length, open: r.cdrk.open.length, on: CDR_ON, err: P.cdrErr } : null,
     shadow: r && r.sh ? { pnl: r.sh.pnl, closed: r.sh.trades.length, open: r.sh.open.length } : null,
     pos: p ? { sym: p.sym, type: p.type, strike: p.strike, exp: p.exp, entryAsk: p.entryAsk, qty: p.qty || 1, half: p.half || null, t0: p.t0, bid: p.live && p.live.bid, peak: p.peak, asOf: p.live && p.live.t, stopPx: CFG.usd ? p.entryAsk - CFG.usd.stop / 100 : p.entryAsk * (1 - CFG.premStop), targetPx: CFG.usd ? p.entryAsk + CFG.usd.tp / 100 : p.entryAsk * (1 + CFG.tpUp) } : null,
     limits: { target: CFG.target, loss: CFG.loss, syms: CFG.syms } };
