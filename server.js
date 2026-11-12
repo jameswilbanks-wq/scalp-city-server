@@ -970,6 +970,7 @@ async function optProbe() {
   }
   return out;
 }
+setTimeout(async () => { try { const cur = await kget('bt13'); if (cur && cur.progress === 'done') return; await kset('bt13', await require('./study_orb15.js')(ap, kset)); } catch (e) { try { await kset('bt13', { error: String(e && e.message || e) }); } catch (e2) {} } }, 50000); // ORB variants from the QuantORB reel on real 0DTE prices, once
 setTimeout(async () => { try { const cur = await kget('bt12'); if (cur && cur.progress === 'done') return; await kset('bt12', await require('./study_x9.js')(ap, rh, Engine, kset, { key: 'bt12' })); } catch (e) { try { await kset('bt11', { error: String(e && e.message || e) }); } catch (e2) {} } }, 45000); // EMA9 x VWAP reel strategy on real 0DTE prices, once
 setTimeout(async () => { try { const cur = await kget('bt10'); if (cur && cur.progress === 'done') return; await kset('bt10', await require('./study_lock.js')(ap, rh, Engine, kset)); } catch (e) { try { await kset('bt10', { error: String(e && e.message || e) }); } catch (e2) {} } }, 45000); // profit-lock study on real 0DTE prices, once
 setTimeout(async () => { try { const cur = await kget('bt9'); if (cur && cur.progress === 'done') return; await kset('bt9', await require('./study_exits.js')(ap, rh, Engine, kset)); } catch (e) { try { await kset('bt9', { error: String(e && e.message || e) }); } catch (e2) {} } }, 45000); // exit studies (spread profit taking, sweep signal failure), once
