@@ -109,6 +109,33 @@ async function apTrade(method, path, body) {
 async function alpacaBuy1(sym, qty, cid) { return apTrade('POST', '/v2/orders', { symbol: sym, qty: String(qty), side: 'buy', type: 'market', time_in_force: 'day', client_order_id: cid }); }
 async function alpacaSell1(sym, qty, cid) { return apTrade('POST', '/v2/orders', { symbol: sym, qty: String(qty), side: 'sell', type: 'market', time_in_force: 'day', client_order_id: cid }); }
 async function alpacaOrderStatus(id) { return apTrade('GET', '/v2/orders/' + id); }
+/* ---------- Wheel strategy (James's second, separate Alpaca paper account, added Nov 13): its own key pair,
+   never shared with AK/AS above or any other book, so this strategy's account is fully isolated from the rest
+   of Scalp City. Same safety rule as apTrade: hardcoded to the paper endpoint, never reads a base URL from env.
+   Boot-time check only for now, read-only (GET /v2/account) -- confirms the account is reachable and records its
+   real balance/margin figures before any trading logic is wired, since the real overnight buying power (vs. the
+   4x day-trading figure) was still an open question when these keys were added. WHEEL_ON=1 required to trade;
+   not set yet -- this block only ever reads the account until James approves the actual entry/exit rules. */
+const WAK = process.env.WHEEL_ALPACA_KEY_ID, WAS = process.env.WHEEL_ALPACA_SECRET;
+async function wheelTrade(method, path, body) {
+  const r = await fetch(ALPACA_PAPER_TRADING_BASE + path, { method, headers: Object.assign({ 'APCA-API-KEY-ID': WAK, 'APCA-API-SECRET-KEY': WAS, accept: 'application/json' }, body ? { 'content-type': 'application/json' } : {}), body: body ? JSON.stringify(body) : undefined });
+  const txt = await r.text(); let j; try { j = txt ? JSON.parse(txt) : {}; } catch (e) { j = { raw: txt }; }
+  if (!r.ok) throw Object.assign(new Error('wheel alpaca ' + r.status + ' ' + JSON.stringify(j).slice(0, 200)), { code: 'tool_error', status: r.status });
+  return j;
+}
+if (WAK && WAS) {
+  setTimeout(async () => {
+    try {
+      const acc = await wheelTrade('GET', '/v2/account');
+      await kset('wheel_account_check', {
+        checked: new Date().toISOString(), status: acc.status, account_number: acc.account_number,
+        equity: acc.equity, cash: acc.cash, buying_power: acc.buying_power, regt_buying_power: acc.regt_buying_power,
+        non_marginable_buying_power: acc.non_marginable_buying_power, options_buying_power: acc.options_buying_power,
+        multiplier: acc.multiplier, options_trading_level: acc.options_trading_level, pattern_day_trader: acc.pattern_day_trader,
+      });
+    } catch (e) { try { await kset('wheel_account_check', { error: String(e && e.message || e), checked: new Date().toISOString() }); } catch (e2) {} }
+  }, 60000);
+}
 async function optSnaps(under, qs) {
   const out = {}; let tok = '';
   for (let i = 0; i < 8; i++) {
