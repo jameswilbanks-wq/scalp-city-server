@@ -2069,7 +2069,7 @@ function openPositions(){
     function age(o){var t=o.live&&o.live.t;return t?Math.max(0,Date.now()-t):Infinity}
     if(r.pos)out.push({src:'SERVER PAPER',strat:stratLabel(r.pos.trig||'ema'),pos:r.pos,pnlToday:r.pnl,nToday:r.ntr,age:age(r.pos),run:run});
     ((r.orb&&r.orb.open)||[]).forEach(function(o){out.push({src:'SERVER PAPER',strat:'ORB',pos:o,pnlToday:r.orb.pnl,nToday:(r.orb.trades||[]).length,age:age(o),run:run})});
-    ((r.csk&&r.csk.open)||[]).forEach(function(o){out.push({src:'SERVER PAPER',strat:'CSK',pos:o,pnlToday:r.csk.pnl,nToday:(r.csk.trades||[]).length,age:age(o),run:run})});
+    /* CSK (call spreads) are held open all day, not a live 0DTE trade to watch tick-by-tick -- left out of the big rotating ACTIVE TRADE card on purpose (James, Nov 13). Still shown in the smaller summary box below via bookBit('CSK book', ...) and the open-row/trade-history lists further down this file. */
     ((r.x9&&r.x9.open)||[]).forEach(function(o){out.push({src:'SERVER PAPER',strat:'X9',pos:o,pnlToday:r.x9.pnl,nToday:(r.x9.trades||[]).length,age:age(o),run:run})});
     ((r.fp&&r.fp.open)||[]).forEach(function(o){out.push({src:'SERVER PAPER',strat:'FP',pos:o,pnlToday:r.fp.pnl,nToday:(r.fp.trades||[]).length,age:age(o),run:run})});
     ((r.cdr&&r.cdr.open)||[]).forEach(function(o){out.push({src:'SERVER PAPER',strat:'CDR',pos:o,pnlToday:r.cdr.pnl,nToday:(r.cdr.trades||[]).length,age:age(o),run:run})});
