@@ -136,6 +136,32 @@ if (WAK && WAS) {
     } catch (e) { try { await kset('wheel_account_check', { error: String(e && e.message || e), checked: new Date().toISOString() }); } catch (e2) {} }
   }, 60000);
 }
+/* Second wheel-strategy paper account ("Wheel2", $4,000, added Nov 13) -- James asked to connect it for the wheel strategy too.
+   Its own key pair, isolated from WAK/WAS above and everything else, same hardcoded-paper-endpoint safety rule as wheelTrade().
+   Read-only boot check only, same as the first wheel account -- WHEEL2_ON isn't read anywhere yet, so nothing trades here until
+   entry/exit logic is written and James approves it. Not yet decided whether this replaces or sits alongside the first wheel
+   account (James flagged for this): $4,000 doesn't cover 100 shares of AMZN/TSLA/PLTR, so the underlying/sizing for THIS
+   account specifically is still an open question raised back to him. */
+const W2AK = process.env.WHEEL2_ALPACA_KEY_ID, W2AS = process.env.WHEEL2_ALPACA_SECRET;
+async function wheel2Trade(method, path, body) {
+  const r = await fetch(ALPACA_PAPER_TRADING_BASE + path, { method, headers: Object.assign({ 'APCA-API-KEY-ID': W2AK, 'APCA-API-SECRET-KEY': W2AS, accept: 'application/json' }, body ? { 'content-type': 'application/json' } : {}), body: body ? JSON.stringify(body) : undefined });
+  const txt = await r.text(); let j; try { j = txt ? JSON.parse(txt) : {}; } catch (e) { j = { raw: txt }; }
+  if (!r.ok) throw Object.assign(new Error('wheel2 alpaca ' + r.status + ' ' + JSON.stringify(j).slice(0, 200)), { code: 'tool_error', status: r.status });
+  return j;
+}
+if (W2AK && W2AS) {
+  setTimeout(async () => {
+    try {
+      const acc = await wheel2Trade('GET', '/v2/account');
+      await kset('wheel2_account_check', {
+        checked: new Date().toISOString(), status: acc.status, account_number: acc.account_number,
+        equity: acc.equity, cash: acc.cash, buying_power: acc.buying_power, regt_buying_power: acc.regt_buying_power,
+        non_marginable_buying_power: acc.non_marginable_buying_power, options_buying_power: acc.options_buying_power,
+        multiplier: acc.multiplier, options_trading_level: acc.options_trading_level, pattern_day_trader: acc.pattern_day_trader,
+      });
+    } catch (e) { try { await kset('wheel2_account_check', { error: String(e && e.message || e), checked: new Date().toISOString() }); } catch (e2) {} }
+  }, 75000);
+}
 async function optSnaps(under, qs) {
   const out = {}; let tok = '';
   for (let i = 0; i < 8; i++) {
