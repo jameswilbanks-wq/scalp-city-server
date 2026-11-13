@@ -162,6 +162,119 @@ if (W2AK && W2AS) {
     } catch (e) { try { await kset('wheel2_account_check', { error: String(e && e.message || e), checked: new Date().toISOString() }); } catch (e2) {} }
   }, 75000);
 }
+/* Wheel2 book: QQQ monthly put credit spread (James approved 2026-11-13 after study_wheel_csp_spread.js /
+   bt21). bt20 showed naked cash-secured QQQ puts working well (+362/mo implied at 5% OTM) but a true
+   cash-secured put needs strike*100 in cash (~65k/contract at QQQ's price), which doesn't fit this
+   $40,000 account -- not even one contract. A put credit spread (sell the short put, buy a further-OTM
+   put for protection) cuts margin to roughly the spread width*100 instead. bt21 found 2% OTM / 1%-of-
+   price width keeps nearly all the practical edge (+$175/mo implied, PF 2.77, 92% win, n=12; real
+   strikes in that backtest ran 6-7 points wide, so margin here should run about $600-700/contract --
+   confirmed against the Alpaca mleg docs, 2026-11-13).
+   Entry: once no position is open, pick the expiry 28-49 days out closest to 37 (3rd Friday, same
+   pickExpiry logic as the backtest), sell the real listed put nearest 2% OTM, buy the real listed put
+   nearest (that strike - 1% of the day's price) further OTM.
+   Exit: close at 50% of the credit received, or at 21 days to expiration if that comes first -- NEVER
+   held to expiration (same rule bt19-21 tested), so assignment/exercise mechanics never come into play.
+   Runs once per CALENDAR DAY, not every tick -- this is a monthly-cadence strategy. Market data (chain/
+   quotes) comes from the shared market-data feed (ap/optSnaps), same as every other book in this
+   codebase; only order placement uses the isolated Wheel2 account (wheel2Trade). Orders use Alpaca's
+   multi-leg ("mleg") market order type so both legs fill together or not at all.
+   WHEEL2_CSP_ON=1 required to place real orders -- while off, the FULL decision logic (including
+   tracking a simulated open position across days, so the exit side gets exercised too) still runs every
+   day and is written to kv 'wheel2_csp_dryrun', so the signal can be inspected before trading is turned
+   on. WHEEL2_CSP_SYM/OTM/WIDTH/QTY override the symbol/OTM%/width%/contracts-per-cycle defaults below. */
+const WHEEL2_CSP_ON = process.env.WHEEL2_CSP_ON === '1';
+const W2CSP = { sym: process.env.WHEEL2_CSP_SYM || 'QQQ', otm: +process.env.WHEEL2_CSP_OTM || 0.02, widthPct: +process.env.WHEEL2_CSP_WIDTH || 0.01, qty: +process.env.WHEEL2_CSP_QTY || 1 };
+function w2ThirdFriday(y, m) { const first = new Date(Date.UTC(y, m - 1, 1)), dow = first.getUTCDay(), fri = 1 + ((5 - dow + 7) % 7); return new Date(Date.UTC(y, m - 1, fri + 14)); }
+function w2PickExpiry(entryDateStr) {
+  const e = new Date(entryDateStr + 'T00:00:00Z'), cands = [];
+  for (let dm = 0; dm <= 2; dm++) { const d0 = new Date(e); d0.setUTCMonth(d0.getUTCMonth() + dm); const tf = w2ThirdFriday(d0.getUTCFullYear(), d0.getUTCMonth() + 1); const diff = Math.round((tf - e) / 864e5); if (diff >= 28 && diff <= 49) cands.push({ tf, diff }); }
+  if (!cands.length) return null;
+  cands.sort((a, b) => Math.abs(a.diff - 37) - Math.abs(b.diff - 37));
+  return cands[0].tf.toISOString().slice(0, 10);
+}
+async function w2PutChain(sym, expiry) {
+  const snaps = await optSnaps(sym, { expiration_date: expiry, type: 'put' });
+  const rows = [];
+  Object.keys(snaps).forEach(k => {
+    const o = occ(k); if (!o || o.type !== 'put') return;
+    const z = snaps[k], q = z.latestQuote || {}, bid = +q.bp, ask = +q.ap;
+    if (!(bid >= 0) || !(ask >= 0) || !(ask > bid)) return;
+    rows.push({ sym: k, strike: o.strike, bid, ask, mid: (bid + ask) / 2 });
+  });
+  return rows.sort((a, b) => a.strike - b.strike);
+}
+async function wheel2CspTick() {
+  if (!W2AK || !W2AS) return; // not configured
+  const today = nowET().day;
+  let st = (await kget('wheel2_csp')) || { open: null, trades: [], pnl: 0, lastCheck: null };
+  if (st.lastCheck === today) return; // once/day -- monthly cadence, no need to poll more often
+  st.lastCheck = today;
+  const dryRun = { checked: new Date().toISOString(), on: WHEEL2_CSP_ON };
+  try {
+    if (st.open) {
+      const o = st.open;
+      const snaps = await optSnaps(o.sym, { expiration_date: o.expiry, type: 'put' });
+      const legOf = k => { const z = snaps[k], q = z && z.latestQuote; return (q && q.bp !== undefined) ? { bid: +q.bp, ask: +q.ap } : null; };
+      const sLeg = legOf(o.shortSym), lLeg = legOf(o.longSym);
+      if (!sLeg || !lLeg) dryRun.note = 'no live quote for open legs yet';
+      else {
+        const spreadVal = (sLeg.bid + sLeg.ask) / 2 - (lLeg.bid + lLeg.ask) / 2;
+        const daysToExp = Math.round((Date.parse(o.expiry + 'T00:00:00Z') - Date.parse(today + 'T00:00:00Z')) / 864e5);
+        let why = null;
+        if (spreadVal <= o.credit * 0.5) why = 'profit50'; else if (daysToExp <= 21) why = 'dte21';
+        dryRun.openPosition = Object.assign({}, o, { spreadVal: Math.round(spreadVal * 100) / 100, daysToExp, wouldClose: !!why, why });
+        if (why) {
+          if (WHEEL2_CSP_ON) {
+            await wheel2Trade('POST', '/v2/orders', { order_class: 'mleg', qty: String(o.qty), type: 'market', time_in_force: 'day', legs: [
+              { symbol: o.shortSym, ratio_qty: '1', side: 'buy', position_intent: 'buy_to_close' },
+              { symbol: o.longSym, ratio_qty: '1', side: 'sell', position_intent: 'sell_to_close' }
+            ] });
+          }
+          const pnl = Math.round((o.credit - spreadVal) * 100 * o.qty * 100) / 100;
+          st.trades.push({ sym: o.sym, shortStrike: o.shortStrike, longStrike: o.longStrike, expiry: o.expiry, entryDate: o.entryDate, exitDate: today, credit: o.credit, exitValue: Math.round(spreadVal * 100) / 100, qty: o.qty, pnl, why, placed: WHEEL2_CSP_ON });
+          st.pnl = Math.round((st.pnl + pnl) * 100) / 100;
+          st.open = null;
+        }
+      }
+    } else {
+      const expiry = w2PickExpiry(today);
+      if (!expiry) dryRun.note = 'no valid monthly expiry in range today';
+      else {
+        const d = await ap('/v2/stocks/' + W2CSP.sym + '/bars', { timeframe: '1Day', start: iso(Date.now() - 2 * 864e5), end: iso(Date.now() - 20 * 60000), feed: 'iex', limit: 5, adjustment: 'raw' });
+        const bars = d.bars || [], price = bars.length ? bars[bars.length - 1].c : null;
+        if (!price) dryRun.note = 'no recent price for ' + W2CSP.sym;
+        else {
+          const chain = await w2PutChain(W2CSP.sym, expiry);
+          const shortTarget = price * (1 - W2CSP.otm), width = price * W2CSP.widthPct;
+          const usable = chain.filter(r => r.bid >= 0.02);
+          const short = usable.slice().sort((a, b) => Math.abs(a.strike - shortTarget) - Math.abs(b.strike - shortTarget))[0];
+          if (!short) dryRun.note = 'no usable short strike near ' + shortTarget.toFixed(2);
+          else {
+            const longTarget = short.strike - width;
+            const long = usable.filter(r => r.strike < short.strike).sort((a, b) => Math.abs(a.strike - longTarget) - Math.abs(b.strike - longTarget))[0];
+            if (!long) dryRun.note = 'no usable long strike near ' + longTarget.toFixed(2);
+            else {
+              const credit = Math.round((short.mid - long.mid) * 100) / 100;
+              dryRun.proposedEntry = { sym: W2CSP.sym, expiry, price, shortStrike: short.strike, shortSym: short.sym, longStrike: long.strike, longSym: long.sym, width: short.strike - long.strike, credit, qty: W2CSP.qty };
+              if (credit > 0.05) {
+                if (WHEEL2_CSP_ON) {
+                  await wheel2Trade('POST', '/v2/orders', { order_class: 'mleg', qty: String(W2CSP.qty), type: 'market', time_in_force: 'day', legs: [
+                    { symbol: short.sym, ratio_qty: '1', side: 'sell', position_intent: 'sell_to_open' },
+                    { symbol: long.sym, ratio_qty: '1', side: 'buy', position_intent: 'buy_to_open' }
+                  ] });
+                }
+                st.open = { sym: W2CSP.sym, expiry, entryDate: today, shortStrike: short.strike, shortSym: short.sym, longStrike: long.strike, longSym: long.sym, credit, qty: W2CSP.qty, placed: WHEEL2_CSP_ON };
+                dryRun.entered = true;
+              } else dryRun.note = 'credit too small (' + credit + '), skipping';
+            }
+          }
+        }
+      }
+    }
+  } catch (e) { dryRun.error = String(e && e.message || e).slice(0, 200); }
+  try { await kset('wheel2_csp', st); await kset('wheel2_csp_dryrun', dryRun); } catch (e) {}
+}
 async function optSnaps(under, qs) {
   const out = {}; let tok = '';
   for (let i = 0; i < 8; i++) {
@@ -716,7 +829,16 @@ async function cdrManage() {
    aggBars()+Engine.simulate(...,true) rather than resampled from the 1-minute indicators, since a 9-period EMA means
    something different at 5-minute resolution than at 1-minute -- matching exactly how study_x9.js's own 5min backtest
    frame was built. ---------- */
-const X9_ON = process.env.X9_ON !== '0', X9 = { syms: (process.env.X9_SYMS || '').split(',').map(x => x.trim().toUpperCase()).filter(Boolean), stopPct: +process.env.X9_STOP || 30, tf: +process.env.X9_TF || 5 };
+const X9_ON = process.env.X9_ON !== '0', X9 = { syms: (process.env.X9_SYMS || '').split(',').map(x => x.trim().toUpperCase()).filter(Boolean), stopPct: +process.env.X9_STOP || 30, tf: +process.env.X9_TF || 5, trailArm: +process.env.X9_TRAIL_ARM || 25, trailGive: process.env.X9_TRAIL_GIVE === undefined ? 0.5 : +process.env.X9_TRAIL_GIVE };
+// Trailing stop (added 2026-11-13, bt22): James noticed a live position sitting at +$90 unrealized with
+// nothing selling -- correct, by design, the exit logic below had no profit target at all, only a trend-
+// reversal exit (level/reverse), a -30% stop, and EOD, so a big gain just rode until the signal itself
+// reversed, which can give most of it back first. bt22 tested both a fixed take-profit (every level from
+// 50-100% of entry premium made results WORSE on both SPY and QQQ -- X9's edge comes from rare big trend
+// runs that a fixed cap kills) and a trailing stop (arms once unrealized gain hits X9_TRAIL_ARM%, exits if
+// it then falls back to X9_TRAIL_GIVE fraction of its peak) -- the trailing version clearly helped both
+// symbols (QQQ: 18%win/PF1.16 -> 42%win/PF1.43; SPY: 27%win/PF0.98 -> 45%win/PF1.01), so that's what's
+// wired in below. X9_TRAIL_ARM=0 (or a very high number) effectively disables it.
 function x9Bars(sym) { // today's/recent bars at X9's configured candle size, indicators freshly computed on that size
   const bars1 = P.bars[sym]; if (!bars1 || bars1.length < 20) return null;
   if (X9.tf <= 1) return bars1;
@@ -753,6 +875,10 @@ async function x9Manage() {
       p.peak = Math.max(p.peak || 0, bid); p.live = { bid, ask: +q.ask_price, t: Date.now(), age: q.updated_at ? Date.now() - Date.parse(q.updated_at) : null };
       const bars = x9Bars(p.sym), last = bars && bars.length ? bars[bars.length - 1] : null; let reason = ''; // same candle size as entry (x9Bars), so exits read the same EMA9/VWAP the entry signal used
       if (last && last.t > p.sigT) { if (Engine.x9Exit(last, p.dir)) reason = 'level'; else { const x = Engine.x9At(bars, bars.length - 1); if (x && x.dir === -p.dir) reason = 'reverse'; } }
+      if (!reason && p.entryAsk > 0) { // trailing stop on the premium (bt22): arm once up X9.trailArm%, exit if it gives back X9.trailGive of the peak
+        const peakPct = (p.peak / p.entryAsk - 1) * 100, curPct = (bid / p.entryAsk - 1) * 100;
+        if (peakPct >= X9.trailArm && curPct <= peakPct * (1 - X9.trailGive)) reason = 'trail';
+      }
       if (!reason && bid <= p.entryAsk * (1 - X9.stopPct / 100)) reason = 'premium stop';
       if (!reason && e.min >= p.flatMin) reason = 'eod';
       if (!reason && !marketOpen(Date.now())) reason = 'eod';
@@ -952,6 +1078,7 @@ async function tick() {
     try { if (open) await x9Look(); await x9Manage(); } catch (e) { P.x9Err = String(e && e.message || e).slice(0, 120); }
     try { if (open) await cskLook(); await cskManage(); } catch (e) { P.cskErr = String(e && e.message || e).slice(0, 120); }
     try { if (open) await cdrLook(); await cdrManage(); } catch (e) { P.cdrErr = String(e && e.message || e).slice(0, 120); }
+    try { if (open) await wheel2CspTick(); } catch (e) { P.wheel2CspErr = String(e && e.message || e).slice(0, 120); }
     if (open) { try { await orbLook(); await manageOrb(); } catch (e) { P.orbErr = String(e && e.message || e).slice(0, 120); } } else { try { await manageOrb(); } catch (e) {} }
     if (open) { try { await vtTick(); } catch (e) { P.vtErr = String(e && e.message || e).slice(0, 120); } }
     if (!P.rec.pos && !P.rec.shut) await lookForEntry();
