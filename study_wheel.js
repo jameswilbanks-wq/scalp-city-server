@@ -6,8 +6,11 @@
      income leg, not the stock's own P&L (the stock is the wheel's collateral, held continuously; the covered call is
      an income overlay on top of it, which is the thing James asked to see priced).
    - Entry: once per session, "shortly after open" -- approximated here as that day's (D's) regular-session open print.
-     Strike = that open price marked up ~2% OTM, rounded to the nearest $1 (AMZN strikes are commonly $1-wide; flagged
-     as an approximation same as every other study here -- no historical options-chain strike-list lookup available).
+     Strike = whichever REAL strike nearest the open price marked up ~2% OTM actually has option price data that day
+     (first pass, 2026-11-13, assumed AMZN strikes were all $1-wide and got only 25 of 164 candidate days -- almost
+     certainly because most of those guessed $1 strikes don't exist on AMZN's real chain. Fixed by probing a spread
+     of candidate strikes at $1/$2.50/$5 increments around the 2% OTM target in one batched request per day and
+     keeping whichever real, traded strike lands closest to that target, instead of assuming a fixed increment).
    - Expiration: 1-DTE, i.e. the very next trading session (D+1). One contract sold per day; yesterday's contract is
      already gone (expired or assigned) by the time today's is sold.
    - Hold-to-expiration default: let it ride to D+1's close. OTM at D+1 close -> expires worthless, full credit kept,
@@ -47,14 +50,22 @@ module.exports = async function studyWheel(ap, kset, opts) {
   const save = async () => { fin(); try { await kset(KEY, out); } catch (e) {} };
   const pxAt = (arr, t, maxAge) => { if (!arr) return null; let lo = 0, hi = arr.length - 1, a = -1; while (lo <= hi) { const mid = (lo + hi) >> 1; if (arr[mid].t <= t) { a = mid; lo = mid + 1; } else hi = mid - 1; } return a >= 0 && t - arr[a].t <= maxAge * 60000 ? arr[a].c : null; };
   const ymdOf = d => d.slice(2, 4) + d.slice(5, 7) + d.slice(8, 10);
-  const optBars1 = async (sym, start, end) => {
-    const out2 = []; let pt;
+  // candidate real strikes around a 2%-OTM target: AMZN's chain uses different increments at different price levels
+  // (and the increment can change over time), so rather than assume one, probe $1/$2.50/$5-spaced candidates near
+  // the target and let whichever ones actually have traded data win -- real strikes, not a guessed increment.
+  const strikeCandidates = open => {
+    const target = open * 1.02, set = new Set();
+    [1, 2.5, 5].forEach(inc => { for (let k = -3; k <= 3; k++) { const s = Math.round((target + k * inc) / inc) * inc; if (s > 0) set.add(Math.round(s * 100) / 100); } });
+    return [...set].sort((a, b) => Math.abs(a - target) - Math.abs(b - target));
+  };
+  const optBarsMulti = async (syms, start, end) => {
+    const m = {}; let pt;
     do {
-      const d = await ap('/v1beta1/options/bars', { symbols: sym, timeframe: '1Min', start: iso(start), end: iso(end), limit: 10000, page_token: pt });
-      ((d.bars || {})[sym] || []).forEach(b => out2.push({ t: Date.parse(b.t), o: b.o, c: b.c }));
+      const d = await ap('/v1beta1/options/bars', { symbols: syms.join(','), timeframe: '1Min', start: iso(start), end: iso(end), limit: 10000, page_token: pt });
+      Object.keys(d.bars || {}).forEach(s => { (m[s] = m[s] || []).push(...d.bars[s].map(b => ({ t: Date.parse(b.t), o: b.o, c: b.c }))); });
       pt = d.next_page_token; await sleep(gap);
     } while (pt);
-    return out2;
+    return m;
   };
   try {
     out.progress = 'loading ' + SYM + ' daily bars'; await save();
@@ -70,14 +81,19 @@ module.exports = async function studyWheel(ap, kset, opts) {
       const D = bars[i], D1 = bars[i + 1];
       const split = D.day < '2026-01-01' ? 'train' : 'lock';
       try {
-        const strike = Math.round(D.o * 1.02);
-        const sym = SYM + ymdOf(D1.day) + 'C' + String(strike * 1000).padStart(8, '0');
         const dayStartEt = Date.parse(D.day + 'T13:30:00Z'); // 9:30 ET in UTC (EST; off by an hour during EDT, acceptable for a 1-min-bar lookup window)
         const nextCloseEt = Date.parse(D1.day + 'T21:05:00Z'); // just past 16:00 ET close, generous pad
-        const arr = await optBars1(sym, dayStartEt, nextCloseEt);
-        if (!arr.length) { skip('no option data'); continue; }
-        let pin = null; for (const b of arr) { if (b.t >= dayStartEt && b.t <= dayStartEt + 6 * 60000) { pin = b.o; break; } }
-        if (pin === null || !(pin >= 0.02)) { skip('no usable entry credit'); continue; }
+        const cands = strikeCandidates(D.o).slice(0, 12);
+        const symOf = s => SYM + ymdOf(D1.day) + 'C' + String(Math.round(s * 1000)).padStart(8, '0');
+        const symList = cands.map(symOf);
+        const byS = await optBarsMulti(symList, dayStartEt, nextCloseEt);
+        let strike = null, sym = null, arr = null, pin = null;
+        for (let ci = 0; ci < cands.length; ci++) {
+          const a = byS[symList[ci]]; if (!a || !a.length) continue;
+          let p = null; for (const b of a) { if (b.t >= dayStartEt && b.t <= dayStartEt + 6 * 60000) { p = b.o; break; } }
+          if (p !== null && p >= 0.02) { strike = cands[ci]; sym = symList[ci]; arr = a; pin = p; break; } // cands sorted nearest-target-first
+        }
+        if (pin === null) { skip('no real strike with usable entry credit'); continue; }
         const intrinsicAtClose = Math.max(D1.c - strike, 0);
         const assigned = D1.c > strike;
         // hold-to-expiration default: last traded price before next-session close, else fall back to intrinsic value (handles thin/no trades into expiration)
