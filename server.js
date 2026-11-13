@@ -294,7 +294,9 @@ function newRec(day) { return { day, trades: [], signals: [], pnl: 0, losers: 0,
 async function loadDay(day) { P.rec = (await kget('rec:' + day)) || newRec(day); P.rec.sh = P.rec.sh || { open: [], trades: [], pnl: 0 }; P.rec.orbk = P.rec.orbk || { open: [], trades: [], pnl: 0, done: {} }; P.rec.cdrk = P.rec.cdrk || { open: [], trades: [], pnl: 0, done: {}, haltedToday: false }; }
 let saveQ = Promise.resolve();
 function saveRec() {
-  if (!P.rec) return saveQ; const rec = JSON.parse(JSON.stringify(P.rec)); rec.updated = iso(Date.now());
+  if (!P.rec) return saveQ;
+  if (process.env.FREEZE_SAVE === '1') return saveQ; // temporary: lets a Supabase-side journal reset actually stick instead of being overwritten by this process's own in-memory copy on the next autosave. Unset once a reset is confirmed clean.
+  const rec = JSON.parse(JSON.stringify(P.rec)); rec.updated = iso(Date.now());
   saveQ = saveQ.then(() => kset('rec:' + rec.day, rec)).then(() => { P.saveErr = ''; }).catch(e => { P.saveErr = 'journal not saving: ' + String(e.message || e).slice(0, 120); });
   return saveQ;
 }
