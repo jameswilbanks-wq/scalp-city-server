@@ -557,7 +557,7 @@ function marketState(now){
 function hms(s){var h=Math.floor(s/3600),m=Math.floor(s%3600/60);return h>=24?Math.floor(h/24)+'d '+(h%24)+'h':h+'h '+m+'m'}
 
 /* ---------- state ---------- */
-var S={mode:'demo',reason:'',watch:['QQQ','SPY','IWM'],span:'today',acct:null,accounts:[],room:null,board:false};
+var S={mode:'demo',reason:'',watch:['QQQ','SPY'],span:'today',acct:null,accounts:[],room:null,board:false};
 try{var w=JSON.parse(localStorage.getItem('scalp.watch')||'null');if(Array.isArray(w)&&w.length)S.watch=w.slice(0,8);var sp=localStorage.getItem('scalp.span2');if(sp)S.span=sp}catch(e){}
 var Q={},A={},PNL={total:0,trades:[],points:[],bySym:{},byStrat:{},loaded:false};
 
@@ -1020,7 +1020,7 @@ function renderScore(){
   var el=$('score');if(!el)return;
   if(!window.__WEB__||!SCORE){el.hidden=true;return}
   el.hidden=false;
-  var ST=['vwap','ema','orb','orb5','sweep','cspread','x9','fp','condor'],SN={vwap:'VWAP',ema:'EMA 50',orb:'15-MIN BREAK',orb5:'ORB BOOK',sweep:'SWEEP',cspread:'CSK',x9:'X9',fp:'FP',condor:'CDR'},syms={};
+  var ST=['orb5','sweep','cspread','x9','fp','condor'],SN={orb5:'ORB BOOK',sweep:'SWEEP',cspread:'CSK',x9:'X9',fp:'FP',condor:'CDR'},syms={}; // ema/vwap/15-min-break dropped from the board 2026-11-13 (James): ema and the main-book orb trigger never cleared breakeven across ~8mo of backtests (bt2/bt3/bt23), vwap barely traded; sweep is the only trigger left with a real edge
   Object.keys(SCORE).forEach(function(k){var a=k.split('|');if(a[0]!=='*')syms[a[0]]=1});
   var rows=Object.keys(syms).sort();
   var h='<h3>SCORECARD · TICKER × STRATEGY</h3><table class="sc"><tr><th></th>';
