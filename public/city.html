@@ -1021,7 +1021,7 @@ function renderScore(){
   if(!window.__WEB__||!SCORE){el.hidden=true;return}
   el.hidden=false;
   var ST=['orb5','sweep','cspread','x9','fp','condor'],SN={orb5:'ORB BOOK',sweep:'SWEEP',cspread:'CSK',x9:'X9',fp:'FP',condor:'CDR'},syms={}; // ema/vwap/15-min-break dropped from the board 2026-11-13 (James): ema and the main-book orb trigger never cleared breakeven across ~8mo of backtests (bt2/bt3/bt23), vwap barely traded; sweep is the only trigger left with a real edge
-  Object.keys(SCORE).forEach(function(k){var a=k.split('|');if(a[0]!=='*')syms[a[0]]=1});
+  Object.keys(SCORE).forEach(function(k){var a=k.split('|');if(a[0]!=='*'&&a[0]!=='IWM')syms[a[0]]=1});
   var rows=Object.keys(syms).sort();
   var h='<h3>SCORECARD · TICKER × STRATEGY</h3><table class="sc"><tr><th></th>';
   ST.forEach(function(t){h+='<th>'+SN[t]+'</th>'});h+='<th>ALL</th></tr>';
