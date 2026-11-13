@@ -597,6 +597,20 @@ function fiveMin(bars, fromMin, toMin) {
   }
   return out;
 }
+/* Generic N-minute aggregator that keeps every field Engine's indicators()/x9At/x9Exit need (t, v, day), unlike
+   fiveMin() above which only keeps o/h/l/c/min for its own one caller (cdrManage). Buckets by wall-clock time, not
+   by index, and only emits a bucket once it has all n of its 1-minute bars (never a partial/forming candle). Used
+   by the X9 book (2026-11-13, James approved switching it to 5-minute candles after bt12 showed 1-minute whipsawing
+   -- EMA9/VWAP need to be recomputed fresh on the aggregated OHLC, not just resampled from the 1-minute indicators,
+   since a 9-period EMA means something different on 5-minute bars than on 1-minute ones). */
+function aggBars(bars, n) {
+  const ms = n * 60000, by = {};
+  bars.forEach(b => { const k = Math.floor(b.t / ms) * ms; (by[k] = by[k] || []).push(b); });
+  return Object.keys(by).map(Number).sort((a, b) => a - b).filter(k => by[k].length === n).map(k => {
+    const g = by[k];
+    return { t: k, o: g[0].o, h: Math.max.apply(null, g.map(x => x.h)), l: Math.min.apply(null, g.map(x => x.l)), c: g[g.length - 1].c, v: g.reduce((s, x) => s + (x.v || 0), 0), day: g[0].day, min: g[0].min };
+  });
+}
 function cdrRangeSig(sym) {
   const bars = P.bars[sym]; if (!bars || !bars.length) return null;
   const e = nowET(), today = bars.filter(b => b.day === e.day);
@@ -689,18 +703,37 @@ async function cdrManage() {
     saveRec();
   } catch (err) { P.cdrErr = String(err && err.message || err).slice(0, 120); }
 }
-/* ---------- X9 paper book: EMA9 x VWAP crossover (reel shared by James 2026-11-11, "@austin.daytrades" via "@algo.jan"; the reviewer's backtest claimed 174 trades, 55.8% winners, profit factor 2.17, +200% in about 8 months; the original trader claimed +$215k in October 2026). Rules as shown: EMA9 crosses above VWAP -> buy a call; EMA9 crosses below VWAP -> buy a put; exit when a 1-minute candle closes back through EMA9 against the trade, or at -30% on the premium; no take-profit shown. Added: an opposite cross also exits, flat before the close, same-day at-the-money contract, 1 contract, one position per symbol in this book, entries 9:45 to 15:30 ET. Runs as its own book (journal field x9k) so it never blocks the other books. X9_ON=0 disables. ---------- */
-const X9_ON = process.env.X9_ON !== '0', X9 = { syms: (process.env.X9_SYMS || '').split(',').map(x => x.trim().toUpperCase()).filter(Boolean), stopPct: +process.env.X9_STOP || 30 };
+/* ---------- X9 paper book: EMA9 x VWAP crossover (reel shared by James 2026-11-11, "@austin.daytrades" via "@algo.jan"; the reviewer's backtest claimed 174 trades, 55.8% winners, profit factor 2.17, +200% in about 8 months; the original trader claimed +$215k in October 2026). Rules as shown: EMA9 crosses above VWAP -> buy a call; EMA9 crosses below VWAP -> buy a put; exit when a candle closes back through EMA9 against the trade, or at -30% on the premium; no take-profit shown. Added: an opposite cross also exits, flat before the close, same-day at-the-money contract, 1 contract, one position per symbol in this book, entries 9:45 to 15:30 ET. Runs as its own book (journal field x9k) so it never blocks the other books. X9_ON=0 disables.
+   Candle size (2026-11-13): switched from 1-minute to 5-minute. This project's own backtest (bt12, study_x9.js) of this
+   exact rule set never reproduced the reel's claimed 55.8%-win/2.17-PF track record on 1-minute candles -- QQQ came
+   back 31% win / 0.87 profit factor (losing), SPY 34% win / 1.03 (roughly breakeven), and the live book was tracking
+   that: 1 win in 9 trades over 2026-11-12/13, nearly every loss a real unrealized gain (peakBid > entryAsk) that fully
+   reversed before the EMA-cross-back exit fired -- a whipsaw pattern, not a bug (the signal/exit functions are the
+   same Engine code the backtest uses). bt12's 5-minute variant backtested meaningfully better (QQQ: 28% win but +4.81
+   avg/trade, PF 1.16 vs 1min's -2.47/0.87; the cross-back ("level") exits specifically go from roughly breakeven to
+   PF 3.0-3.3 on both symbols), so this switches live to match. X9_TF (minutes per candle, default 5) controls it;
+   X9_TF=1 restores the original 1-minute behavior. EMA9/VWAP are recomputed fresh on the aggregated OHLC via
+   aggBars()+Engine.simulate(...,true) rather than resampled from the 1-minute indicators, since a 9-period EMA means
+   something different at 5-minute resolution than at 1-minute -- matching exactly how study_x9.js's own 5min backtest
+   frame was built. ---------- */
+const X9_ON = process.env.X9_ON !== '0', X9 = { syms: (process.env.X9_SYMS || '').split(',').map(x => x.trim().toUpperCase()).filter(Boolean), stopPct: +process.env.X9_STOP || 30, tf: +process.env.X9_TF || 5 };
+function x9Bars(sym) { // today's/recent bars at X9's configured candle size, indicators freshly computed on that size
+  const bars1 = P.bars[sym]; if (!bars1 || bars1.length < 20) return null;
+  if (X9.tf <= 1) return bars1;
+  const bars = aggBars(bars1, X9.tf); if (bars.length < 20) return null;
+  Engine.simulate(bars, {}, true); // populates e9/vwap4/e50/atr on this aggregate in place; doesn't touch P.bars
+  return bars;
+}
 async function x9Look() {
   const r = P.rec; if (!X9_ON || !r || r.shut || !marketOpen(Date.now())) return;
   r.x9k = r.x9k || { open: [], trades: [], pnl: 0 };
   const e = nowET(); if (e.min < 585 || e.min > 930) return;
   for (const s of (X9.syms.length ? X9.syms : CFG.syms)) {
-    const bars = P.bars[s]; if (!bars || bars.length < 20) continue;
+    const bars = x9Bars(s); if (!bars) continue;
     const q = bars.length - 1, b = bars[q]; if (b.day !== e.day || r.x9k.open.some(p => p.sym === s)) continue;
     const sig = Engine.x9At(bars, q); if (!sig) continue;
     const id = s + ':' + b.t; if (r.x9k.last === id) continue; r.x9k.last = id;
-    if (Date.now() - (b.t + 60000) > 150000) { logSignal(s, sig, b.c, 'skipped', 'x9 signal was more than 2 minutes old when seen'); continue; }
+    if (Date.now() - (b.t + X9.tf * 60000) > 150000) { logSignal(s, sig, b.c, 'skipped', 'x9 signal was more than 2 minutes old when seen'); continue; }
     let pk; try { pk = await pickContract(s, sig.dir, b.c, 0); } catch (err) { pk = { why: 'could not load option data (' + ((err && err.code) || 'error') + ')' }; }
     if (pk.why) { logSignal(s, sig, b.c, 'skipped', 'x9: ' + pk.why); continue; }
     r.x9k.open.push({ sym: s, dir: sig.dir, type: pk.type, strike: pk.strike, exp: pk.exp, inst: pk.inst, t0: Date.now(), sigT: b.t, entryAsk: pk.ask, entryBid: pk.bid, entryU: b.c, qAge: pk.qAge, e9: Math.round(b.e9 * 100) / 100, trig: 'x9', peak: pk.bid, iv: pk.iv, delta: pk.delta, flatMin: CFG.dte === 0 ? 935 : 950 });
@@ -718,7 +751,7 @@ async function x9Manage() {
       const q = by[p.inst]; if (!q) continue; const bid = +q.bid_price; if (!(bid >= 0)) continue;
       if (q.updated_at && Date.now() - Date.parse(q.updated_at) > 180000) continue;
       p.peak = Math.max(p.peak || 0, bid); p.live = { bid, ask: +q.ask_price, t: Date.now(), age: q.updated_at ? Date.now() - Date.parse(q.updated_at) : null };
-      const bars = P.bars[p.sym], last = bars && bars.length ? bars[bars.length - 1] : null; let reason = '';
+      const bars = x9Bars(p.sym), last = bars && bars.length ? bars[bars.length - 1] : null; let reason = ''; // same candle size as entry (x9Bars), so exits read the same EMA9/VWAP the entry signal used
       if (last && last.t > p.sigT) { if (Engine.x9Exit(last, p.dir)) reason = 'level'; else { const x = Engine.x9At(bars, bars.length - 1); if (x && x.dir === -p.dir) reason = 'reverse'; } }
       if (!reason && bid <= p.entryAsk * (1 - X9.stopPct / 100)) reason = 'premium stop';
       if (!reason && e.min >= p.flatMin) reason = 'eod';
