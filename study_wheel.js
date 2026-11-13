@@ -60,7 +60,7 @@ module.exports = async function studyWheel(ap, kset, opts) {
     out.progress = 'loading ' + SYM + ' daily bars'; await save();
     const bars = [];
     { // one request for the whole daily-bar window -- tiny payload, no multi-year minute-bar accumulation
-      const d = await ap('/v2/stocks/' + SYM + '/bars', { timeframe: '1Day', start: iso(now - days * 864e5), end: iso(now), limit: 10000, adjustment: 'raw' });
+      const d = await ap('/v2/stocks/' + SYM + '/bars', { timeframe: '1Day', start: iso(now - days * 864e5), end: iso(now - 20 * 60000), feed: 'iex', limit: 10000, adjustment: 'raw' });
       (d.bars || []).forEach(b => bars.push({ day: b.t.slice(0, 10), t: Date.parse(b.t), o: b.o, c: b.c, h: b.h, l: b.l }));
     }
     out.n.sessions = bars.length;
