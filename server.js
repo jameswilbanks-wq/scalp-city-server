@@ -829,7 +829,9 @@ async function cdrManage() {
    aggBars()+Engine.simulate(...,true) rather than resampled from the 1-minute indicators, since a 9-period EMA means
    something different at 5-minute resolution than at 1-minute -- matching exactly how study_x9.js's own 5min backtest
    frame was built. ---------- */
-const X9_ON = process.env.X9_ON !== '0', X9 = { syms: (process.env.X9_SYMS || '').split(',').map(x => x.trim().toUpperCase()).filter(Boolean), stopPct: +process.env.X9_STOP || 30, tf: +process.env.X9_TF || 5, trailArm: +process.env.X9_TRAIL_ARM || 25, trailGive: process.env.X9_TRAIL_GIVE === undefined ? 0.5 : +process.env.X9_TRAIL_GIVE };
+const X9_ON = process.env.X9_ON !== '0', X9 = { syms: (process.env.X9_SYMS || '').split(',').map(x => x.trim().toUpperCase()).filter(Boolean), stopPct: +process.env.X9_STOP || 30, tf: +process.env.X9_TF || 5, trailArm: +process.env.X9_TRAIL_ARM || 25, trailGive: process.env.X9_TRAIL_GIVE === undefined ? 0.5 : +process.env.X9_TRAIL_GIVE,
+  // bt22 FULL data (2026-11-13) showed the trailing stop above is the wrong exit for QQQ: a flat take-profit does better there (avg $9.14/trade, PF1.33 vs trail's $5.53/PF1.25), while SPY only works with the trailing stop (every flat TP level is negative on SPY). So these symbols use a flat take-profit instead of the trailing stop:
+  tpSyms: (process.env.X9_TP_SYMS || 'QQQ').split(',').map(x => x.trim().toUpperCase()).filter(Boolean), tpPct: +process.env.X9_TP_PCT || 70 };
 // Trailing stop (added 2026-11-13, bt22): James noticed a live position sitting at +$90 unrealized with
 // nothing selling -- correct, by design, the exit logic below had no profit target at all, only a trend-
 // reversal exit (level/reverse), a -30% stop, and EOD, so a big gain just rode until the signal itself
@@ -875,9 +877,14 @@ async function x9Manage() {
       p.peak = Math.max(p.peak || 0, bid); p.live = { bid, ask: +q.ask_price, t: Date.now(), age: q.updated_at ? Date.now() - Date.parse(q.updated_at) : null };
       const bars = x9Bars(p.sym), last = bars && bars.length ? bars[bars.length - 1] : null; let reason = ''; // same candle size as entry (x9Bars), so exits read the same EMA9/VWAP the entry signal used
       if (last && last.t > p.sigT) { if (Engine.x9Exit(last, p.dir)) reason = 'level'; else { const x = Engine.x9At(bars, bars.length - 1); if (x && x.dir === -p.dir) reason = 'reverse'; } }
-      if (!reason && p.entryAsk > 0) { // trailing stop on the premium (bt22): arm once up X9.trailArm%, exit if it gives back X9.trailGive of the peak
-        const peakPct = (p.peak / p.entryAsk - 1) * 100, curPct = (bid / p.entryAsk - 1) * 100;
-        if (peakPct >= X9.trailArm && curPct <= peakPct * (1 - X9.trailGive)) reason = 'trail';
+      if (!reason && p.entryAsk > 0) {
+        const curPct = (bid / p.entryAsk - 1) * 100;
+        if (X9.tpSyms.includes(p.sym)) { // flat take-profit (bt22 full data): best for QQQ
+          if (curPct >= X9.tpPct) reason = 'target';
+        } else { // trailing stop on the premium (bt22): arm once up X9.trailArm%, exit if it gives back X9.trailGive of the peak -- best for SPY
+          const peakPct = (p.peak / p.entryAsk - 1) * 100;
+          if (peakPct >= X9.trailArm && curPct <= peakPct * (1 - X9.trailGive)) reason = 'trail';
+        }
       }
       if (!reason && bid <= p.entryAsk * (1 - X9.stopPct / 100)) reason = 'premium stop';
       if (!reason && e.min >= p.flatMin) reason = 'eod';
