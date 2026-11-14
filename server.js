@@ -355,6 +355,33 @@ const symActive = (sym, ms) => CFG.syms.includes(sym) ? marketOpen(ms) : (EXT_SY
 const USD = process.env.DOLLAR_EXITS === '0' ? null : { stop: 20, tp: 25, trailArm: 12, trailGap: 5, trailFrac: 0.4, runGap: 12, maxSpread: 10 };
 const QTY = USD ? (+process.env.QTY || 2) : 1; // paper: 2 contracts, sell 1 at +$25 and let the other ride (needs dollar exits)
 CFG.usd = USD;
+/* Correlation-aware exposure cap (James approved acting on this 2026-11-14, from reviewing Alpaca's "Elite-Bot" writeup).
+   SPY and QQQ move together, so each book capping its OWN risk doesn't cap what actually matters when several books
+   are open on these symbols at once: the COMBINED open risk across all of them. This sums estimated max-loss dollars,
+   by symbol group, across sweep/ORB/X9/FP (long single-leg premium) + CSK (credit-spread width minus credit) + CDR
+   (its own pre-computed risk), and a new entry that would push the group's combined open risk over CORR_CAP_USD is
+   skipped (logged, not silently dropped). CORR_GROUPS lists symbols treated as one correlated bucket; CORR_CAP_USD=0
+   disables the cap entirely. Default $500 is a reasoned placeholder sized against the planned live per-trade/weekly
+   caps in RISK_POLICY.md, NOT yet James-approved as a specific number — flagged there and in DECISIONS.md
+   (2026-11-14) for his confirmation. */
+const CORR_GROUPS = (process.env.CORR_GROUPS === undefined ? 'SPY,QQQ' : process.env.CORR_GROUPS).split(',').map(x => x.trim().toUpperCase()).filter(Boolean);
+const CORR_CAP_USD = process.env.CORR_CAP_USD === '0' ? 0 : (+process.env.CORR_CAP_USD || 500);
+function corrGroupOpenRiskUSD(rec) {
+  if (!rec) return 0;
+  let t = 0;
+  if (rec.pos && CORR_GROUPS.includes(rec.pos.sym)) t += (rec.pos.entryAsk || 0) * 100 * (rec.pos.qty || 1);
+  for (const p of (rec.orbk && rec.orbk.open || [])) if (CORR_GROUPS.includes(p.sym)) t += (p.entryAsk || 0) * 100;
+  for (const p of (rec.x9k && rec.x9k.open || [])) if (CORR_GROUPS.includes(p.sym)) t += (p.entryAsk || 0) * 100;
+  for (const p of (rec.fpk && rec.fpk.open || [])) if (CORR_GROUPS.includes(p.sym)) t += (p.entryAsk || 0) * 100;
+  for (const p of (rec.csk && rec.csk.open || [])) if (CORR_GROUPS.includes(p.sym)) t += Math.max(0, (p.width || 0) * 100 - (p.creditNat || 0) * 100);
+  for (const p of (rec.cdrk && rec.cdrk.open || [])) if (CORR_GROUPS.includes(p.sym)) t += (p.risk || 0);
+  return Math.round(t * 100) / 100;
+}
+function corrCapBlocks(rec, sym, addRiskUSD) {
+  if (!CORR_CAP_USD || !CORR_GROUPS.includes(sym)) return null;
+  const cur = corrGroupOpenRiskUSD(rec), next = Math.round((cur + (addRiskUSD || 0)) * 100) / 100;
+  return next > CORR_CAP_USD ? { cur, next } : null;
+}
 const PROFB = { premStop: .12, tpUp: .40, trailArm: .05, trailGap: .06, timeBars: 15 };
 const iso = ms => new Date(ms).toISOString();
 const nowET = () => Engine.et(Date.now());
@@ -596,6 +623,7 @@ async function orbLook() {
     if (Date.now() - (inf.bar.t + 60000) > 150000) { logSignal(s, sig, inf.bar.c, 'skipped', 'orb5 signal was more than 2 minutes old when seen'); continue; }
     let pk; try { pk = await pickContract(s, sig.dir, inf.bar.c, 0); } catch (e) { pk = { why: 'could not load option data (' + ((e && e.code) || 'error') + ')' }; }
     if (pk.why) { logSignal(s, sig, inf.bar.c, 'skipped', 'orb5: ' + pk.why); continue; }
+    { const corr = corrCapBlocks(r, s, (pk.ask || 0) * 100); if (corr) { logSignal(s, sig, inf.bar.c, 'skipped', 'orb5: would push ' + s + '-group open risk to $' + corr.next.toFixed(0) + ', over the $' + CORR_CAP_USD + ' correlation cap'); continue; } }
     const risk = Math.abs(inf.bar.c - sig.stopPx);
     r.orbk.open.push({ sym: s, dir: sig.dir, type: pk.type, strike: pk.strike, exp: pk.exp, inst: pk.inst, t0: Date.now(), sigT: inf.bar.t, entryAsk: pk.ask, entryBid: pk.bid, entryU: inf.bar.c, qAge: pk.qAge, stopU: sig.stopPx, tgtU: inf.bar.c + sig.dir * ORB_R * risk, riskU: Math.round(risk * 100) / 100, trig: 'orb5', orbV: ORB_MODE, be: ORB_BE, peak: pk.bid, iv: pk.iv, delta: pk.delta, flatMin: ORB_MODE === '15' ? 930 : CFG.dte === 0 ? 935 : 950 });
     logSignal(s, sig, inf.bar.c, 'entered', 'orb' + ORB_MODE + ' ' + pk.type + ' ' + pk.strike + ' exp ' + pk.exp + ' @ ask $' + pk.ask.toFixed(2) + ', stop ' + sig.stopPx.toFixed(2) + ', target ' + (inf.bar.c + sig.dir * ORB_R * risk).toFixed(2));
@@ -643,7 +671,9 @@ async function cskLook() {
       if (age > 180000) { logSignal(s, fake, px, 'skipped', 'call spread: quotes are stale'); continue; }
       const sB = +a.bid_price, sA = +a.ask_price, lB = +b.bid_price, lA = +b.ask_price, nat = Math.round((sB - lA) * 100) / 100, mid = Math.round(((sB + sA) / 2 - (lB + lA) / 2) * 1000) / 1000;
       if (!(nat >= 0.03)) { logSignal(s, fake, px, 'skipped', 'call spread: credit under 3 cents at the bid/ask (' + nat.toFixed(2) + ', mid ' + mid.toFixed(2) + ')'); continue; }
-      r.csk.open.push({ sym: s, exp: today, ks: sh.strike, kl: lg.strike, instS: sh.id, instL: lg.id, t0: Date.now(), entryU: px, sBid: sB, sAsk: sA, lBid: lB, lAsk: lA, creditNat: nat, creditMid: mid, qAge: age, width: lg.strike - sh.strike });
+      const width = lg.strike - sh.strike, addRisk = Math.max(0, width * 100 - nat * 100);
+      { const corr = corrCapBlocks(r, s, addRisk); if (corr) { logSignal(s, fake, px, 'skipped', 'call spread: would push ' + s + '-group open risk to $' + corr.next.toFixed(0) + ', over the $' + CORR_CAP_USD + ' correlation cap'); continue; } }
+      r.csk.open.push({ sym: s, exp: today, ks: sh.strike, kl: lg.strike, instS: sh.id, instL: lg.id, t0: Date.now(), entryU: px, sBid: sB, sAsk: sA, lBid: lB, lAsk: lA, creditNat: nat, creditMid: mid, qAge: age, width });
       logSignal(s, fake, px, 'entered', 'sold call spread ' + sh.strike + '/' + lg.strike + ' exp ' + today + ' for $' + nat.toFixed(2) + ' at the bid/ask (mid $' + mid.toFixed(2) + ')');
     } catch (err) { logSignal(s, fake, px, 'skipped', 'call spread: could not load option data (' + ((err && err.code) || (err && err.message) || 'error') + ')'); }
   }
@@ -778,6 +808,7 @@ async function cdrLook() {
     let pick; try { pick = await cdrSelect(s, bounds); } catch (err) { pick = { why: 'could not load option data (' + ((err && err.code) || 'error') + ')' }; }
     if (pick.why) { logSignal(s, fake, px, 'skipped', 'condor: ' + pick.why); continue; }
     if (cdrReserved(k) + pick.risk > CDR.dailyMax) { logSignal(s, fake, px, 'skipped', 'condor: would exceed the $' + CDR.dailyMax + ' daily budget'); continue; }
+    { const corr = corrCapBlocks(r, s, pick.risk); if (corr) { logSignal(s, fake, px, 'skipped', 'condor: would push ' + s + '-group open risk to $' + corr.next.toFixed(0) + ', over the $' + CORR_CAP_USD + ' correlation cap'); continue; } }
     k.open.push({ sym: s, exp: e.day, low: bounds.low, high: bounds.high, width: pick.width, credit: pick.credit, risk: pick.risk,
       ksp: pick.shortPut.strike, klp: pick.longPut.strike, ksc: pick.shortCall.strike, klc: pick.longCall.strike,
       instSP: pick.shortPut.id, instLP: pick.longPut.id, instSC: pick.shortCall.id, instLC: pick.longCall.id, t0: Date.now() });
@@ -860,6 +891,7 @@ async function x9Look() {
     if (Date.now() - (b.t + X9.tf * 60000) > 150000) { logSignal(s, sig, b.c, 'skipped', 'x9 signal was more than 2 minutes old when seen'); continue; }
     let pk; try { pk = await pickContract(s, sig.dir, b.c, 0); } catch (err) { pk = { why: 'could not load option data (' + ((err && err.code) || 'error') + ')' }; }
     if (pk.why) { logSignal(s, sig, b.c, 'skipped', 'x9: ' + pk.why); continue; }
+    { const corr = corrCapBlocks(r, s, (pk.ask || 0) * 100); if (corr) { logSignal(s, sig, b.c, 'skipped', 'x9: would push ' + s + '-group open risk to $' + corr.next.toFixed(0) + ', over the $' + CORR_CAP_USD + ' correlation cap'); continue; } }
     r.x9k.open.push({ sym: s, dir: sig.dir, type: pk.type, strike: pk.strike, exp: pk.exp, inst: pk.inst, t0: Date.now(), sigT: b.t, entryAsk: pk.ask, entryBid: pk.bid, entryU: b.c, qAge: pk.qAge, e9: Math.round(b.e9 * 100) / 100, trig: 'x9', peak: pk.bid, iv: pk.iv, delta: pk.delta, flatMin: CFG.dte === 0 ? 935 : 950 });
     logSignal(s, sig, b.c, 'entered', 'x9 ' + pk.type + ' ' + pk.strike + ' exp ' + pk.exp + ' @ ask $' + pk.ask.toFixed(2) + ' (EMA9 ' + b.e9.toFixed(2) + ' crossed ' + (sig.dir > 0 ? 'above' : 'below') + ' VWAP(OHLC/4) ' + b.vwap4.toFixed(2) + ')');
   }
@@ -938,6 +970,7 @@ async function fpLook() {
     const sig = { dir: plan.dir, trig: 'fp' };
     let pk; try { pk = await pickContract(s, plan.dir, b.c, 0); } catch (err) { pk = { why: 'could not load option data (' + ((err && err.code) || 'error') + ')' }; }
     if (pk.why) { logSignal(s, sig, b.c, 'skipped', 'fp ' + plan.kind + ': ' + pk.why); continue; }
+    { const corr = corrCapBlocks(r, s, (pk.ask || 0) * 100); if (corr) { logSignal(s, sig, b.c, 'skipped', 'fp ' + plan.kind + ': would push ' + s + '-group open risk to $' + corr.next.toFixed(0) + ', over the $' + CORR_CAP_USD + ' correlation cap'); continue; } }
     r.fpk.open.push({ sym: s, kind: plan.kind, dir: plan.dir, type: pk.type, strike: pk.strike, exp: pk.exp, inst: pk.inst, t0: Date.now(), sigT: b.t, entryAsk: pk.ask, entryBid: pk.bid, entryU: b.c, stopU: plan.stopU, tgtU: plan.tgtU, fair: st.fair, qAge: pk.qAge, trig: 'fp', peak: pk.bid });
     logSignal(s, sig, b.c, 'entered', 'fp ' + (plan.kind === 'cont' ? 'continuation' : 'reversion to the open ' + st.fair.toFixed(2)) + ': ' + pk.type + ' ' + pk.strike + ' @ ask $' + pk.ask.toFixed(2) + ', stop ' + plan.stopU.toFixed(2) + ', target ' + plan.tgtU.toFixed(2));
   }
@@ -1035,6 +1068,7 @@ async function lookForEntry() {
     if (Date.now() < r.blockUntil) { logSignal(s, sig, inf.bar.c, 'skipped', 'cooling down after a stop'); continue; }
     let pk; try { pk = await pickContract(s, sig.dir, inf.bar.c, P.extNow && EXT_SYMS.includes(s) && !CFG.syms.includes(s) ? EXT_MAXPREM : 0); } catch (e) { pk = { why: 'could not load option data (' + ((e && e.code) || 'error') + ')' }; }
     if (pk.why) { logSignal(s, sig, inf.bar.c, 'skipped', pk.why); continue; }
+    { const corr = corrCapBlocks(r, s, (pk.ask || 0) * 100 * QTY); if (corr) { logSignal(s, sig, inf.bar.c, 'skipped', 'would push ' + s + '-group open risk to $' + corr.next.toFixed(0) + ', over the $' + CORR_CAP_USD + ' correlation cap'); continue; } }
     r.pos = { sym: s, dir: sig.dir, type: pk.type, strike: pk.strike, exp: pk.exp, inst: pk.inst, t0: Date.now(), sigT: inf.bar.t, entryAsk: pk.ask, entryBid: pk.bid, entryU: inf.bar.c, qAge: pk.qAge, qty: QTY,
       trailR: SWEEP_RUN && sig.trig === 'sweep' && sig.stopPx !== undefined && Math.abs(inf.bar.c - sig.stopPx) > 0.0001 * inf.bar.c ? Math.abs(inf.bar.c - sig.stopPx) : undefined, stopU: sig.stopPx !== undefined ? sig.stopPx : inf.bar.c - sig.dir * Math.max(sig.atr, 0.05), trig: sig.trig, lvl: sig.lvl, peak: pk.bid, iv: pk.iv, delta: pk.delta, flatMin: P.extNow && !CFG.syms.includes(s) ? P.extNow.flat : CFG.dte === 0 ? 935 : 950, ext: P.extNow && !CFG.syms.includes(s) ? P.extNow.name : undefined };
     if (SWEEP_REAL_ORDERS && sig.trig === 'sweep') {
