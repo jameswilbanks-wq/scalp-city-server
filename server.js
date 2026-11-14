@@ -11,6 +11,7 @@ const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
 const { StreamableHTTPClientTransport } = require('@modelcontextprotocol/sdk/client/streamableHttp.js');
 const { UnauthorizedError } = require('@modelcontextprotocol/sdk/client/auth.js');
 const Engine = require('./engine.js');
+const AiOverlay = require('./ai_overlay.js');
 
 const PORT = +process.env.PORT || 3000;
 const PUBLIC_URL = (process.env.PUBLIC_URL || '').replace(/\/$/, '');
@@ -381,6 +382,24 @@ function corrCapBlocks(rec, sym, addRiskUSD) {
   if (!CORR_CAP_USD || !CORR_GROUPS.includes(sym)) return null;
   const cur = corrGroupOpenRiskUSD(rec), next = Math.round((cur + (addRiskUSD || 0)) * 100) / 100;
   return next > CORR_CAP_USD ? { cur, next } : null;
+}
+/* AI trade-management overlay (James approved 2026-11-14, ported from his ai_trade_overlay.py prototype --
+   see ai_overlay.js and claude/ai_trade_overlay.py). SHADOW-LOG ONLY: scoped to CDR to start. It is never
+   awaited on the critical path and its decision is only appended to k.aiShadow for later comparison against
+   CDR's own deterministic entries/exits -- it cannot block an entry, close a position, or change a stop.
+   AI_OVERLAY_ON=0 (default) runs none of this at all -- no API key needed, zero cost, zero behavior change. */
+const AI_OVERLAY_ON = process.env.AI_OVERLAY_ON === '1';
+const AI_OVERLAY_MODEL = process.env.ANTHROPIC_MODEL || 'claude-haiku-5-5';
+const AI_OVERLAY_KEY = process.env.ANTHROPIC_API_KEY || '';
+function aiShadowLog(k, kind, sym, snapshot) {
+  if (!AI_OVERLAY_ON) return;
+  if (!AI_OVERLAY_KEY) { P.aiOverlayErr = 'AI_OVERLAY_ON=1 but ANTHROPIC_API_KEY is not set'; return; }
+  AiOverlay.decide(snapshot, { apiKey: AI_OVERLAY_KEY, model: AI_OVERLAY_MODEL }).then((decision) => {
+    k.aiShadow = k.aiShadow || [];
+    k.aiShadow.push({ t: Date.now(), kind, sym, decision });
+    if (k.aiShadow.length > 100) k.aiShadow = k.aiShadow.slice(-100);
+    saveRecSoon();
+  }).catch((e) => { P.aiOverlayErr = String(e && e.message || e).slice(0, 160); });
 }
 const PROFB = { premStop: .12, tpUp: .40, trailArm: .05, trailGap: .06, timeBars: 15 };
 const iso = ms => new Date(ms).toISOString();
@@ -809,6 +828,7 @@ async function cdrLook() {
     if (pick.why) { logSignal(s, fake, px, 'skipped', 'condor: ' + pick.why); continue; }
     if (cdrReserved(k) + pick.risk > CDR.dailyMax) { logSignal(s, fake, px, 'skipped', 'condor: would exceed the $' + CDR.dailyMax + ' daily budget'); continue; }
     { const corr = corrCapBlocks(r, s, pick.risk); if (corr) { logSignal(s, fake, px, 'skipped', 'condor: would push ' + s + '-group open risk to $' + corr.next.toFixed(0) + ', over the $' + CORR_CAP_USD + ' correlation cap'); continue; } }
+    if (AI_OVERLAY_ON) { const nowS = Date.now() / 1000; aiShadowLog(k, 'entry', s, { now: nowS, market_at: nowS, market_open: true, position_units: 0, position_revision: s + ':' + e.day, base_exit: false, entries_allowed: true, risk_budget_usd: Math.round((CDR.dailyMax - cdrReserved(k)) * 100) / 100, candidate: { id: s + '-' + e.day + '-' + pick.shortPut.strike, description: 'Iron condor ' + pick.longPut.strike + '/' + pick.shortPut.strike + '/' + pick.shortCall.strike + '/' + pick.longCall.strike + ' exp ' + e.day + ', $' + pick.width + ' wings, credit $' + pick.credit.toFixed(2) + ', max risk $' + pick.risk.toFixed(2), risk_usd: pick.risk }, facts: [{ id: 'range', observed_at: nowS, max_age_seconds: 300, text: s + ' opening-range bounds ' + bounds.low.toFixed(2) + '-' + bounds.high.toFixed(2) + ' (this book\'s chop filter already confirmed choppy); current price ' + px.toFixed(2) + ', position back in the middle half of the range (entry condition).' }, { id: 'candidate_math', observed_at: nowS, max_age_seconds: 300, text: 'Condor credit $' + pick.credit.toFixed(2) + ' on $' + pick.width + ' wings (' + (pick.ratio * 100).toFixed(0) + '% credit/width), max defined risk $' + pick.risk.toFixed(2) + '. No news feed is wired into this system; absence of a news fact does not mean no news exists.' }] }); }
     k.open.push({ sym: s, exp: e.day, low: bounds.low, high: bounds.high, width: pick.width, credit: pick.credit, risk: pick.risk,
       ksp: pick.shortPut.strike, klp: pick.longPut.strike, ksc: pick.shortCall.strike, klc: pick.longCall.strike,
       instSP: pick.shortPut.id, instLP: pick.longPut.id, instSC: pick.shortCall.id, instLC: pick.longCall.id, t0: Date.now() });
@@ -842,7 +862,18 @@ async function cdrManage() {
         const bars5 = fiveMin((P.bars[p.sym] || []).filter(b => b.day === e.day), 570, 1440);
         if (bars5.length >= 2) { const last2 = bars5.slice(-2); if (last2.every(b => b.c > p.high) || last2.every(b => b.c < p.low)) reason = 'range break'; }
       }
-      if (reason) cdrClose(p, debit === null ? p.width : Math.min(p.width, debit), reason);
+      if (reason) { cdrClose(p, debit === null ? p.width : Math.min(p.width, debit), reason); continue; }
+      // Shadow-only AI check, throttled to ~60s per position so it never runs faster than the script's own
+      // recommended review cadence and never multiplies API cost with the main TICK_MS loop.
+      if (AI_OVERLAY_ON && debit !== null && (!p.aiNext || Date.now() >= p.aiNext)) {
+        p.aiNext = Date.now() + 60000;
+        const nowS = Date.now() / 1000, pnlIfClosedNow = Math.round((p.credit - Math.min(p.width, debit)) * 10000) / 100;
+        aiShadowLog(k, 'manage', p.sym, { now: nowS, market_at: nowS, market_open: true, position_units: 1, position_revision: p.sym + ':' + p.exp + ':' + p.t0, base_exit: false, entries_allowed: false, risk_budget_usd: 0, candidate: null, facts: [
+          { id: 'position', observed_at: nowS, max_age_seconds: 300, text: 'Open condor ' + p.sym + ' ' + p.klp + '/' + p.ksp + '/' + p.ksc + '/' + p.klc + ', credit received $' + p.credit.toFixed(2) + ', range was ' + p.low.toFixed(2) + '-' + p.high.toFixed(2) + ', opened ' + iso(p.t0) + ', exp ' + p.exp + '.' },
+          { id: 'quote', observed_at: nowS, max_age_seconds: 200, text: 'Current cost to close (debit) $' + debit.toFixed(2) + '; P&L if closed now $' + pnlIfClosedNow.toFixed(2) + '. Baseline rule has NOT fired (no stop/target/range-break/time-exit condition met this check).' },
+          { id: 'time', observed_at: nowS, max_age_seconds: 200, text: 'ET minute ' + e.min + ' of ' + CDR.timeExit + ' (time-exit minute); daily halt is ' + (k.haltedToday ? 'ON' : 'off') + '.' },
+        ] });
+      }
     }
     saveRec();
   } catch (err) { P.cdrErr = String(err && err.message || err).slice(0, 120); }
@@ -1169,7 +1200,7 @@ function recOut() {
     csk: r.csk ? { pnl: r.csk.pnl, on: CSK_ON, open: r.csk.open.map(o => ({ sym: o.sym, ks: o.ks, kl: o.kl, exp: o.exp, t0: o.t0, creditNat: o.creditNat, live: o.live })), trades: r.csk.trades.map(t => ({ sym: t.sym, ks: t.strike, kl: t.kl, entryT: t.entryT, pnl: t.pnl, reason: t.reason })) } : null,
     x9: r.x9k ? { pnl: r.x9k.pnl, on: X9_ON, open: r.x9k.open.map(o => ({ sym: o.sym, strike: o.strike, type: o.type, exp: o.exp, entryAsk: o.entryAsk, t0: o.t0, live: o.live })), trades: r.x9k.trades.map(t => ({ sym: t.sym, strike: t.strike, type: t.type, entryT: t.entryT, pnl: t.pnl, reason: t.reason })) } : null,
     fp: r.fpk ? { pnl: r.fpk.pnl, on: FP_ON, open: r.fpk.open.map(o => ({ sym: o.sym, strike: o.strike, type: o.type, exp: o.exp, kind: o.kind, entryAsk: o.entryAsk, t0: o.t0, live: o.live })), trades: r.fpk.trades.map(t => ({ sym: t.sym, strike: t.strike, type: t.type, kind: t.kind, entryT: t.entryT, pnl: t.pnl, reason: t.reason })) } : null,
-    cdr: r.cdrk ? { pnl: r.cdrk.pnl, on: CDR_ON, open: r.cdrk.open.map(o => ({ sym: o.sym, ksp: o.ksp, klp: o.klp, ksc: o.ksc, klc: o.klc, exp: o.exp, t0: o.t0, credit: o.credit, width: o.width, live: o.live })), trades: r.cdrk.trades.map(t => ({ sym: t.sym, ksp: t.ksp, klp: t.klp, ksc: t.ksc, klc: t.klc, entryT: t.entryT, pnl: t.pnl, reason: t.reason })) } : null,
+    cdr: r.cdrk ? { pnl: r.cdrk.pnl, on: CDR_ON, open: r.cdrk.open.map(o => ({ sym: o.sym, ksp: o.ksp, klp: o.klp, ksc: o.ksc, klc: o.klc, exp: o.exp, t0: o.t0, credit: o.credit, width: o.width, live: o.live })), trades: r.cdrk.trades.map(t => ({ sym: t.sym, ksp: t.ksp, klp: t.klp, ksc: t.ksc, klc: t.klc, entryT: t.entryT, pnl: t.pnl, reason: t.reason })), aiOverlayOn: AI_OVERLAY_ON, aiShadow: (r.cdrk.aiShadow || []).slice(-20).map(a => ({ t: a.t, kind: a.kind, sym: a.sym, action: a.decision.action, reason: a.decision.reason })) } : null,
     upd: new Date(P.lastTick || Date.now()).toISOString(), run: { running: !!P.ctl.running }, pos: r.pos ? { sym: r.pos.sym, strike: r.pos.strike, type: r.pos.type, exp: r.pos.exp, entryAsk: r.pos.entryAsk, entryBid: r.pos.entryBid, qty: r.pos.qty || 1, half: r.pos.half || null, peak: r.pos.peak, t0: r.pos.t0, trig: r.pos.trig, live: r.pos.live } : null } : null;
 }
 function liveData() { return { now: Date.now(), run: !!P.ctl.running, market: marketOpen(Date.now()), msg: P.msg, rec: recOut() }; }
