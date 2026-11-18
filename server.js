@@ -11,6 +11,7 @@ const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
 const { StreamableHTTPClientTransport } = require('@modelcontextprotocol/sdk/client/streamableHttp.js');
 const { UnauthorizedError } = require('@modelcontextprotocol/sdk/client/auth.js');
 const Engine = require('./engine.js');
+const Orb15 = require('./orb15.js');
 const AiOverlay = require('./ai_overlay.js');
 
 const PORT = +process.env.PORT || 3000;
@@ -623,20 +624,23 @@ const ORB_ON = process.env.ORB_ON !== '0', ORB_MODE = process.env.ORB_MODE === '
    stop moved to the entry once the trade has gone +0.5R. Out at 15:30 ET. ORB_MODE=5 brings back the old 5-minute version. */
 function orb15Sig(s) {
   const bars = P.bars[s]; if (!bars || !bars.length) return null;
-  const e = nowET(), today = bars.filter(b => b.day === e.day), rng = today.filter(b => b.min >= 570 && b.min <= 584); if (rng.length < 15) return null;
-  const b = today[today.length - 1]; if (b.min < 599 || (b.min - 584) % 15 !== 0 || b.min > 914) return null;
-  const oH = Math.max(...rng.map(x => x.h)), oL = Math.min(...rng.map(x => x.l));
-  for (const x of today) { if (x.t >= b.t) break; if (x.min >= 599 && (x.min - 584) % 15 === 0 && (x.c > oH || x.c < oL)) return null; } // an earlier 15-minute close already broke out
-  const dir = b.c > oH ? 1 : b.c < oL ? -1 : 0; if (!dir) return null;
-  const stopPx = dir > 0 ? oL : oH; if (!(Math.abs(b.c - stopPx) > 0.0001 * b.c)) return null;
-  return { sig: { dir, trig: 'orb5', stopPx, oH, oL }, bar: b };
+  const e = nowET(), today = bars.filter(b => b.day === e.day);
+  return Orb15.find(today); // scans the whole day for the first breakout candle (orb15.js); a stale one is logged as a skip below, not lost silently
 }
 async function orbLook() {
   const r = P.rec; if (!ORB_ON || !r || r.shut || !marketOpen(Date.now())) return;
   r.orbk = r.orbk || { open: [], trades: [], pnl: 0, done: {} };
   for (const s of CFG.syms) {
     let inf = P.info[s], sig = inf && inf.orb5;
-    if (ORB_MODE === '15') { const o = orb15Sig(s); sig = o && o.sig; inf = o ? Object.assign({}, inf, { bar: o.bar }) : inf; }
+    if (ORB_MODE === '15') {
+      const o = orb15Sig(s);
+      if (o && o.incomplete) { // a candle has closed but the 9:30-9:44 range has fewer than 15 one-minute bars: say so once a day instead of staying silent
+        r.orbk.warn = r.orbk.warn || {};
+        if (!r.orbk.warn[s] && !r.orbk.done[s]) { r.orbk.warn[s] = true; logSignal(s, { dir: 0, trig: 'orb5' }, 0, 'skipped', 'orb15: opening range has only ' + o.n + ' of 15 one-minute bars, cannot form the range (retrying each tick)'); saveRec(); }
+        continue;
+      }
+      sig = o && o.sig; inf = o ? Object.assign({}, inf, { bar: o.bar }) : inf;
+    }
     if (!sig || r.orbk.done[s]) continue;
     r.orbk.done[s] = true; // one per symbol per day, taken or skipped
     if (Date.now() - (inf.bar.t + 60000) > 150000) { logSignal(s, sig, inf.bar.c, 'skipped', 'orb5 signal was more than 2 minutes old when seen'); continue; }
@@ -662,7 +666,7 @@ async function manageOrb() {
       const reason = exitReason(p, {}, bid, P.info[p.sym], P.bars[p.sym]);
       if (reason) {
         const pnl = Math.round((bid - p.entryAsk) * 10000) / 100;
-        ob.trades.push({ sym: p.sym, type: p.type, strike: p.strike, exp: p.exp, entryT: iso(p.t0), entryAsk: p.entryAsk, exitT: iso(Date.now()), exitBid: bid, pnl, peakBid: p.peak, reason: reason === 'stop' && p.beT ? 'breakeven' : reason, trig: 'orb5', orbV: p.orbV, qty: 1, entryU: p.entryU, stopU: p.stopU, tgtU: p.tgtU, riskU: p.riskU, entryQAge: p.qAge, exitQAge: p.live.age });
+        ob.trades.push({ sym: p.sym, type: p.type, strike: p.strike, exp: p.exp, entryT: iso(p.t0), entryAsk: p.entryAsk, entryBid: p.entryBid, exitT: iso(Date.now()), exitBid: bid, exitAsk: p.live.ask, spreadIn: Math.round((p.entryAsk - p.entryBid) * 100) / 100, spreadOut: Math.round((p.live.ask - bid) * 100) / 100, delta: p.delta, iv: p.iv, pnl, peakBid: p.peak, reason: reason === 'stop' && p.beT ? 'breakeven' : reason, trig: 'orb5', orbV: p.orbV, qty: 1, entryU: p.entryU, stopU: p.stopU, tgtU: p.tgtU, riskU: p.riskU, entryQAge: p.qAge, exitQAge: p.live.age });
         ob.pnl = Math.round((ob.pnl + pnl) * 100) / 100; ob.open = ob.open.filter(x => x !== p);
       }
     }
