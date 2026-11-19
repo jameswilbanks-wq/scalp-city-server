@@ -83,7 +83,42 @@ t('only logging/diagnostic additions: logSignal still pushes the same row, bookD
 t('pickContract quote-age logging is additive: decision lines unchanged, log wrapped in try/catch', () => {
   assert.ok(src.includes("if (q.updated_at && Date.now() - Date.parse(q.updated_at) > 120000) { stale = true; _ages.push("), 'stale threshold must stay 120000 ms');
   assert.ok(src.includes("return { why: cheapest === null ? (stale ? 'option quotes are stale' : 'no live quotes')"), 'returned reason text must be unchanged');
-  assert.ok(/if \(cheapest === null\) \{ try \{ _ages\.sort[\s\S]*?slog\('quote_check'[\s\S]*?\} catch \(e\) \{\} \}/.test(src), 'quote_check log must be inside try/catch');
+  assert.ok(/\{ try \{ _ages\.sort[\s\S]*?slog\('quote_check'[\s\S]*?\} catch \(e\) \{\} \}/.test(src), 'quote_check log must be inside try/catch');
+  assert.ok(src.includes("if (age > 180000) { slog('quote_check'") && src.includes("logSignal(s, fake, px, 'skipped', 'call spread: quotes are stale'); continue; }"), 'csk stale limit and reason unchanged');
   assert.ok(src.includes('if (ask * 100 > maxPrem) continue;') && src.includes('if ((ask - bid) / ask > CFG.maxSpread) continue;'));
 });
-console.log(pass + ' passed');
+/* ---- quoteSample: read-only option-quote age sampler ---- */
+const qa = src.indexOf('let _qsBusy = false;'), qb = src.indexOf('/* Read-only per-book scan state');
+assert.ok(qa > 0 && qb > qa, 'could not locate quoteSample');
+const qsSrc = src.slice(qa, qb);
+function runSample(o) {
+  const lines = [], calls = [];
+  const f = new Function('S', 'marketOpen', 'CFG', 'P', 'getChain', 'pickExpiry', 'getInst', 'rh', 'slog', qsSrc + '\nreturn quoteSample;');
+  const P = { rec: { signals: [], pos: null }, info: { SPY: { bar: { c: 738.2 } }, QQQ: { bar: { c: 660 } } } }, before = JSON.stringify(P.rec);
+  const fn = f({ connected: o.connected !== false }, () => o.open !== false, { syms: ['SPY', 'QQQ'], dte: 0 }, P, async () => ({}), () => o.noExp ? null : '2026-11-19',
+    async (ch, exp, type) => [736, 737, 738, 739, 740, 741].map(k => ({ id: type + k, strike: k })),
+    async (tool, a) => { calls.push([tool, a.instrument_ids.length]); if (o.fail) throw new Error('boom'); return { results: a.instrument_ids.map(id => id.endsWith('739') ? {} : { quote: { instrument_id: id, bid_price: 0.5, ask_price: 0.52, updated_at: new Date(Date.now() - 30000).toISOString() } }) }; },
+    (tag, x) => lines.push({ tag, x }));
+  return { fn, lines, calls, P, before };
+}
+const asyncQ = []; const ta = (n, f) => asyncQ.push([n, f]);
+ta('quoteSample logs ages for nearest-the-money calls and puts, flags missing quotes, and never touches the journal', async () => {
+  const r = runSample({}); await r.fn();
+  const s = r.lines.filter(l => l.tag === 'quote_sample'); assert.strictEqual(s.length, 2);
+  const spy = s[0].x; assert.strictEqual(spy.sym, 'SPY'); assert.deepStrictEqual(spy.call.map(x => x.k).sort(), [737, 738, 739]);
+  assert.ok(spy.call.find(x => x.k === 739).none && spy.call.find(x => x.k === 738).ageS >= 29 && spy.call.find(x => x.k === 738).spread === 0.02);
+  assert.strictEqual(JSON.stringify(r.P.rec), r.before); assert.ok(r.calls.every(c => c[0] === 'get_option_quotes' && c[1] === 3));
+});
+ta('quoteSample is a no-op when the market is closed or the connection is down, and never throws on a data error', async () => {
+  let r = runSample({ open: false }); await r.fn(); assert.strictEqual(r.lines.length, 0); assert.strictEqual(r.calls.length, 0);
+  r = runSample({ connected: false }); await r.fn(); assert.strictEqual(r.calls.length, 0);
+  r = runSample({ fail: true }); await r.fn(); assert.strictEqual(r.lines[0].tag, 'quote_sample_error');
+  r = runSample({ noExp: true }); await r.fn(); assert.strictEqual(r.lines.length, 0);
+});
+t('quoteSample code has no order, journal-write or logSignal calls', () => {
+  assert.ok(!/closePaper|alpacaBuy|alpacaSell|apTrade|saveRec|logSignal|\.push\(/.test(qsSrc.replace(/\(qd\.results \|\| \[\]\)\.forEach[^\n]*/, '')), 'sampler must be read-only');
+});
+(async () => {
+  for (const [n, f] of asyncQ) { try { await f(); pass++; console.log('ok   ' + n); } catch (e) { console.error('FAIL ' + n + '\n' + (e && e.stack || e)); process.exitCode = 1; } }
+  console.log(pass + ' passed');
+})();

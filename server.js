@@ -490,7 +490,7 @@ async function pickContract(sym, dir, px, maxPrem) {
     if (CFG.usd && (ask - bid) * 100 > CFG.usd.maxSpread) continue;
     return { qAge: q.updated_at ? Date.now() - Date.parse(q.updated_at) : null, inst: k.id, strike: k.strike, exp, type, ask, bid, iv: +q.implied_volatility || null, delta: +q.delta || null };
   }
-  if (cheapest === null) { try { _ages.sort((a, b) => a - b); slog('quote_check', { sym, type, exp, candidates: c.length, noQuote: _noq, staleN: _ages.length, ageS: _ages.length ? { min: _ages[0], med: _ages[_ages.length >> 1], max: _ages[_ages.length - 1] } : null, result: stale ? 'stale' : 'no live quotes' }); } catch (e) {} }
+  { try { _ages.sort((a, b) => a - b); slog('quote_check', { sym, type, exp, candidates: c.length, noQuote: _noq, staleN: _ages.length, staleAgeS: _ages.length ? { min: _ages[0], med: _ages[_ages.length >> 1], max: _ages[_ages.length - 1] } : null, freshN: c.length - _noq - _ages.length, cheapestAsk: cheapest, result: cheapest === null ? (stale ? 'stale' : 'no live quotes') : 'filtered by premium/spread' }); } catch (e) {} }
   return { why: cheapest === null ? (stale ? 'option quotes are stale' : 'no live quotes') : 'nothing near the money under $' + maxPrem + ' with a tight spread (cheapest ask $' + (cheapest * 100).toFixed(0) + ')' };
 }
 
@@ -727,7 +727,7 @@ async function cskLook() {
       const q = await cskQuotes([sh.id, lg.id]), a = q[sh.id], b = q[lg.id];
       if (!a || !b) { logSignal(s, fake, px, 'skipped', 'call spread: no quotes'); continue; }
       const age = Math.max(Date.now() - Date.parse(a.updated_at || 0), Date.now() - Date.parse(b.updated_at || 0));
-      if (age > 180000) { logSignal(s, fake, px, 'skipped', 'call spread: quotes are stale'); continue; }
+      if (age > 180000) { slog('quote_check', { sym: s, book: 'csk', exp: today, ageS: Math.round(age / 1000), result: 'stale' }); logSignal(s, fake, px, 'skipped', 'call spread: quotes are stale'); continue; }
       const sB = +a.bid_price, sA = +a.ask_price, lB = +b.bid_price, lA = +b.ask_price, nat = Math.round((sB - lA) * 100) / 100, mid = Math.round(((sB + sA) / 2 - (lB + lA) / 2) * 1000) / 1000;
       if (!(nat >= 0.03)) { logSignal(s, fake, px, 'skipped', 'call spread: credit under 3 cents at the bid/ask (' + nat.toFixed(2) + ', mid ' + mid.toFixed(2) + ')'); continue; }
       const width = lg.strike - sh.strike, addRisk = Math.max(0, width * 100 - nat * 100);
@@ -1202,6 +1202,27 @@ async function tick() {
     P.tickErr = String((e && (e.code || e.message)) || e).slice(0, 160);
     P.msg = 'Could not check the market this round (' + P.tickErr + '). Retrying.';
   } finally { P.busy = false; P.busySince = 0; P.stage = ''; noteMsg(); }
+}
+/* Read-only sampler (logging only): once a minute while the market is open, fetch the quotes of the few nearest-the-money SPY and QQQ
+   options with the same chain/expiry/quote calls pickContract uses, and log their ages. Shows whether and when the option feed goes
+   stale without waiting for a signal. Never touches P.rec, never places or sizes anything, never throws, one sample in flight at a time. */
+let _qsBusy = false;
+async function quoteSample() {
+  if (_qsBusy || !S.connected || !marketOpen(Date.now())) return; _qsBusy = true;
+  try {
+    for (const s of CFG.syms) {
+      const inf = P.info[s], px = inf && inf.bar && inf.bar.c; if (!(px > 0)) continue;
+      const ch = await getChain(s), exp = pickExpiry(ch, CFG.dte); if (!exp) continue;
+      const out = { sym: s, exp, px };
+      for (const type of ['call', 'put']) {
+        const list = await getInst(ch, exp, type), c = list.slice().sort((a, b) => Math.abs(a.strike - px) - Math.abs(b.strike - px)).slice(0, 3); if (!c.length) continue;
+        const qd = await rh('get_option_quotes', { instrument_ids: c.map(x => x.id) }), byId = {};
+        (qd.results || []).forEach(r => { if (r.quote) byId[r.quote.instrument_id] = r.quote; });
+        out[type] = c.map(k => { const q = byId[k.id]; return q ? { k: k.strike, ageS: q.updated_at ? Math.round((Date.now() - Date.parse(q.updated_at)) / 1000) : null, spread: +(q.ask_price - q.bid_price).toFixed(2) } : { k: k.strike, none: true }; });
+      }
+      slog('quote_sample', out);
+    }
+  } catch (e) { slog('quote_sample_error', { e: String((e && (e.code || e.message)) || e).slice(0, 100) }); } finally { _qsBusy = false; }
 }
 /* Read-only per-book scan state for the heartbeat and the dashboard. It mirrors each book's own time-window gate (same constants)
    but never changes any state and never decides anything; it only says why a book is quiet: off, outside its window, done for
@@ -1714,7 +1735,7 @@ function load(){api('/api/status').then(function(x){s=x;draw()}).catch(function(
   { const w = await kget('watch'); if (Array.isArray(w) && w.length) WATCH = w; }
   await connect();
   setInterval(() => { tick(); }, TICK_MS);
-  setInterval(heartbeat, 60000); setTimeout(heartbeat, 5000);
+  setInterval(heartbeat, 60000); setTimeout(heartbeat, 5000); setInterval(() => { quoteSample(); }, 60000);
   slog('boot', { alpacaData: USE_ALPACA, db: !!pool, tickMs: TICK_MS, running: !!P.ctl.running, node: process.version });
   setInterval(() => { fastPos(); }, FAST_MS);
   setInterval(() => { if (!S.connected && !S.connecting && !S.needsLogin) connect(); }, 60000);
