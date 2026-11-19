@@ -2283,7 +2283,12 @@ var Web={dayArm:0,timer:null,key:'',trades:[],armed:0,last:null,
   apply:function(d){
     Web.syncWatch(d);
     Web.last=d;SCORE=d.score||SCORE;if(S.board)renderScore();
-    setStatus('live',d.run?'SERVER · PAPER RUNNING':'SERVER · PAPER STOPPED');
+    (function(){var h=d.health||{},ago=h.lastTick?Math.round((d.now-h.lastTick)/1000):null,bk=h.books||{},tip='';
+      try{['orb','csk','x9','fp','cdr'].forEach(function(k){if(bk[k])tip+=k.toUpperCase()+': '+bk[k].state+' · open '+bk[k].open+' · closed '+bk[k].closed+'\n'});if(bk.lastSignal)tip+='Last signal: '+bk.lastSignal.sym+' '+bk.lastSignal.trig+' '+bk.lastSignal.action+' '+bk.lastSignal.why}catch(e){}
+      if(h.tickErr)setStatus('bad','SERVER DATA ERROR · '+String(h.tickErr).slice(0,60));
+      else if(d.run&&d.market&&(ago===null||ago>90))setStatus('bad','SERVER NOT SCANNING · LAST CHECK '+(ago===null?'NEVER':ago+'s AGO'));
+      else setStatus('live',(d.run?'SERVER · PAPER RUNNING':'SERVER · PAPER STOPPED')+(d.run&&d.market&&ago!==null?' · SCANNED '+ago+'s AGO':''));
+      try{$('status').title=tip}catch(e){}})();
     Object.keys(d.bars||{}).forEach(function(sym){
       var b=d.bars[sym];if(!b||!b.length)return;
       var a=analyze(b);A[sym]=a;

@@ -423,6 +423,7 @@ function heartbeat() {
       busyS: P.busySince ? Math.round((Date.now() - P.busySince) / 1000) : 0, lastTickAgoS: P.lastTick ? Math.round((Date.now() - P.lastTick) / 1000) : null,
       msg: P.msg, tickErr: P.tickErr, saveErr: P.saveErr,
       bookErr: { fp: P.fpErr || '', x9: P.x9Err || '', csk: P.cskErr || '', cdr: P.cdrErr || '', wheel2Csp: P.wheel2CspErr || '', orb: P.orbErr || '', vt: P.vtErr || '' },
+      books: (typeof bookDiag === 'function') ? bookDiag() : null,
       scanBars, day: rec.day || null, trades: (rec.trades || []).length, shut: rec.shut || '',
       open: { main: !!rec.pos, orbk: n('orbk'), csk: n('csk'), x9k: n('x9k'), fpk: n('fpk'), cdrk: n('cdrk') } });
   } catch (e) { slog('heartbeat_error', { e: String((e && e.message) || e).slice(0, 100) }); }
@@ -505,6 +506,7 @@ function saveRec() {
 function logSignal(sym, sig, px, action, why) {
   P.rec.signals.push({ t: iso(Date.now()), sym, dir: sig.dir, trig: sig.trig, px, action, why: why || '' });
   if (P.rec.signals.length > 80) P.rec.signals.shift();
+  slog('signal', { sym, trig: sig.trig, dir: sig.dir, px, action, why: why || '' }); // logging only
 }
 function shutCheck() {
   const r = P.rec;
@@ -1200,6 +1202,27 @@ async function tick() {
     P.msg = 'Could not check the market this round (' + P.tickErr + '). Retrying.';
   } finally { P.busy = false; P.busySince = 0; P.stage = ''; noteMsg(); }
 }
+/* Read-only per-book scan state for the heartbeat and the dashboard. It mirrors each book's own time-window gate (same constants)
+   but never changes any state and never decides anything; it only says why a book is quiet: off, outside its window, done for
+   the day, or evaluated with no signal. Wrapped so it can never throw. */
+function bookDiag() {
+  try {
+    const r = P.rec; if (!r) return null; const e = nowET(), m = e.min, open = marketOpen(Date.now());
+    const cnt = k => ((r[k] || {}).open || []).length, closed = k => ((r[k] || {}).trades || []).length;
+    const sigs = (r.signals || []), by = {}; sigs.forEach(s => { by[s.action] = (by[s.action] || 0) + 1; });
+    const last = sigs.length ? sigs[sigs.length - 1] : null;
+    const win = (on, a, b) => !on ? 'off' : (!open ? 'market closed' : (r.shut ? 'shut:' + r.shut : (m >= a && m <= b ? 'in window' : 'outside window')));
+    return {
+      etMin: m, signals: by, lastSignal: last ? { t: last.t, sym: last.sym, trig: last.trig, action: last.action, why: String(last.why || '').slice(0, 140) } : null,
+      main: { open: !!r.pos, closed: (r.trades || []).length, state: r.shut ? 'shut:' + r.shut : (r.pos ? 'managing a position' : 'scanning') },
+      orb: { state: win(ORB_ON, 570, 960), mode: ORB_MODE, done: Object.keys(((r.orbk || {}).done) || {}), warn: Object.keys(((r.orbk || {}).warn) || {}), open: cnt('orbk'), closed: closed('orbk') },
+      csk: { state: win(CSK_ON, CSK.min, CSK.min + 19), window: [CSK.min, CSK.min + 19], done: Object.keys(((r.csk || {}).done) || {}), open: cnt('csk'), closed: closed('csk') },
+      x9: { state: win(X9_ON, 585, 930), window: [585, 930], open: cnt('x9k'), closed: closed('x9k') },
+      fp: { state: win(FP_ON, 571, 660), window: [571, 660], open: cnt('fpk'), closed: closed('fpk') },
+      cdr: { state: (r.cdrk && r.cdrk.haltedToday) ? 'halted today' : win(CDR_ON, CDR.entryFrom, CDR.entryTo), window: [CDR.entryFrom, CDR.entryTo], done: Object.keys(((r.cdrk || {}).done) || {}), open: cnt('cdrk'), closed: closed('cdrk') },
+    };
+  } catch (err) { return { error: String((err && err.message) || err).slice(0, 100) }; }
+}
 async function manualClose() {
   const p = P.rec && P.rec.pos; if (!p) return { ok: false, error: 'no open position' };
   if (P.busy) await new Promise(r => setTimeout(r, 1500));
@@ -1282,7 +1305,7 @@ async function cityData(want) {
     .concat((x.value.fpk && x.value.fpk.trades) || [])
     .concat((x.value.cdrk && x.value.cdrk.trades) || [])
     .filter(t => t.exitT || t.exitBid != null).map(t => ({ t: Date.parse(t.exitT || t.entryT), sym: t.sym, pnl: +t.pnl || 0, strat: t.trig + (t.run ? ' run' : '') })) }));
-  return Object.assign(liveData(), { bars, days, watch: WATCH, score });
+  return Object.assign(liveData(), { bars, days, watch: WATCH, score, health: { lastTick: P.lastTick, tickErr: P.tickErr, saveErr: P.saveErr, busyS: P.busySince ? Math.round((Date.now() - P.busySince) / 1000) : 0, books: bookDiag() } });
 }
 
 /* ---------- web: dashboard + API ---------- */

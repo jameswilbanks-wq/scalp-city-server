@@ -47,4 +47,37 @@ t('the instrumented tick() releases the busy flag in finally and the logging blo
   assert.ok(/finally \{ P\.busy = false; P\.busySince = 0; P\.stage = ''; noteMsg\(\); \}/.test(tk));
   assert.ok(!/closePaper|alpacaBuy|alpacaSell|placeOrder|apTrade/.test(body), 'logging block must not place or close trades');
 });
+/* ---- bookDiag: read-only per-book scan state ---- */
+const da = src.indexOf('function bookDiag()'), db = src.indexOf('\nasync function manualClose()');
+assert.ok(da > 0 && db > da, 'could not locate bookDiag');
+const diagSrc = src.slice(da, db);
+function diag(rec, min, open, over) {
+  const cfg = Object.assign({ ORB_ON: true, ORB_MODE: '15', CSK_ON: true, X9_ON: true, FP_ON: true, CDR_ON: true }, over || {});
+  const f = new Function('P', 'nowET', 'marketOpen', 'ORB_ON', 'ORB_MODE', 'CSK_ON', 'CSK', 'X9_ON', 'FP_ON', 'CDR_ON', 'CDR', diagSrc + '\nreturn bookDiag();');
+  return f({ rec }, () => ({ min }), () => open, cfg.ORB_ON, cfg.ORB_MODE, cfg.CSK_ON, { min: 660 }, cfg.X9_ON, cfg.FP_ON, cfg.CDR_ON, { entryFrom: 640, entryTo: 750 });
+}
+const rec0 = () => ({ trades: [], signals: [], orbk: { open: [], trades: [], done: { SPY: true } }, csk: { open: [], trades: [], done: {} }, cdrk: { open: [], trades: [], done: {}, haltedToday: false } });
+t('bookDiag says why each book is quiet: in window, outside window, market closed, off, shut, halted', () => {
+  let d = diag(rec0(), 600, true); assert.strictEqual(d.fp.state, 'in window'); assert.strictEqual(d.csk.state, 'outside window'); assert.strictEqual(d.cdr.state, 'outside window'); assert.deepStrictEqual(d.orb.done, ['SPY']);
+  d = diag(rec0(), 670, true); assert.strictEqual(d.csk.state, 'in window'); assert.strictEqual(d.cdr.state, 'in window'); assert.strictEqual(d.fp.state, 'outside window');
+  assert.strictEqual(diag(rec0(), 700, false).x9.state, 'market closed');
+  assert.strictEqual(diag(rec0(), 700, true, { X9_ON: false }).x9.state, 'off');
+  const s = rec0(); s.shut = 'stopped by you'; assert.strictEqual(diag(s, 700, true).fp.state, 'shut:stopped by you');
+  const h = rec0(); h.cdrk.haltedToday = true; assert.strictEqual(diag(h, 700, true).cdr.state, 'halted today');
+});
+t('bookDiag reports signals by action, the last signal, open and closed counts, and never mutates the record', () => {
+  const r = rec0(); r.signals = [{ t: 'a', sym: 'SPY', trig: 'orb5', action: 'skipped', why: 'x'.repeat(300) }, { t: 'b', sym: 'QQQ', trig: 'cspread', action: 'taken', why: '' }];
+  r.orbk.open = [1]; r.fpk = { open: [], trades: [1, 2] }; const before = JSON.stringify(r);
+  const d = diag(r, 700, true);
+  assert.deepStrictEqual(d.signals, { skipped: 1, taken: 1 }); assert.strictEqual(d.lastSignal.sym, 'QQQ'); assert.strictEqual(d.orb.open, 1); assert.strictEqual(d.fp.closed, 2); assert.strictEqual(JSON.stringify(r), before);
+  r.signals.reverse(); assert.ok(diag(r, 700, true).lastSignal.why.length <= 140);
+});
+t('bookDiag never throws and returns null with no record', () => {
+  assert.strictEqual(diag(null, 700, true), null);
+  const d = diag({ signals: 5, orbk: 3 }, 700, true); assert.ok(d === null || typeof d === 'object');
+});
+t('only logging/diagnostic additions: logSignal still pushes the same row, bookDiag has no writes', () => {
+  assert.ok(/P\.rec\.signals\.push\(\{ t: iso\(Date\.now\(\)\), sym, dir: sig\.dir, trig: sig\.trig, px, action, why: why \|\| '' \}\);/.test(src));
+  assert.ok(!/\.push\(|\bdelete\b|saveRec|logSignal\(/.test(diagSrc.replace(/sigs\.forEach[^\n]*/, '')), 'bookDiag must not write');
+});
 console.log(pass + ' passed');
