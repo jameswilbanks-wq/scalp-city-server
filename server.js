@@ -479,10 +479,10 @@ async function pickContract(sym, dir, px, maxPrem) {
   if (!c.length) return { why: 'no strikes near the price' };
   const qd = await rh('get_option_quotes', { instrument_ids: c.map(x => x.id) }), byId = {};
   (qd.results || []).forEach(r => { if (r.quote) byId[r.quote.instrument_id] = r.quote; });
-  let cheapest = null, stale = false;
+  let cheapest = null, stale = false; const _ages = [], _noq = c.filter(k => !byId[k.id]).length; // _ages/_noq: logging only
   for (const k of c) {
     const q = byId[k.id]; if (!q) continue;
-    if (q.updated_at && Date.now() - Date.parse(q.updated_at) > 120000) { stale = true; continue; }
+    if (q.updated_at && Date.now() - Date.parse(q.updated_at) > 120000) { stale = true; _ages.push(Math.round((Date.now() - Date.parse(q.updated_at)) / 1000)); continue; }
     const ask = +q.ask_price, bid = +q.bid_price; if (!(ask > 0 && bid > 0)) continue;
     if (cheapest === null || ask < cheapest) cheapest = ask;
     if (ask * 100 > maxPrem) continue;
@@ -490,6 +490,7 @@ async function pickContract(sym, dir, px, maxPrem) {
     if (CFG.usd && (ask - bid) * 100 > CFG.usd.maxSpread) continue;
     return { qAge: q.updated_at ? Date.now() - Date.parse(q.updated_at) : null, inst: k.id, strike: k.strike, exp, type, ask, bid, iv: +q.implied_volatility || null, delta: +q.delta || null };
   }
+  if (cheapest === null) { try { _ages.sort((a, b) => a - b); slog('quote_check', { sym, type, exp, candidates: c.length, noQuote: _noq, staleN: _ages.length, ageS: _ages.length ? { min: _ages[0], med: _ages[_ages.length >> 1], max: _ages[_ages.length - 1] } : null, result: stale ? 'stale' : 'no live quotes' }); } catch (e) {} }
   return { why: cheapest === null ? (stale ? 'option quotes are stale' : 'no live quotes') : 'nothing near the money under $' + maxPrem + ' with a tight spread (cheapest ask $' + (cheapest * 100).toFixed(0) + ')' };
 }
 

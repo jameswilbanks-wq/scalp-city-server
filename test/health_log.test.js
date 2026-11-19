@@ -80,4 +80,10 @@ t('only logging/diagnostic additions: logSignal still pushes the same row, bookD
   assert.ok(/P\.rec\.signals\.push\(\{ t: iso\(Date\.now\(\)\), sym, dir: sig\.dir, trig: sig\.trig, px, action, why: why \|\| '' \}\);/.test(src));
   assert.ok(!/\.push\(|\bdelete\b|saveRec|logSignal\(/.test(diagSrc.replace(/sigs\.forEach[^\n]*/, '')), 'bookDiag must not write');
 });
+t('pickContract quote-age logging is additive: decision lines unchanged, log wrapped in try/catch', () => {
+  assert.ok(src.includes("if (q.updated_at && Date.now() - Date.parse(q.updated_at) > 120000) { stale = true; _ages.push("), 'stale threshold must stay 120000 ms');
+  assert.ok(src.includes("return { why: cheapest === null ? (stale ? 'option quotes are stale' : 'no live quotes')"), 'returned reason text must be unchanged');
+  assert.ok(/if \(cheapest === null\) \{ try \{ _ages\.sort[\s\S]*?slog\('quote_check'[\s\S]*?\} catch \(e\) \{\} \}/.test(src), 'quote_check log must be inside try/catch');
+  assert.ok(src.includes('if (ask * 100 > maxPrem) continue;') && src.includes('if ((ask - bid) / ask > CFG.maxSpread) continue;'));
+});
 console.log(pass + ' passed');
