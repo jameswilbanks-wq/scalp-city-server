@@ -147,3 +147,7 @@ Never echo pasted Alpaca/Anthropic API keys or secrets in plaintext anywhere in 
 3. Check today's journal: `SELECT value FROM scalp.kv WHERE key = 'rec:YYYY-MM-DD'` (NY date), project `rmktbayxhplkuonifxfw`.
 4. Confirm no open positions before pushing any code/config change during market hours.
 5. After any change, update the relevant file(s) in `docs/` AND add a `notes` entry in Supabase — both, not just one.
+
+## Health logging (added 2026-11-19, observability only)
+
+`server.js` writes one JSON log line per minute (`"tag":"heartbeat"`) plus `boot`, `new_day`, `status` (on change) and `tick_skipped_busy` lines. Search Render logs for `heartbeat`. Fields: `stage` and `busyS` (where a stuck tick is), `lastTickAgoS` (null = loop never ran), `bookErr` (per-book error text), `scanBars` (bars per ticker), `open` (open positions per book). A repeated `status` line containing `alpaca 401` means the Alpaca data keys in Render env (`ALPACA_KEY_ID`/`ALPACA_SECRET`) are invalid, as happened 2026-11-19 after the keys were regenerated. No trading logic changed; test: `node test/health_log.test.js`.

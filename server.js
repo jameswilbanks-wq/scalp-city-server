@@ -411,6 +411,22 @@ function marketOpen(ms) {
 }
 let WATCH = null; // tower list shared by every device (null = never set)
 const P = { raw: {}, bars: {}, info: {}, chain: {}, inst: {}, seenSig: {}, rec: null, ctl: { running: false }, lastTick: 0, msg: 'Starting', busy: false, tickErr: '', saveErr: '' };
+/* ---------- observability: logging only, no trading logic. Everything is wrapped so a logging failure can never affect a tick. ---------- */
+function slog(tag, o) { try { console.log(JSON.stringify(Object.assign({ t: new Date().toISOString(), tag }, o || {}))); } catch (e) { /* never throw from logging */ } }
+let _msgKey = '', _busyWarnAt = 0;
+function noteMsg() { try { const k = String(P.msg || '').replace(/\d\d:\d\d:\d\d/, 'hh:mm:ss'); if (k !== _msgKey) { _msgKey = k; slog('status', { msg: P.msg }); } } catch (e) {} }
+function heartbeat() {
+  try {
+    const rec = P.rec || {}, n = k => ((rec[k] || {}).open || []).length, scanBars = {};
+    (P.scan || []).forEach(s => { scanBars[s] = P.bars[s] ? P.bars[s].length : 0; });
+    slog('heartbeat', { running: !!(P.ctl && P.ctl.running), market: marketOpen(Date.now()), connected: !!S.connected, busy: !!P.busy, stage: P.stage || '',
+      busyS: P.busySince ? Math.round((Date.now() - P.busySince) / 1000) : 0, lastTickAgoS: P.lastTick ? Math.round((Date.now() - P.lastTick) / 1000) : null,
+      msg: P.msg, tickErr: P.tickErr, saveErr: P.saveErr,
+      bookErr: { fp: P.fpErr || '', x9: P.x9Err || '', csk: P.cskErr || '', cdr: P.cdrErr || '', wheel2Csp: P.wheel2CspErr || '', orb: P.orbErr || '', vt: P.vtErr || '' },
+      scanBars, day: rec.day || null, trades: (rec.trades || []).length, shut: rec.shut || '',
+      open: { main: !!rec.pos, orbk: n('orbk'), csk: n('csk'), x9k: n('x9k'), fpk: n('fpk'), cdrk: n('cdrk') } });
+  } catch (e) { slog('heartbeat_error', { e: String((e && e.message) || e).slice(0, 100) }); }
+}
 
 async function pBars(sym, ext) {
   const now = Date.now(); let st = P.raw[sym];
@@ -1139,7 +1155,8 @@ async function lookForEntry() {
   saveRec();
 }
 async function tick() {
-  if (P.busy) return; P.busy = true;
+  if (P.busy) { if (Date.now() - _busyWarnAt > 60000) { _busyWarnAt = Date.now(); slog('tick_skipped_busy', { stage: P.stage || '', busyS: P.busySince ? Math.round((Date.now() - P.busySince) / 1000) : 0 }); } return; }
+  P.busy = true; P.busySince = Date.now(); P.stage = 'start';
   try {
     P.lastTick = Date.now();
     const day = nowET().day;
@@ -1148,7 +1165,7 @@ async function tick() {
         if (P.rec.pos.trig === 'sweep' && P.rec.pos.real) { try { await alpacaSell1(P.rec.pos.inst, P.rec.pos.qty || 1, 'sweep-flatten-eod-' + Date.now()); } catch (e) { /* best effort: log the gap below either way */ } }
         P.rec.trades.push({ sym: P.rec.pos.sym, type: P.rec.pos.type, strike: P.rec.pos.strike, exp: P.rec.pos.exp, entryT: iso(P.rec.pos.t0), entryAsk: P.rec.pos.entryAsk, exitBid: null, pnl: 0, reason: 'unmanaged: left open overnight (paper)', unmanaged: true }); P.rec.pos = null; await saveRec();
       }
-      P.seenSig = {}; await loadDay(day);
+      P.stage = 'loadDay'; P.seenSig = {}; await loadDay(day); slog('new_day', { day });
     }
     // limits are off for paper: lift any automatic stop-for-the-day left in today's journal (keeps the manual one)
     if (process.env.ENFORCE_LIMITS !== '1' && P.rec && ['trades', 'losers', 'loss', 'target'].includes(P.rec.shut)) { P.rec.shut = ''; saveRec(); }
@@ -1162,11 +1179,12 @@ async function tick() {
     if (!open && !ext) { P.msg = 'Market closed. Running and waiting for the open.'; return; }
     P.scan = open ? CFG.syms : EXT_SYMS;
     for (const s of P.scan) {
+      P.stage = 'bars:' + s;
       const bars = await pBars(s, !open);
       if (bars.length >= 60) { P.bars[s] = bars; P.info[s] = Engine.latest(bars, Object.assign({ emaFilter: EMA_FILTER }, TRIG_CFG, open ? {} : ext.cfg)); }
     }
-    if (P.rec.pos) await managePos();
-    await manageShadows();
+    P.stage = 'manage'; if (P.rec.pos) await managePos();
+    P.stage = 'books'; await manageShadows();
     try { if (open) await fpLook(); await fpManage(); } catch (e) { P.fpErr = String(e && e.message || e).slice(0, 120); }
     try { if (open) await x9Look(); await x9Manage(); } catch (e) { P.x9Err = String(e && e.message || e).slice(0, 120); }
     try { if (open) await cskLook(); await cskManage(); } catch (e) { P.cskErr = String(e && e.message || e).slice(0, 120); }
@@ -1174,13 +1192,13 @@ async function tick() {
     try { if (open) await wheel2CspTick(); } catch (e) { P.wheel2CspErr = String(e && e.message || e).slice(0, 120); }
     if (open) { try { await orbLook(); await manageOrb(); } catch (e) { P.orbErr = String(e && e.message || e).slice(0, 120); } } else { try { await manageOrb(); } catch (e) {} }
     if (open) { try { await vtTick(); } catch (e) { P.vtErr = String(e && e.message || e).slice(0, 120); } }
-    if (!P.rec.pos && !P.rec.shut) await lookForEntry();
+    P.stage = 'entry'; if (!P.rec.pos && !P.rec.shut) await lookForEntry();
     P.msg = P.rec.shut ? 'Done for the day (' + P.rec.shut + ').' : (ext ? 'Extended hours (' + ext.name + '-market): scanning ' + EXT_SYMS.join(', ') + '. Last check ' : 'Running. Last check ') + new Date().toISOString().slice(11, 19) + ' UTC.';
     P.tickErr = '';
   } catch (e) {
     P.tickErr = String((e && (e.code || e.message)) || e).slice(0, 160);
     P.msg = 'Could not check the market this round (' + P.tickErr + '). Retrying.';
-  } finally { P.busy = false; }
+  } finally { P.busy = false; P.busySince = 0; P.stage = ''; noteMsg(); }
 }
 async function manualClose() {
   const p = P.rec && P.rec.pos; if (!p) return { ok: false, error: 'no open position' };
@@ -1672,6 +1690,8 @@ function load(){api('/api/status').then(function(x){s=x;draw()}).catch(function(
   { const w = await kget('watch'); if (Array.isArray(w) && w.length) WATCH = w; }
   await connect();
   setInterval(() => { tick(); }, TICK_MS);
+  setInterval(heartbeat, 60000); setTimeout(heartbeat, 5000);
+  slog('boot', { alpacaData: USE_ALPACA, db: !!pool, tickMs: TICK_MS, running: !!P.ctl.running, node: process.version });
   setInterval(() => { fastPos(); }, FAST_MS);
   setInterval(() => { if (!S.connected && !S.connecting && !S.needsLogin) connect(); }, 60000);
   server.listen(PORT, () => console.log('listening on ' + PORT + ' paper mode, running=' + P.ctl.running));
