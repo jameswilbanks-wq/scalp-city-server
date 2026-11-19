@@ -1,6 +1,6 @@
 # STRATEGY_REGISTRY.md — Scalp City
 
-Last updated: 2026-11-19 (ORPB `bt29` section added).
+Last updated: 2026-11-19 (ORPB `bt29` and RB15 `bt28` results; Sweep variants study `bt30` noted).
 
 Specifications, versions, status, and results for every strategy. Rationale/approval dates are in DECISIONS.md; backtest detail is in EXPERIMENT_LOG.md; limits/suspension rules are in RISK_POLICY.md.
 
@@ -65,6 +65,7 @@ Scope was James's explicit choice on 2026-11-14: CDR only (not Sweep or CSK), sh
 **Status:** the only active main-book trigger as of 2026-11-13 (EMA/VWAP/15-min-break retired, see below). One position at a time on the main book; cools down after a stop. Subject to the cross-book correlation cap above. 2026-11-18 live review: healthy, no change proposed or made.
 **Per-symbol split (`bt8`, the live "run" exit, read 2026-11-18):** QQQ train n=863 avg $0.18/trade PF 1.02 → lock n=308 avg **-$2.67**/trade PF 0.81. SPY train n=1083 avg $0.70/trade PF 1.08 → lock n=473 avg **-$3.44**/trade PF 0.63. **Both symbols go negative in the lock/holdout period under the exit currently live.** QQQ is "less negative" than SPY, so there's no case here for isolating toward SPY, but neither symbol shows a real edge in this split — flagged as a blocker (see PROJECT_STATE.md) for a closer look, not yet investigated further.
 **Results:** see EXPERIMENT_LOG.md (bt, bt3, bt4, bt8).
+**Live forward paper, 2026-11-11 to 2026-11-19 (main-book "run" trades, read from the `rec:` rows; small sample):** 41 trades, 15 winners (37%), -$208 (avg win +$26.7, avg loss -$23.4); 0DTE calls 22 trades -$328, puts 16 trades +$111; 2026-11-19 alone 6 trades, 1 winner, -$216 (wider wicks: stop distances $0.65-$1.72 vs $0.10-$0.50 earlier, so larger dollar losses at one contract). **2026-11-19:** James asked how to improve it; he approved the read-only study `bt30` (fade, wick-size cap, with-trend filters; `sweep-variants-study-spec.md`) and chose to leave the live pilot as is for now. No rule change.
 
 ## EMA cross (main book) — RETIRED 2026-11-13
 
@@ -95,7 +96,7 @@ Never had a real edge in any study (`bt`, `bt2`). Retired alongside EMA.
 
 ## RB15 — ORB15 options-expression study `bt28` — STUDY ONLY, NOT A BOOK
 
-**Status (2026-11-19):** read-only study approved by James; code built and wired as a one-time post-boot run; results pending (update this section and EXPERIMENT_LOG after the run). No book exists, no live behavior changes. "RB15" is a placeholder name. Spec: `rb15-expression-study-spec.md`.
+**Status (2026-11-19):** read-only study approved by James, built and run (finished 2026-11-19 21:23Z, 0 errors). **FAILED the pre-registered criteria; no advance, no book, ORB15 continues unchanged.** Control reproduced `bt13` exactly; B (debit vertical) is negative at $0.03 in train and lock on both symbols; C (next-expiry single leg) is slightly positive but its intervals include zero and it fails PF >= 1.10 on QQQ lock, beating A, and the drop-best-5 check. Numbers in EXPERIMENT_LOG `bt28`. No book exists, no live behavior changes. "RB15" is a placeholder name. Spec: `rb15-expression-study-spec.md`.
 **Why a study, not a book:** a second ORB book on the same signal, symbols and time would just double the same bet. The only new question is the options expression of the same trades.
 **Variants (signal, entry, stop, 1.25R target, +0.5R break-even and 15:30 flat identical, copied from `bt13`'s e15 path):** A (control) ATM single leg, same-day expiry. B 0DTE debit vertical: buy ATM, sell the strike $2 further out in the trade direction. C ATM single leg, next listed weekday expiry (Friday uses Monday), still flat 15:30 the same day. SPY and QQQ, 2024-03-01 to latest.
 **Costs:** $0.01, $0.03, $0.05 per leg per fill (B pays 4 fills); pass judged at $0.03. Historical option bars have no bid/ask.
@@ -105,9 +106,9 @@ Never had a real edge in any study (`bt`, `bt2`). Retired alongside EMA.
 **Pass criteria (pre-registered, all required):** control reproduces; at $0.03 avg > 0 and PF >= 1.10 in train and lock on both symbols; beats A in both periods on both symbols; lock n >= 100 per symbol; positive with the best 5 trades removed; fits the cap (above). A pass whose bootstrap interval includes zero is "unproven": at most forward paper shadow, never live. If neither passes, both are recorded as failed and ORB15 continues unchanged.
 **Not authorized by this study:** any new book, env flag, sizing or live change.
 
-## ORPB — opening-range breakout + 2-minute 20-EMA pullback (`bt29`) — STAGE 0 STUDY ONLY, NOT A BOOK
+## ORPB — opening-range breakout + 2-minute 20-EMA pullback (`bt29`) — STAGE 0 FAILED 2026-11-19, NOT ADVANCING
 
-**Status: approved by James 2026-11-19 as a read-only underlying-price Stage 0 study (SPY/QQQ, no options, no money, no effect on any live book). Built and deployed; results pending (kv `bt29`, progress `bt29p`).** Working name "ORPB" is a placeholder. Source: a short Instagram reel (flexingjoetrades, Nasdaq futures); its payout banners are social proof, not evidence, and no backtest was shown. Spec: `orpb-signal-study-spec.md`. Harness: `orpb.js` (pure) + `study_orpb.js`; test `test/orpb_smoke.test.js` (synthetic data only).
+**Status: approved by James 2026-11-19 as a read-only underlying-price Stage 0 study (SPY/QQQ, no options, no money, no effect on any live book). Built, deployed and run (finished 2026-11-19 21:50Z, 0 errors): FAILED Stage 0 on both symbols (criteria 1-5 all false; criterion 6 not raised). No Stage 1, no book.** Numbers in EXPERIMENT_LOG `bt29` and kv `bt29`; the primary config lost in dev and holdout on both symbols after costs, and the naive same-trigger baseline beat it in dev. Working name "ORPB" is a placeholder. Source: a short Instagram reel (flexingjoetrades, Nasdaq futures); its payout banners are social proof, not evidence, and no backtest was shown. Spec: `orpb-signal-study-spec.md`. Harness: `orpb.js` (pure) + `study_orpb.js`; test `test/orpb_smoke.test.js` (synthetic data only).
 
 **Rule as pre-registered (inferred pieces flagged in the spec):** range = 9:30-9:59 ET high/low (needs 25 of 30 minute bars); trigger = first 10-minute candle (starting at or after 10:00, last start 14:30) closing beyond the range; entry = first 2-minute candle (ending by 15:00) that touches the 20 EMA and, in "hold" mode, closes on the trade side; entry at that candle's close; stop = that candle's low (long) / high (short); stop distance under $0.10 skips the day (counted); flat 15:30 ET; stop checked before target; shorts mirror longs (assumed). Primary config `hold_t2` (2R target); baseline `naive_t2` (enter at the trigger close, stop at the range's other side). 20 configs per symbol (hold/touch/naive x 1.5R/2R/3R/none, 7 sensitivity rows, 1 floor-0.20 info row).
 

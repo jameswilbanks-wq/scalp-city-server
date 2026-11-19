@@ -1,6 +1,6 @@
 # PROJECT_STATE.md — Scalp City
 
-Last updated: 2026-11-19, after approving, building and deploying studies `bt28` (ORB15 options expression) and `bt29` (ORPB Stage 0); previously 2026-11-18, ORB15 detection fix and the move to Claude Code.
+Last updated: 2026-11-19, after `bt28` (ORB15 options expression) and `bt29` (ORPB Stage 0) finished and both failed their pre-registered criteria, and `bt30` (Sweep variants) was approved and deployed; previously 2026-11-18, ORB15 detection fix and the move to Claude Code.
 
 This file is the "where are we right now" snapshot. For strategy specs see STRATEGY_REGISTRY.md, for why decisions were made see DECISIONS.md, for limits see RISK_POLICY.md, for backtest results see EXPERIMENT_LOG.md, for how to run/deploy/pick this up see RUNBOOK.md.
 
@@ -39,6 +39,12 @@ James approved the read-only study `bt28` (spec `rb15-expression-study-spec.md`)
 ## 2026-11-19 — bt29 (ORPB Stage 0 underlying signal study) approved, built and deployed
 
 James approved the read-only Stage 0 study `bt29` (spec `orpb-signal-study-spec.md`; approval covers `bt29` only): SPY/QQQ 1-minute IEX stock bars, 30-minute opening range, first 10-minute candle closing beyond it, entry on the first 2-minute candle touching the 20 EMA, 20 configs per symbol, dev/holdout split at 2026-07-14. It runs once after boot (about 185 s) and saves to Supabase `bt29` (progress `bt29p`). Pushed after 16:00 ET and after `bt28` finished (21:23Z). No live behavior change, no options, no new book. Results are read out separately against the pre-registered criteria and labelled historical, underlying-only: not forward, not live, not profit. Run time and Render memory for this study are unmeasured.
+
+## 2026-11-19 — bt28 and bt29 results (both failed); bt30 (Sweep variants study) approved and deployed
+
+`bt28` (finished 21:23Z): control reproduced `bt13` exactly; B (debit vertical) negative at $0.03 in both periods on both symbols; C (next-expiry single leg) slightly positive with intervals that include zero and fails the pre-registered criteria. No advance, ORB15 unchanged. `bt29` (finished 21:50Z): ORPB primary config lost after costs in dev and holdout on both symbols, naive same-trigger baseline beat it in dev, criteria 1-5 all false; no Stage 1, no book. Numbers in EXPERIMENT_LOG. Both are historical, not forward, not profit.
+
+Sweep: the live book is down -$208 over 41 run trades since 2026-11-11 (-$216 on 2026-11-19). James approved the read-only study `bt30` (spec `sweep-variants-study-spec.md`: fade, wick-size cap, with-trend filters on real 0DTE option prices, judged at $0.03 per fill, weak holdout) and chose to leave the live Sweep pilot as is for now. `bt30` runs once after boot (about 195 s; it waits for any running `bt28`/`bt29`) and saves to kv `bt30` (progress `bt30p`). No live behavior change.
 
 ## 2026-11-18 — ORB15 review and fixes
 

@@ -1,6 +1,6 @@
 # DECISIONS.md — Scalp City
 
-Last updated: 2026-11-19 (`bt29` ORPB Stage 0 approved; `bt28` approved, control mapping corrected; earlier: 2026-11-18 ORB15 detection fix + spread logging deployed; move to Claude Code decided).
+Last updated: 2026-11-19 (`bt30` Sweep variants study approved; `bt29` ORPB Stage 0 approved; `bt28` approved, control mapping corrected; earlier: 2026-11-18 ORB15 detection fix + spread logging deployed; move to Claude Code decided).
 
 Decisions James has made, with rationale and date. Newest at the bottom of each dated run. For the "why" evidence behind a decision, see EXPERIMENT_LOG.md; for the resulting spec, see STRATEGY_REGISTRY.md.
 
@@ -95,6 +95,9 @@ Still pending: whether to build BRT's Stage 0 study (`bt25`) given IB's failure 
 - **Built as written in the spec;** extras the spec did not state (first 5 sessions skipped for EMA warm-up, thin or short sessions skipped and counted, gap-open stop fills, EMA seeded with its first value, whole-day skip on the $0.10 floor, sessions after 2026-11-13 not fetched, IEX bars) are listed in the spec's build notes and in STRATEGY_REGISTRY.md.
 - **Open from the spec, unanswered:** rename "ORPB" (kept as a placeholder); order against `bt27` (unbuilt).
 - **Not authorized:** options expression (Stage 1), any book, any live or sizing change. A pass only opens a separate decision; a fail is recorded and closes it.
+
+**2026-11-19 — `bt30` Sweep variants study approved (read-only); live Sweep pilot left as is.** After the live Sweep book lost -$216 on 6 trades on 2026-11-19 (41 run trades since 2026-11-11: -$208, 37% winners), James asked what can be done to improve it and noted the opposite trade would have won that day. Findings and caveats (tiny sample, hindsight, a fade pays the spread too, about 70 exit variants already tried) are in `sweep-variants-study-spec.md`. James's answers: (1) yes, build and run `bt30` as a read-only Stage 0 study; (2) leave the live Sweep real-order pilot as is for now (no `SWEEP_REAL_ORDERS` change); (3) "you make the call on what is actually true": costs reported at $0.01 and $0.03 per share per fill and judged at $0.03 as a deliberately conservative upper bound (live logged full spreads were about $0.03 each way; bars carry no bid/ask), and the holdout labelled weak. He then said to check `bt29` and push `bt30` (`bt29` finished 21:50Z and failed Stage 0; `bt28` finished 21:23Z and failed).
+- **Not authorized:** replacing the live Sweep rule, any fade or filter book, any live or sizing change. A pass opens only a shadow paper book (separate decision, at least 60 trading days and 100 closed trades before any swap).
 
 **2026-11-18 — Move code, deploy and records work from chat to Claude Code.** James asked whether the work should be done in Claude Code. Agreed split: Claude Code for server changes, backtests, deploys and keeping the six records current (in this repo's `docs/`, with a root `CLAUDE.md` holding the standing rules); chat for research, video-spec handoffs and quick questions. Safety choices: the Alpaca Live and Robinhood connectors are not connected in Claude Code; keys live only in Render and local environment variables. A push to `main` of docs alone also restarts the Render server, so doc commits are batched with code changes or pushed outside market hours unless Render's ignored-paths setting excludes `docs/`. Not yet done: repoint `RUNBOOK.md` and the morning-review prompt to the repo; decide which copy of each record is the source of truth.
 
