@@ -1,6 +1,6 @@
 # PROJECT_STATE.md — Scalp City
 
-Last updated: 2026-11-18, after the ORB15 detection fix and the decision to move code work to Claude Code.
+Last updated: 2026-11-19, after approving and building study `bt28` (ORB15 options expression); previously 2026-11-18, ORB15 detection fix and the move to Claude Code.
 
 This file is the "where are we right now" snapshot. For strategy specs see STRATEGY_REGISTRY.md, for why decisions were made see DECISIONS.md, for limits see RISK_POLICY.md, for backtest results see EXPERIMENT_LOG.md, for how to run/deploy/pick this up see RUNBOOK.md.
 
@@ -32,6 +32,10 @@ Main-book trade rows (`closePaper`) now also carry, as optional fields: `quotedB
 
 James decided (afternoon of Nov 18) to move code, deploy and records work from chat into Claude Code, with this `docs/` folder and a repo-root `CLAUDE.md` as the source of truth, and to keep chat for research, video-spec handoffs and quick questions. Setup steps were given to him; the first Claude Code session should verify it can read Supabase `notes`, list Render deploys, and run `node --check server.js` plus the tests. The Alpaca Live and Robinhood connectors are deliberately not to be connected in Claude Code. `RUNBOOK.md` and the morning-review prompt still describe the chat-based setup and need repointing.
 
+## 2026-11-19 — bt28 (ORB15 options-expression study) approved and built
+
+James approved the read-only study `bt28` (spec `rb15-expression-study-spec.md`): same ORB15 trades expressed as A ATM 0DTE (control), B $2 0DTE debit vertical, C ATM next-expiry single leg, at $0.01/$0.03/$0.05 per leg per fill. It runs once after boot on Render and saves to Supabase `bt28` (progress `bt28p`). No live behavior changes; no new book. Control numbers in this study and the docs now use the live-config `bt13` row (`e15|t1.25|be0.5`); the earlier `t1|be1` figures were a different config. Results pending: see EXPERIMENT_LOG.md. Same day: observability logging (heartbeat, per-book scan state, dashboard status pill, quote-age sampler and `quote_check`) deployed after the Alpaca key regeneration incident; see RUNBOOK.md and Supabase `notes`.
+
 ## 2026-11-18 — ORB15 review and fixes
 
 James asked why ORB has so few profitable trades. 7 live ORB trades (Nov 11-18) net -$279; the 5 on the 15-minute version net -$51, statistically consistent with `bt13`'s thin edge (~$9/trade vs ~$150 per-trade SD; ~1,000 trades needed to separate it from zero). Findings and a pre-registered exit study (`bt27`, not approved, not built) are in `orb-exit-study-spec.md`. Two approved code changes deployed (commit `7d78f9b`, live 18:34Z): first-breakout signal detection (`orb15.js`) with logged skips for stale signals and incomplete opening ranges, and bid/spread/delta/iv fields on ORB trade rows. ORB entry and exit rules are unchanged. Supabase `notes` updated.
@@ -52,7 +56,7 @@ James asked for a full review of live performance across all books after 8 tradi
 |---|---|---|---|
 | CSK (bt6/bt7/bt9) | +$4.62/spread/day | +$3.60/spread/day | QQQ ahead in both periods |
 | X9 (bt22, each symbol's own best exit) | $9.14/trade, PF 1.33 (flat 70% TP) | $5.53/trade, PF 1.25 (trail) | QQQ clearly ahead — why the exit split exists |
-| ORB15 (bt13) | $6.00/trade, PF 1.07 | $5.49/trade, PF 1.08 | QQQ barely ahead, gap converges in holdout |
+| ORB15 (bt13, live config 1.25R/+0.5R; corrected 2026-11-19, earlier $6.00/$5.49 was the 1R/+1R row) | $9.07/trade, PF 1.11 | $8.99/trade, PF 1.17 | QQQ ahead in train ($9.49 vs $7.50), about equal in lock |
 | Sweep (bt8, live "run" exit) | avg -$2.67/trade, PF 0.81 | avg -$3.44/trade, PF 0.63 | **Both negative in holdout** — QQQ "less negative," not a real edge |
 
 **Takeaway:** QQQ is at least as good as SPY everywhere, and clearly ahead on CSK and X9 — there is no case in this project's backtests for isolating toward SPY. But Sweep's own live exit ("run") shows a *negative* average and PF <1 for both symbols in the lock/holdout period — that's a flag about Sweep's current exit robustness, not a symbol story, and deserves its own look before any capital-isolation decision leans on it. No action taken on this yet — James said to start thinking about it for when real money goes live, not to implement isolation now.
