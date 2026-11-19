@@ -498,9 +498,26 @@ function shutCheck() {
   if (process.env.STOP_AT_TARGET === '1' && r.pnl >= CFG.target) r.shut = 'target'; else if (r.pnl <= -CFG.loss) r.shut = 'loss';
   else if (r.losers >= CFG.maxLosers) r.shut = 'losers'; else if (r.trades.length >= CFG.maxTrades) r.shut = 'trades';
 }
+/* Eval-harness Part 2 (docs/eval-harness-spec.md, approved 2026-11-18): extra, OPTIONAL fields on the main-book trade row so a trade's outcome can be explained later.
+   ADDITIVE ONLY and FAIL OPEN: it reads values already held in memory, never calls the network, never changes an entry, exit, size or risk rule, and returns {} if anything throws.
+   strategyVersion: bump on any material change to the book so samples are never mixed across versions. mfe/mae are option dollars on the full position, measured from the entry price against the best/worst bid seen at monitoring ticks (not tick-by-tick). */
+const MAIN_STRATEGY_VERSION = 'sweep-run-1';
+function rowExtras(p, bid) {
+  try {
+    const q = p.qty || 1, r3 = x => Math.round(x * 1000) / 1000, ok = x => typeof x === 'number' && isFinite(x), o = {};
+    o.strategyVersion = p.trailR ? MAIN_STRATEGY_VERSION : 'main-' + (p.trig || 'unknown') + '-1';
+    if (ok(p.qBid) && ok(p.qAsk)) { o.quotedBid = p.qBid; o.quotedAsk = p.qAsk; o.spreadIn = r3(p.qAsk - p.qBid); if (ok(p.entryAsk)) o.slippageVsMid = r3(p.entryAsk - (p.qBid + p.qAsk) / 2); }
+    if (p.live && ok(p.live.ask) && ok(bid)) { o.exitAsk = p.live.ask; o.spreadOut = r3(p.live.ask - bid); }
+    if (ok(p.t0)) o.holdMinutes = Math.round((Date.now() - p.t0) / 6000) / 10;
+    if (ok(p.peak) && ok(p.entryAsk)) o.mfe = Math.round((p.peak - p.entryAsk) * 100 * q * 100) / 100;
+    if (ok(p.trough) && ok(p.entryAsk)) o.mae = Math.round((p.trough - p.entryAsk) * 100 * q * 100) / 100;
+    if (p.sym && p.trig && ok(p.sigT)) o.signalId = p.sym + '|' + p.trig + '|' + iso(p.sigT);
+    return o;
+  } catch (e) { return {}; }
+}
 function closePaper(reason, bid, info) {
   const p = P.rec.pos, q = p.qty || 1, hf = p.half || null, pnl = (hf ? hf.pnl : 0) + (bid - p.entryAsk) * 100 * (hf ? q - 1 : q);
-  P.rec.trades.push({ run: p.trailR ? true : undefined, trailR: p.trailR ? Math.round(p.trailR * 100) / 100 : undefined, entryQAge: p.qAge, exitQAge: p.live ? p.live.age : undefined, qty: q, half: hf || undefined, sym: p.sym, type: p.type, strike: p.strike, exp: p.exp, inst: p.inst, entryT: iso(p.t0), entryAsk: p.entryAsk, entryBid: p.entryBid, entryU: p.entryU, exitT: iso(Date.now()), exitBid: bid, exitU: info && info.bar ? info.bar.c : null, pnl: Math.round(pnl * 100) / 100, peakBid: p.peak, reason, trig: p.trig, ext: p.ext, iv: p.iv, delta: p.delta });
+  P.rec.trades.push(Object.assign({ run: p.trailR ? true : undefined, trailR: p.trailR ? Math.round(p.trailR * 100) / 100 : undefined, entryQAge: p.qAge, exitQAge: p.live ? p.live.age : undefined, qty: q, half: hf || undefined, sym: p.sym, type: p.type, strike: p.strike, exp: p.exp, inst: p.inst, entryT: iso(p.t0), entryAsk: p.entryAsk, entryBid: p.entryBid, entryU: p.entryU, exitT: iso(Date.now()), exitBid: bid, exitU: info && info.bar ? info.bar.c : null, pnl: Math.round(pnl * 100) / 100, peakBid: p.peak, reason, trig: p.trig, ext: p.ext, iv: p.iv, delta: p.delta }, rowExtras(p, bid)));
   P.rec.pnl = Math.round((P.rec.pnl + pnl) * 100) / 100; if (pnl < 0) P.rec.losers++;
   if (reason === 'stop' || reason === 'level' || reason === 'premium stop') P.rec.blockUntil = Date.now() + CFG.cooldownMs;
   P.rec.pos = null; shutCheck(); saveRec();
@@ -575,7 +592,7 @@ async function managePos() {
   const qd = await rh('get_option_quotes', { instrument_ids: [p.inst] }), q = ((qd.results || [])[0] || {}).quote; if (!q) return;
   const bid = +q.bid_price; if (!(bid >= 0)) return;
   if (q.updated_at && Date.now() - Date.parse(q.updated_at) > 180000) return;
-  p.live = { bid, ask: +q.ask_price, t: Date.now(), age: q.updated_at ? Date.now() - Date.parse(q.updated_at) : null }; p.peak = Math.max(p.peak || 0, bid);
+  p.live = { bid, ask: +q.ask_price, t: Date.now(), age: q.updated_at ? Date.now() - Date.parse(q.updated_at) : null }; p.peak = Math.max(p.peak || 0, bid); try { p.trough = p.trough === undefined ? bid : Math.min(p.trough, bid); } catch (e) {} // Part 2 logging only (mae); never read by any entry/exit rule
   const reason = exitReason(p, CFG, bid, info, bars);
   if (reason === 'target' && (p.qty || 1) > 1 && !p.half) { p.half = { t: iso(Date.now()), bid, pnl: Math.round((bid - p.entryAsk) * 10000) / 100, qty: 1 }; return; } // sold 1 of 2 at the target, the other rides
   if (!reason) return;
@@ -1104,7 +1121,7 @@ async function lookForEntry() {
     let pk; try { pk = await pickContract(s, sig.dir, inf.bar.c, P.extNow && EXT_SYMS.includes(s) && !CFG.syms.includes(s) ? EXT_MAXPREM : 0); } catch (e) { pk = { why: 'could not load option data (' + ((e && e.code) || 'error') + ')' }; }
     if (pk.why) { logSignal(s, sig, inf.bar.c, 'skipped', pk.why); continue; }
     { const corr = corrCapBlocks(r, s, (pk.ask || 0) * 100 * QTY); if (corr) { logSignal(s, sig, inf.bar.c, 'skipped', 'would push ' + s + '-group open risk to $' + corr.next.toFixed(0) + ', over the $' + CORR_CAP_USD + ' correlation cap'); continue; } }
-    r.pos = { sym: s, dir: sig.dir, type: pk.type, strike: pk.strike, exp: pk.exp, inst: pk.inst, t0: Date.now(), sigT: inf.bar.t, entryAsk: pk.ask, entryBid: pk.bid, entryU: inf.bar.c, qAge: pk.qAge, qty: QTY,
+    r.pos = { sym: s, dir: sig.dir, type: pk.type, strike: pk.strike, exp: pk.exp, inst: pk.inst, t0: Date.now(), sigT: inf.bar.t, entryAsk: pk.ask, entryBid: pk.bid, entryU: inf.bar.c, qAge: pk.qAge, qBid: pk.bid, qAsk: pk.ask, trough: pk.bid, qty: QTY,
       trailR: SWEEP_RUN && sig.trig === 'sweep' && sig.stopPx !== undefined && Math.abs(inf.bar.c - sig.stopPx) > 0.0001 * inf.bar.c ? Math.abs(inf.bar.c - sig.stopPx) : undefined, stopU: sig.stopPx !== undefined ? sig.stopPx : inf.bar.c - sig.dir * Math.max(sig.atr, 0.05), trig: sig.trig, lvl: sig.lvl, peak: pk.bid, iv: pk.iv, delta: pk.delta, flatMin: P.extNow && !CFG.syms.includes(s) ? P.extNow.flat : CFG.dte === 0 ? 935 : 950, ext: P.extNow && !CFG.syms.includes(s) ? P.extNow.name : undefined };
     if (SWEEP_REAL_ORDERS && sig.trig === 'sweep') {
       const cid = 'sweep-entry-' + r.pos.t0;
