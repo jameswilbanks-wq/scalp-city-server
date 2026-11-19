@@ -1,6 +1,6 @@
 # STRATEGY_REGISTRY.md — Scalp City
 
-Last updated: 2026-11-18.
+Last updated: 2026-11-19 (ORPB `bt29` section added).
 
 Specifications, versions, status, and results for every strategy. Rationale/approval dates are in DECISIONS.md; backtest detail is in EXPERIMENT_LOG.md; limits/suspension rules are in RISK_POLICY.md.
 
@@ -104,6 +104,20 @@ Never had a real edge in any study (`bt`, `bt2`). Retired alongside EMA.
 **Cap handling (Claude's choice, James delegated 2026-11-19):** `RISK_POLICY.md`'s $150 per-contract cap is "planned for live, not active", so every result is shown on all trades and on the subset whose max loss (debit) is <= $150. Pass is judged on the subset, so a variant cannot pass by relying on trades over the planned cap; both sets are saved.
 **Pass criteria (pre-registered, all required):** control reproduces; at $0.03 avg > 0 and PF >= 1.10 in train and lock on both symbols; beats A in both periods on both symbols; lock n >= 100 per symbol; positive with the best 5 trades removed; fits the cap (above). A pass whose bootstrap interval includes zero is "unproven": at most forward paper shadow, never live. If neither passes, both are recorded as failed and ORB15 continues unchanged.
 **Not authorized by this study:** any new book, env flag, sizing or live change.
+
+## ORPB — opening-range breakout + 2-minute 20-EMA pullback (`bt29`) — STAGE 0 STUDY ONLY, NOT A BOOK
+
+**Status: approved by James 2026-11-19 as a read-only underlying-price Stage 0 study (SPY/QQQ, no options, no money, no effect on any live book). Built and deployed; results pending (kv `bt29`, progress `bt29p`).** Working name "ORPB" is a placeholder. Source: a short Instagram reel (flexingjoetrades, Nasdaq futures); its payout banners are social proof, not evidence, and no backtest was shown. Spec: `orpb-signal-study-spec.md`. Harness: `orpb.js` (pure) + `study_orpb.js`; test `test/orpb_smoke.test.js` (synthetic data only).
+
+**Rule as pre-registered (inferred pieces flagged in the spec):** range = 9:30-9:59 ET high/low (needs 25 of 30 minute bars); trigger = first 10-minute candle (starting at or after 10:00, last start 14:30) closing beyond the range; entry = first 2-minute candle (ending by 15:00) that touches the 20 EMA and, in "hold" mode, closes on the trade side; entry at that candle's close; stop = that candle's low (long) / high (short); stop distance under $0.10 skips the day (counted); flat 15:30 ET; stop checked before target; shorts mirror longs (assumed). Primary config `hold_t2` (2R target); baseline `naive_t2` (enter at the trigger close, stop at the range's other side). 20 configs per symbol (hold/touch/naive x 1.5R/2R/3R/none, 7 sensitivity rows, 1 floor-0.20 info row).
+
+**Costs and splits:** $0.02 and $0.04 per share round trip, converted to R as cost / stop distance. Dev = sessions before 2026-07-14, holdout = 2026-07-14 to 2026-11-13 (same as `bt24`; a weak holdout, already seen by earlier studies). Forward paper from 2026-11-19 is the untouched final test and only after a frozen version exists.
+
+**Pass criteria (set before results; primary config, both symbols):** (1) dev avg R > 0 after costs; (2) holdout avg R > 0 and n >= 40; (3) positive with the best 5 trades removed; (4) no sign flip across the six neighbor configs; (5) beats the naive baseline in dev and holdout; (6) median stop under $0.20 = "likely cost-dominated", reported separately. Fail on any = recorded as failed, no Stage 1, no book. All configs count toward the opening-range / levels family tally with `bt13`, `bt24` (and `bt25`/BRT if built).
+
+**Overlap and prior:** same underlying idea as ORB15 and the BRT proposal; on days it fires it will usually agree with ORB, so the correlation cap would treat it as shared exposure, not diversification. Closest tested relative `bt24` failed Stage 0; skeptical prior.
+
+**Not authorized:** options expression (Stage 1), a book, any live or sizing change. A pass means a separate James decision.
 
 ## CSK — call credit spreads (own book) — ACTIVE
 

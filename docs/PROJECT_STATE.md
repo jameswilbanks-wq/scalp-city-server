@@ -1,6 +1,6 @@
 # PROJECT_STATE.md — Scalp City
 
-Last updated: 2026-11-19, after approving and building study `bt28` (ORB15 options expression); previously 2026-11-18, ORB15 detection fix and the move to Claude Code.
+Last updated: 2026-11-19, after approving, building and deploying studies `bt28` (ORB15 options expression) and `bt29` (ORPB Stage 0); previously 2026-11-18, ORB15 detection fix and the move to Claude Code.
 
 This file is the "where are we right now" snapshot. For strategy specs see STRATEGY_REGISTRY.md, for why decisions were made see DECISIONS.md, for limits see RISK_POLICY.md, for backtest results see EXPERIMENT_LOG.md, for how to run/deploy/pick this up see RUNBOOK.md.
 
@@ -35,6 +35,10 @@ James decided (afternoon of Nov 18) to move code, deploy and records work from c
 ## 2026-11-19 — bt28 (ORB15 options-expression study) approved and built
 
 James approved the read-only study `bt28` (spec `rb15-expression-study-spec.md`): same ORB15 trades expressed as A ATM 0DTE (control), B $2 0DTE debit vertical, C ATM next-expiry single leg, at $0.01/$0.03/$0.05 per leg per fill. It runs once after boot on Render and saves to Supabase `bt28` (progress `bt28p`). No live behavior changes; no new book. Control numbers in this study and the docs now use the live-config `bt13` row (`e15|t1.25|be0.5`); the earlier `t1|be1` figures were a different config. Results pending: see EXPERIMENT_LOG.md. Same day: observability logging (heartbeat, per-book scan state, dashboard status pill, quote-age sampler and `quote_check`) deployed after the Alpaca key regeneration incident; see RUNBOOK.md and Supabase `notes`.
+
+## 2026-11-19 — bt29 (ORPB Stage 0 underlying signal study) approved, built and deployed
+
+James approved the read-only Stage 0 study `bt29` (spec `orpb-signal-study-spec.md`; approval covers `bt29` only): SPY/QQQ 1-minute IEX stock bars, 30-minute opening range, first 10-minute candle closing beyond it, entry on the first 2-minute candle touching the 20 EMA, 20 configs per symbol, dev/holdout split at 2026-07-14. It runs once after boot (about 185 s) and saves to Supabase `bt29` (progress `bt29p`). Pushed after 16:00 ET and after `bt28` finished (21:23Z). No live behavior change, no options, no new book. Results are read out separately against the pre-registered criteria and labelled historical, underlying-only: not forward, not live, not profit. Run time and Render memory for this study are unmeasured.
 
 ## 2026-11-18 — ORB15 review and fixes
 

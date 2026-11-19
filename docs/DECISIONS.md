@@ -1,6 +1,6 @@
 # DECISIONS.md — Scalp City
 
-Last updated: 2026-11-19 (`bt28` approved, control mapping corrected; earlier: 2026-11-18 ORB15 detection fix + spread logging deployed; move to Claude Code decided).
+Last updated: 2026-11-19 (`bt29` ORPB Stage 0 approved; `bt28` approved, control mapping corrected; earlier: 2026-11-18 ORB15 detection fix + spread logging deployed; move to Claude Code decided).
 
 Decisions James has made, with rationale and date. Newest at the bottom of each dated run. For the "why" evidence behind a decision, see EXPERIMENT_LOG.md; for the resulting spec, see STRATEGY_REGISTRY.md.
 
@@ -90,6 +90,11 @@ Still pending: whether to build BRT's Stage 0 study (`bt25`) given IB's failure 
 - **$150 per-trade cap (spec criterion 6):** James left this to Claude. `RISK_POLICY.md`'s $150 is planned for live and not active, so results are saved on all trades and on trades with max loss <= $150; pass is judged on the capped subset (so passing cannot depend on trades over the planned cap).
 - **Spec file** committed to `docs/` with this work (James delegated).
 - **Not authorized:** any new book, flag, sizing or live change. A pass only means forward-paper shadow, and a pass with a bootstrap interval including zero is "unproven, never live". Forward paper from 2026-11-19 remains the untouched holdout.
+
+**2026-11-19 — `bt29` ORPB Stage 0 signal study approved (read-only; nothing live).** James: "approves building and running the read-only Stage 0 study bt29 described there, and nothing live. This approval covers bt29 only, not bt28." Spec: `orpb-signal-study-spec.md` (opening range 9:30-10:00, 10-minute trigger candle, 2-minute 20-EMA pullback entry; underlying SPY/QQQ only). Sequencing James set: push after 16:00 ET and only after `bt28` has run ("push after 16. wait until after bt28"; then "push bt29 if bt28 is finished"). `bt28` finished 2026-11-19 21:23Z with no error; `bt29` was then rebased onto `main` and pushed.
+- **Built as written in the spec;** extras the spec did not state (first 5 sessions skipped for EMA warm-up, thin or short sessions skipped and counted, gap-open stop fills, EMA seeded with its first value, whole-day skip on the $0.10 floor, sessions after 2026-11-13 not fetched, IEX bars) are listed in the spec's build notes and in STRATEGY_REGISTRY.md.
+- **Open from the spec, unanswered:** rename "ORPB" (kept as a placeholder); order against `bt27` (unbuilt).
+- **Not authorized:** options expression (Stage 1), any book, any live or sizing change. A pass only opens a separate decision; a fail is recorded and closes it.
 
 **2026-11-18 — Move code, deploy and records work from chat to Claude Code.** James asked whether the work should be done in Claude Code. Agreed split: Claude Code for server changes, backtests, deploys and keeping the six records current (in this repo's `docs/`, with a root `CLAUDE.md` holding the standing rules); chat for research, video-spec handoffs and quick questions. Safety choices: the Alpaca Live and Robinhood connectors are not connected in Claude Code; keys live only in Render and local environment variables. A push to `main` of docs alone also restarts the Render server, so doc commits are batched with code changes or pushed outside market hours unless Render's ignored-paths setting excludes `docs/`. Not yet done: repoint `RUNBOOK.md` and the morning-review prompt to the repo; decide which copy of each record is the source of truth.
 
