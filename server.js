@@ -422,10 +422,10 @@ function heartbeat() {
     slog('heartbeat', { running: !!(P.ctl && P.ctl.running), market: marketOpen(Date.now()), connected: !!S.connected, busy: !!P.busy, stage: P.stage || '',
       busyS: P.busySince ? Math.round((Date.now() - P.busySince) / 1000) : 0, lastTickAgoS: P.lastTick ? Math.round((Date.now() - P.lastTick) / 1000) : null,
       msg: P.msg, tickErr: P.tickErr, saveErr: P.saveErr,
-      bookErr: { fp: P.fpErr || '', x9: P.x9Err || '', csk: P.cskErr || '', cdr: P.cdrErr || '', wheel2Csp: P.wheel2CspErr || '', orb: P.orbErr || '', vt: P.vtErr || '' },
+      bookErr: { fp: P.fpErr || '', x9: P.x9Err || '', csk: P.cskErr || '', cdr: P.cdrErr || '', wheel2Csp: P.wheel2CspErr || '', orb: P.orbErr || '', orbn: P.orbnErr || '', vt: P.vtErr || '' },
       books: (typeof bookDiag === 'function') ? bookDiag() : null,
       scanBars, day: rec.day || null, trades: (rec.trades || []).length, shut: rec.shut || '',
-      open: { main: !!rec.pos, orbk: n('orbk'), csk: n('csk'), x9k: n('x9k'), fpk: n('fpk'), cdrk: n('cdrk') } });
+      open: { main: !!rec.pos, orbk: n('orbk'), orbnk: n('orbnk'), csk: n('csk'), x9k: n('x9k'), fpk: n('fpk'), cdrk: n('cdrk') } });
   } catch (e) { slog('heartbeat_error', { e: String((e && e.message) || e).slice(0, 100) }); }
 }
 
@@ -469,9 +469,9 @@ async function getInst(chain, exp, type) {
   }
   return (P.inst[key] = out);
 }
-async function pickContract(sym, dir, px, maxPrem) {
+async function pickContract(sym, dir, px, maxPrem, dteOverride) { // dteOverride (optional, ORBN book only): 0 = same-day, 1 = next listed expiry; omitted = CFG.dte exactly as before
   maxPrem = maxPrem || CFG.maxPrem;
-  const ch = await getChain(sym), exp = pickExpiry(ch, CFG.dte);
+  const ch = await getChain(sym), exp = pickExpiry(ch, dteOverride === undefined ? CFG.dte : dteOverride);
   if (!exp) return { why: 'no expiry available' };
   const type = dir > 0 ? 'call' : 'put', list = await getInst(ch, exp, type);
   const lo = dir > 0 ? px - 2 : px - 8, hi = dir > 0 ? px + 8 : px + 2;
@@ -709,6 +709,45 @@ async function manageOrb() {
     saveRec();
   } catch (e) { /* never disturb the main paper trade */ }
 }
+/* ORBN-BEGIN ---------- ORBN: simulated paper book, bt28 variant C (James 2026-11-19: "deploy bt28"; read the caveat). The SAME ORB15 signal, entry, stop, 1.25R target, +0.5R break-even and 15:30 ET flat as the ORB book, but the option is the NEXT listed expiry (about 1DTE) instead of same-day. bt28 verdict: C FAILED the pre-registered criteria (QQQ lock +$2.97 n=211, 95% interval -$26.27 to +$34.54; SPY +$6.13 n=214, -$12.66 to +$27.14, at $0.03 per leg per fill; fails PF >= 1.10 on QQQ lock). It runs only to collect forward paper data at real quotes. SIMULATED fills (sell at bid, buy at ask), 1 contract, premium cap $150 (the bt28 'cap' rule). Own journal list r.orbnk. NOT counted in and NOT blocked by the cross-book correlation cap, never touches ORB, Sweep or any other book, fails open. ORBN_ON=0 turns it off. ---------- */
+const ORBN_ON = process.env.ORBN_ON !== '0', ORBN_MAXPREM = +process.env.ORBN_MAXPREM || 150;
+async function orbnLook() {
+  const r = P.rec; if (!ORBN_ON || !r || r.shut || !marketOpen(Date.now())) return;
+  r.orbnk = r.orbnk || { open: [], trades: [], pnl: 0, done: {} };
+  for (const s of CFG.syms) {
+    const o = orb15Sig(s); if (!o || o.incomplete || !o.sig || r.orbnk.done[s]) continue;
+    const sig = o.sig, inf = Object.assign({}, P.info[s], { bar: o.bar }), lsig = Object.assign({}, sig, { trig: 'orbn' });
+    r.orbnk.done[s] = true; // one per symbol per day, taken or skipped
+    if (Date.now() - (inf.bar.t + 60000) > 150000) { logSignal(s, lsig, inf.bar.c, 'skipped', 'orbn signal was more than 2 minutes old when seen'); continue; }
+    let pk; try { pk = await pickContract(s, sig.dir, inf.bar.c, ORBN_MAXPREM, 1); } catch (e) { pk = { why: 'could not load option data (' + ((e && e.code) || 'error') + ')' }; }
+    if (pk.why) { logSignal(s, lsig, inf.bar.c, 'skipped', 'orbn: ' + pk.why); continue; }
+    const risk = Math.abs(inf.bar.c - sig.stopPx);
+    r.orbnk.open.push({ book: 'orbn', sym: s, dir: sig.dir, type: pk.type, strike: pk.strike, exp: pk.exp, inst: pk.inst, t0: Date.now(), sigT: inf.bar.t, entryAsk: pk.ask, entryBid: pk.bid, entryU: inf.bar.c, qAge: pk.qAge, stopU: sig.stopPx, tgtU: inf.bar.c + sig.dir * ORB_R * risk, riskU: Math.round(risk * 100) / 100, trig: 'orb5', orbV: '15', be: ORB_BE, peak: pk.bid, iv: pk.iv, delta: pk.delta, flatMin: 930 }); // trig 'orb5' only so exitReason() applies the identical, already validated ORB exit rules
+    logSignal(s, lsig, inf.bar.c, 'entered', 'orbn (next expiry) ' + pk.type + ' ' + pk.strike + ' exp ' + pk.exp + ' @ ask $' + pk.ask.toFixed(2) + ', stop ' + sig.stopPx.toFixed(2) + ', target ' + (inf.bar.c + sig.dir * ORB_R * risk).toFixed(2));
+  }
+  saveRec();
+}
+async function manageOrbN() {
+  const ob = P.rec && P.rec.orbnk; if (!ob || !ob.open.length) return;
+  try {
+    const qd = await rh('get_option_quotes', { instrument_ids: ob.open.map(x => x.inst) }), by = {};
+    (qd.results || []).forEach(z => { if (z.quote) by[z.quote.instrument_id] = z.quote; });
+    for (const p of ob.open.slice()) {
+      const q = by[p.inst]; if (!q) continue; const bid = +q.bid_price; if (!(bid >= 0)) continue;
+      if (q.updated_at && Date.now() - Date.parse(q.updated_at) > 180000) continue;
+      p.peak = Math.max(p.peak || 0, bid); p.live = { bid, ask: +q.ask_price, t: Date.now(), age: q.updated_at ? Date.now() - Date.parse(q.updated_at) : null };
+      if (p.be && !p.beT) { for (const x of (P.bars[p.sym] || [])) { if (x.t <= p.sigT) continue; if (p.dir > 0 ? x.l <= p.stopU : x.h >= p.stopU) break; if (p.dir * ((p.dir > 0 ? x.h : x.l) - p.entryU) >= p.be * p.riskU) { p.stopU = p.entryU; p.beT = x.t; break; } } }
+      const reason = exitReason(p, {}, bid, P.info[p.sym], P.bars[p.sym]);
+      if (reason) {
+        const pnl = Math.round((bid - p.entryAsk) * 10000) / 100;
+        ob.trades.push({ book: 'orbn', sym: p.sym, type: p.type, strike: p.strike, exp: p.exp, entryT: iso(p.t0), entryAsk: p.entryAsk, entryBid: p.entryBid, exitT: iso(Date.now()), exitBid: bid, exitAsk: p.live.ask, spreadIn: Math.round((p.entryAsk - p.entryBid) * 100) / 100, spreadOut: Math.round((p.live.ask - bid) * 100) / 100, delta: p.delta, iv: p.iv, pnl, peakBid: p.peak, reason: reason === 'stop' && p.beT ? 'breakeven' : reason, trig: 'orbn', orbV: p.orbV, qty: 1, entryU: p.entryU, stopU: p.stopU, tgtU: p.tgtU, riskU: p.riskU, entryQAge: p.qAge, exitQAge: p.live.age });
+        ob.pnl = Math.round((ob.pnl + pnl) * 100) / 100; ob.open = ob.open.filter(x => x !== p);
+      }
+    }
+    saveRec();
+  } catch (e) { /* never disturb any other book */ }
+}
+/* ORBN-END */
 /* ---------- Call credit spread paper book (CSK). James approved 2026-11-11 after studies bt6/bt7 on real option prices: selling same-day call spreads from 11:00 ET on SPY and QQQ and HOLDING TO THE CLOSE was positive in both the tuning and the locked period on both symbols ($2 wide about +$4 to +$5 per spread per day at $0.01 per leg slippage, about 87-90% winners, worst day about -$200); closing at 15:30 lost and an underlying stop gave up most of the profit. The open question is the real bid/ask cost, so this book records live quotes. One spread per symbol per day: at 11:00 ET sell the call nearest 0.45% above the price and buy the call $2 higher (same-day expiry). Paper fill at the NATURAL price (sell at the bid, buy at the ask); the mid is recorded too. Held to the close and settled on the last price (capped at the width). It also records, without acting on them, the cost to close at 15:30 ET and when the price first closes above the short strike. Assignment and early-close risks at a real broker are NOT modeled. CSK_ON=0 turns it off. ---------- */
 const CSK_ON = process.env.CSK_ON !== '0', CSK = { syms: (process.env.CSK_SYMS || 'SPY,QQQ').split(',').map(x => x.trim().toUpperCase()).filter(Boolean), pct: +process.env.CSK_PCT || 0.0045, width: +process.env.CSK_WIDTH || 2, min: +process.env.CSK_MIN || 660, stop: process.env.CSK_STOP === '0' ? 0 : (+process.env.CSK_STOP || 3) };
 async function cskQuotes(ids) { const qd = await rh('get_option_quotes', { instrument_ids: ids }), by = {}; (qd.results || []).forEach(z => { if (z.quote) by[z.quote.instrument_id] = z.quote; }); return by; }
@@ -1194,6 +1233,7 @@ async function tick() {
     try { if (open) await cdrLook(); await cdrManage(); } catch (e) { P.cdrErr = String(e && e.message || e).slice(0, 120); }
     try { if (open) await wheel2CspTick(); } catch (e) { P.wheel2CspErr = String(e && e.message || e).slice(0, 120); }
     if (open) { try { await orbLook(); await manageOrb(); } catch (e) { P.orbErr = String(e && e.message || e).slice(0, 120); } } else { try { await manageOrb(); } catch (e) {} }
+    try { if (open) await orbnLook(); await manageOrbN(); } catch (e) { P.orbnErr = String(e && e.message || e).slice(0, 120); } // ORBN: own try/catch so it can never disturb ORB, Sweep or any other book
     if (open) { try { await vtTick(); } catch (e) { P.vtErr = String(e && e.message || e).slice(0, 120); } }
     P.stage = 'entry'; if (!P.rec.pos && !P.rec.shut) await lookForEntry();
     P.msg = P.rec.shut ? 'Done for the day (' + P.rec.shut + ').' : (ext ? 'Extended hours (' + ext.name + '-market): scanning ' + EXT_SYMS.join(', ') + '. Last check ' : 'Running. Last check ') + new Date().toISOString().slice(11, 19) + ' UTC.';

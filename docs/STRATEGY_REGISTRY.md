@@ -120,6 +120,13 @@ Never had a real edge in any study (`bt`, `bt2`). Retired alongside EMA.
 
 **Not authorized:** options expression (Stage 1), a book, any live or sizing change. A pass means a separate James decision.
 
+## ORBN — ORB15 on the next-expiry option (own simulated book) — ACTIVE, FORWARD DATA ONLY (added 2026-11-19)
+
+**Source:** `bt28` variant C. **bt28 verdict: C FAILED the pre-registered criteria** (lock, $0.03 per leg per fill: QQQ +$2.97 n=211, interval -$26.27 to +$34.54, fails PF >= 1.10; SPY +$6.13 n=214, interval -$12.66 to +$27.14). Deployed at James's request purely to collect forward paper data; it is not a validated strategy.
+**Rules:** identical to ORB (above) except the option is the next listed expiry (about 1DTE): ORB15 signal, enter on the first closed 15-minute candle beyond the 9:30-9:44 range, stop = other side of the range, target 1.25R, stop to entry at +0.5R, flat 15:30 ET, -50% premium stop; one trade per symbol per day, 1 contract, skip if ask x 100 > $150 (`ORBN_MAXPREM`).
+**Execution:** simulated (buy at ask, sell at bid), own journal list `orbnk` in `rec:YYYY-MM-DD`; not in and not blocked by the correlation cap; trades tagged `trig:'orbn'`, `book:'orbn'`. `ORBN_ON=0` turns it off. Test `test/orbn.test.js`.
+**Compare with:** ORB's `orbk` trades the same day on the same signal. Report forward-paper results separately from the backtest, including spreads.
+
 ## CSK — call credit spreads (own book) — ACTIVE
 
 **The only 0DTE idea with a full real-price validation so far.**

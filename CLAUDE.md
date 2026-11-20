@@ -18,7 +18,7 @@ Node paper-trading server (`server.js`) on Render, journal in Supabase `scalp.kv
 
 ## Deploy procedure (push to `main` = auto-deploy, ~1 min restart)
 1. `node --check server.js` and run the relevant `node test/<name>.test.js` files.
-2. During market hours (9:30-16:00 ET), first check no book has an open position: main `pos`, `orbk.open`, `csk.open`, `x9k.open`, `fpk.open`, `cdrk.open` in today's `rec:YYYY-MM-DD` row. Soft rule: if one is open, tell James before pushing.
+2. During market hours (9:30-16:00 ET), first check no book has an open position: main `pos`, `orbk.open`, `orbnk.open`, `csk.open`, `x9k.open`, `fpk.open`, `cdrk.open` in today's `rec:YYYY-MM-DD` row. Soft rule: if one is open, tell James before pushing.
 3. Commit with a clear message, push to `main`.
 4. Confirm the Render deploy reached `status: live` (service `srv-dbov0erl550s73avgqp0`, workspace `tea-d9s84elbedkc73d2q9ig`).
 5. Add an item to the Supabase `notes` key after any strategy or code change, and update the relevant `docs/` files in the same commit.
