@@ -33,7 +33,7 @@ t('extras are purely additive: removing them leaves exactly the old row; P&L, lo
 t('values: spread, slippage vs mid, hold time, mfe/mae in option dollars, signalId, version', () => {
   const x = build(); x.P.rec.pos = Object.assign(basePos(), { qBid: 2.38, qAsk: 2.4, trough: 2.3 }); x.fns.closePaper('trail', 2.7, { bar: { c: 600.4 } });
   const r = x.P.rec.trades[0];
-  assert.strictEqual(r.strategyVersion, 'sweep-run-1'); assert.strictEqual(r.quotedBid, 2.38); assert.strictEqual(r.quotedAsk, 2.4); assert.strictEqual(r.spreadIn, 0.02);
+  assert.strictEqual(r.strategyVersion, 'sweep-run-2'); assert.strictEqual(r.quotedBid, 2.38); assert.strictEqual(r.quotedAsk, 2.4); assert.strictEqual(r.spreadIn, 0.02);
   assert.strictEqual(r.slippageVsMid, 0.01); assert.strictEqual(r.exitAsk, 2.74); assert.strictEqual(r.spreadOut, 0.04); assert.strictEqual(r.holdMinutes, 15);
   assert.strictEqual(r.mfe, 50); assert.strictEqual(r.mae, -10); assert.strictEqual(r.signalId, 'SPY|sweep|' + iso(T0 - 60000));
 });
@@ -44,7 +44,7 @@ t('real-order fill: quoted bid/ask survive even though entryAsk/entryBid were ov
 t('a position restored from the journal WITHOUT the new fields still closes; unknowable values are simply absent (no nulls, no NaN)', () => {
   const x = build(); const p = basePos(); delete p.live; x.P.rec.pos = p; x.fns.closePaper('eod', 2.5, null);
   const r = x.P.rec.trades[0]; assert.strictEqual(r.quotedBid, undefined); assert.strictEqual(r.spreadIn, undefined); assert.strictEqual(r.mae, undefined); assert.strictEqual(r.exitAsk, undefined);
-  assert.strictEqual(r.strategyVersion, 'sweep-run-1'); assert.ok(r.mfe > 0 && Number.isFinite(r.holdMinutes));
+  assert.strictEqual(r.strategyVersion, 'sweep-run-2'); assert.ok(r.mfe > 0 && Number.isFinite(r.holdMinutes));
   JSON.parse(JSON.stringify(r), (k, v) => { assert.ok(!(typeof v === 'number' && !Number.isFinite(v)), 'non-finite ' + k); return v; });
 });
 t('fail open: if the helper throws or is handed garbage, the trade row is still written and P&L is correct', () => {

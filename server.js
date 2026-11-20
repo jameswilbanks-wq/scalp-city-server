@@ -109,6 +109,7 @@ async function apTrade(method, path, body) {
   return j;
 }
 async function alpacaBuy1(sym, qty, cid) { return apTrade('POST', '/v2/orders', { symbol: sym, qty: String(qty), side: 'buy', type: 'market', time_in_force: 'day', client_order_id: cid }); }
+async function alpacaBuyLimit(sym, qty, cid, limitPx) { return apTrade('POST', '/v2/orders', { symbol: sym, qty: String(qty), side: 'buy', type: 'limit', limit_price: (Math.round(limitPx * 100) / 100).toFixed(2), time_in_force: 'day', client_order_id: cid }); } // SWEEPX_LIMIT: entry only; exits stay market orders
 async function alpacaSell1(sym, qty, cid) { return apTrade('POST', '/v2/orders', { symbol: sym, qty: String(qty), side: 'sell', type: 'market', time_in_force: 'day', client_order_id: cid }); }
 async function alpacaOrderStatus(id) { return apTrade('GET', '/v2/orders/' + id); }
 /* ---------- Wheel strategy (James's second, separate Alpaca paper account, added Nov 13): its own key pair,
@@ -520,7 +521,7 @@ function shutCheck() {
 /* Eval-harness Part 2 (docs/eval-harness-spec.md, approved 2026-11-18): extra, OPTIONAL fields on the main-book trade row so a trade's outcome can be explained later.
    ADDITIVE ONLY and FAIL OPEN: it reads values already held in memory, never calls the network, never changes an entry, exit, size or risk rule, and returns {} if anything throws.
    strategyVersion: bump on any material change to the book so samples are never mixed across versions. mfe/mae are option dollars on the full position, measured from the entry price against the best/worst bid seen at monitoring ticks (not tick-by-tick). */
-const MAIN_STRATEGY_VERSION = 'sweep-run-1';
+const MAIN_STRATEGY_VERSION = 'sweep-run-2'; // run-2 (2026-11-20): SWEEPX pack (limit entry, spread cap, time window, key-level and volume filters); run-1 = original rule
 function rowExtras(p, bid) {
   try {
     const q = p.qty || 1, r3 = x => Math.round(x * 1000) / 1000, ok = x => typeof x === 'number' && isFinite(x), o = {};
@@ -588,12 +589,17 @@ async function pollSweepReal() {
   let o; try { o = await alpacaOrderStatus(p.real.pending === 'entry' ? p.real.entryOrderId : p.real.exitOrderId); } catch (e) { return; } // transient error: retry next tick
   if (p.real.pending === 'entry') {
     if (o.status === 'filled') {
-      const px = +o.filled_avg_price; p.entryAsk = px; p.entryBid = px; p.peak = px; p.real.pending = null; saveRec();
+      const px = +o.filled_avg_price; p.entryAsk = px; p.entryBid = px; p.peak = px; p.real.pending = null; sweepxMark(P.rec, p.sxT, p.sym, { fill: 'filled', fillPx: px, fillS: Math.round((Date.now() - p.real.since) / 1000) }); saveRec();
     } else if (['canceled', 'expired', 'rejected'].includes(o.status)) {
-      logSignal(p.sym, { trig: 'sweep', dir: p.dir }, p.entryU, 'skipped', 'sweep real entry order ' + o.status + ', never filled'); P.rec.pos = null; saveRec();
-    } else if (Date.now() - p.real.since > 60000) {
-      try { await apTrade('DELETE', '/v2/orders/' + p.real.entryOrderId); } catch (e) {} // give up after a minute of no fill
-      logSignal(p.sym, { trig: 'sweep', dir: p.dir }, p.entryU, 'skipped', 'sweep real entry order never filled within 60s, canceled'); P.rec.pos = null; saveRec();
+      logSignal(p.sym, { trig: 'sweep', dir: p.dir }, p.entryU, 'skipped', 'sweep real entry order ' + o.status + ', never filled'); sweepxMark(P.rec, p.sxT, p.sym, { fill: o.status }); P.rec.pos = null; saveRec();
+    } else if (Date.now() - p.real.since > (p.real.limit ? (p.real.ms || 30000) : 60000)) {
+      try { await apTrade('DELETE', '/v2/orders/' + p.real.entryOrderId); } catch (e) {} // give up after a minute (market) or SWEEPX_LIMIT_MS (limit) of no fill
+      if (p.real.limit) { // a limit order can fill in the instant before the cancel lands: re-read it before dropping the position, so a filled contract is never orphaned at the broker
+        let o2; try { o2 = await alpacaOrderStatus(p.real.entryOrderId); } catch (e) { return; } // cannot confirm: keep the position pending and retry next tick
+        if (o2.status === 'filled') { const px = +o2.filled_avg_price; p.entryAsk = px; p.entryBid = px; p.peak = px; p.real.pending = null; sweepxMark(P.rec, p.sxT, p.sym, { fill: 'filled', fillPx: px, fillS: Math.round((Date.now() - p.real.since) / 1000) }); saveRec(); return; }
+        if (!['canceled', 'expired', 'rejected'].includes(o2.status)) return; // e.g. pending_cancel: resolved by the branch above next tick
+      }
+      logSignal(p.sym, { trig: 'sweep', dir: p.dir }, p.entryU, 'skipped', p.real.limit ? 'sweep limit entry $' + p.real.limit.toFixed(2) + ' not filled within ' + Math.round((p.real.ms || 30000) / 1000) + 's, canceled (not chased)' : 'sweep real entry order never filled within 60s, canceled'); sweepxMark(P.rec, p.sxT, p.sym, { fill: 'timeout' }); P.rec.pos = null; saveRec();
     }
   } else { // pending exit
     if (o.status === 'filled') { closePaper(p.real.exitReason, +o.filled_avg_price, p.real.exitInfo); }
@@ -1163,6 +1169,45 @@ async function vtTick() {
     await kset('vt', VT.doc);
   }
 }
+/* SWEEPX-BEGIN ---------- Sweep improvement pack (James approved 2026-11-19 night: ideas 1, 2 and 4, all live from 2026-11-20). Applies ONLY to trig 'sweep' on the main book. Each piece has its own switch (default ON; SWEEPX_ON=0 turns the whole pack off and restores the old behavior exactly):
+   1 cost:   SWEEPX_LIMIT  entry is a LIMIT order at the quote mid rounded up to the cent (never above the ask), canceled after SWEEPX_LIMIT_MS (30 s) and NOT chased; exits stay market orders.
+             SWEEPX_SPREAD skip when the quoted spread is above SWEEPX_MAXSPREAD ($0.03; logged live spreads were $0.02-$0.05).  SWEEPX_TIME only signal bars from 10:00 to 14:59 ET.
+   2 levels: SWEEPX_LEVEL  the sweep bar must also poke through AND close back across a key level (prior-day high/low, 9:30-9:44 opening-range high/low). A filter on the existing 20-bar sweep signal, not a new signal. Premarket levels are not in the bar feed.
+   4 volume: SWEEPX_RVOL   sweep-bar volume >= SWEEPX_RVOL_MIN (1.5) x the mean of the prior 20 bars of the day.
+   Thresholds are fixed in advance, not tuned. Missing data (no prior day, short opening range, fewer than 10 prior bars, any error) FAILS OPEN for that gate. EVERY sweep signal, taken or blocked, is journaled in r.sweepx with its features, the gates that blocked it and (for limit entries) the fill outcome, so each idea can be judged separately afterwards. Not a validated edge: all three are untested hypotheses. ---------- */
+const SWEEPX_ON = process.env.SWEEPX_ON !== '0', swx = k => SWEEPX_ON && process.env[k] !== '0';
+const SWEEPX_LIMIT = swx('SWEEPX_LIMIT'), SWEEPX_SPREAD = swx('SWEEPX_SPREAD'), SWEEPX_TIME = swx('SWEEPX_TIME'), SWEEPX_LEVEL = swx('SWEEPX_LEVEL'), SWEEPX_RVOL = swx('SWEEPX_RVOL');
+const SWEEPX_T0 = 600, SWEEPX_T1 = 900, SWEEPX_MAXSPREAD = +process.env.SWEEPX_MAXSPREAD || 0.03, SWEEPX_RVOL_MIN = +process.env.SWEEPX_RVOL_MIN || 1.5, SWEEPX_LIMIT_MS = +process.env.SWEEPX_LIMIT_MS || 30000;
+function sweepxFeatures(bars, bar, dir) {
+  const f = { tmin: bar.min, rvol: null, keyHit: [], keyNA: true, keys: {}, prevN: 0, orN: 0 }, rd = x => Math.round(x * 100) / 100;
+  try {
+    const sameDay = bars.filter(x => x.day === bar.day), prior = sameDay.filter(x => x.t < bar.t).slice(-20);
+    if (prior.length >= 10) { const m = prior.reduce((a, x) => a + x.v, 0) / prior.length; if (m > 0) f.rvol = rd(bar.v / m); }
+    const days = Array.from(new Set(bars.map(x => x.day))).filter(d => d < bar.day).sort(), pd = days[days.length - 1], keys = [];
+    if (pd) { const pb = bars.filter(x => x.day === pd); f.prevN = pb.length; if (pb.length >= 370 && pb[0].min === 570) keys.push(['pdH', Math.max.apply(null, pb.map(x => x.h))], ['pdL', Math.min.apply(null, pb.map(x => x.l))]); } // a partial prior day (e.g. server started mid-session) is not trusted
+    const orb = sameDay.filter(x => x.min >= 570 && x.min < 585); f.orN = orb.length;
+    if (orb.length >= 13) keys.push(['orH', Math.max.apply(null, orb.map(x => x.h))], ['orL', Math.min.apply(null, orb.map(x => x.l))]);
+    f.keyNA = keys.length === 0;
+    keys.forEach(k => { f.keys[k[0]] = rd(k[1]); const n = k[0], K = k[1]; if (dir > 0 && n.slice(-1) === 'L' && bar.l < K && bar.c > K) f.keyHit.push(n); if (dir < 0 && n.slice(-1) === 'H' && bar.h > K && bar.c < K) f.keyHit.push(n); });
+  } catch (e) { f.err = String((e && e.message) || e).slice(0, 80); }
+  return f;
+}
+function sweepxBlocks(f, spread) {
+  const b = [];
+  if (SWEEPX_TIME && f.tmin !== undefined && (f.tmin < SWEEPX_T0 || f.tmin >= SWEEPX_T1)) b.push('time');
+  if (SWEEPX_SPREAD && spread !== null && spread !== undefined && spread > SWEEPX_MAXSPREAD + 1e-9) b.push('spread');
+  if (SWEEPX_LEVEL && !f.err && !f.keyNA && f.keyHit.length === 0) b.push('level');
+  if (SWEEPX_RVOL && !f.err && f.rvol !== null && f.rvol < SWEEPX_RVOL_MIN) b.push('rvol');
+  return b;
+}
+function sweepxLimitPx(bid, ask) { const mid = (bid + ask) / 2, px = Math.min(ask, Math.ceil(mid * 100 - 1e-9) / 100); return Math.round(Math.max(px, bid) * 100) / 100; }
+function sweepxRecord(r, s, sig, inf, sx, action, extra) {
+  r.sweepx = r.sweepx || [];
+  const rec = Object.assign({ t: iso(Date.now()), sigT: inf.bar.t, sym: s, dir: sig.dir, px: inf.bar.c, lvl: sig.lvl, stopPx: sig.stopPx, action, spread: sx.spread === undefined ? null : sx.spread, blocks: sx.blocks || [] }, sx.f, extra || {});
+  r.sweepx.push(rec); if (r.sweepx.length > 300) r.sweepx.shift(); return rec;
+}
+function sweepxMark(r, sigT, sym, patch) { try { if (!r || !r.sweepx || sigT === undefined) return; for (let i = r.sweepx.length - 1; i >= 0; i--) { const x = r.sweepx[i]; if (x.sigT === sigT && x.sym === sym) { Object.assign(x, patch); return; } } } catch (e) { /* logging only */ } }
+/* SWEEPX-END */
 async function lookForEntry() {
   const r = P.rec, fresh = [];
   (P.scan || CFG.syms).forEach(s => {
@@ -1176,21 +1221,32 @@ async function lookForEntry() {
     const s = fresh[i], inf = P.info[s], sig = inf.signal;
     if (r.pos || i > 0) { logSignal(s, sig, inf.bar.c, 'skipped', r.pos ? 'a position is already open' : 'another symbol signaled first'); continue; }
     if (Date.now() < r.blockUntil) { logSignal(s, sig, inf.bar.c, 'skipped', 'cooling down after a stop'); continue; }
+    let sx = null; if (SWEEPX_ON && sig.trig === 'sweep') { try { sx = { f: sweepxFeatures(P.bars[s] || [], inf.bar, sig.dir), blocks: [] }; } catch (e) { sx = null; } } // SWEEPX features, journaled for every sweep signal
     let pk; try { pk = await pickContract(s, sig.dir, inf.bar.c, P.extNow && EXT_SYMS.includes(s) && !CFG.syms.includes(s) ? EXT_MAXPREM : 0); } catch (e) { pk = { why: 'could not load option data (' + ((e && e.code) || 'error') + ')' }; }
-    if (pk.why) { logSignal(s, sig, inf.bar.c, 'skipped', pk.why); continue; }
+    if (pk.why) { if (sx) { try { sx.blocks = sweepxBlocks(sx.f, null); sweepxRecord(r, s, sig, inf, sx, 'no_contract', { why: pk.why.slice(0, 100) }); } catch (e) {} } logSignal(s, sig, inf.bar.c, 'skipped', pk.why); continue; }
+    if (sx) { // SWEEPX gates (fail open on any error): a blocked signal is logged and journaled with its features, nothing else changes
+      try {
+        sx.spread = Math.round((pk.ask - pk.bid) * 100) / 100; sx.blocks = sweepxBlocks(sx.f, sx.spread);
+        if (sx.blocks.length) { sweepxRecord(r, s, sig, inf, sx, 'blocked'); logSignal(s, sig, inf.bar.c, 'skipped', 'sweepx blocked [' + sx.blocks.join(',') + ']: spread $' + sx.spread.toFixed(2) + ', time ' + Math.floor(sx.f.tmin / 60) + ':' + String(sx.f.tmin % 60).padStart(2, '0') + ' ET, rvol ' + (sx.f.rvol === null ? 'n/a' : sx.f.rvol) + ', key levels hit ' + (sx.f.keyHit.length ? sx.f.keyHit.join('+') : (sx.f.keyNA ? 'n/a' : 'none'))); continue; }
+      } catch (e) { sx.blocks = []; }
+    }
     { const corr = corrCapBlocks(r, s, (pk.ask || 0) * 100 * QTY); if (corr) { logSignal(s, sig, inf.bar.c, 'skipped', 'would push ' + s + '-group open risk to $' + corr.next.toFixed(0) + ', over the $' + CORR_CAP_USD + ' correlation cap'); continue; } }
     r.pos = { sym: s, dir: sig.dir, type: pk.type, strike: pk.strike, exp: pk.exp, inst: pk.inst, t0: Date.now(), sigT: inf.bar.t, entryAsk: pk.ask, entryBid: pk.bid, entryU: inf.bar.c, qAge: pk.qAge, qBid: pk.bid, qAsk: pk.ask, trough: pk.bid, qty: QTY,
       trailR: SWEEP_RUN && sig.trig === 'sweep' && sig.stopPx !== undefined && Math.abs(inf.bar.c - sig.stopPx) > 0.0001 * inf.bar.c ? Math.abs(inf.bar.c - sig.stopPx) : undefined, stopU: sig.stopPx !== undefined ? sig.stopPx : inf.bar.c - sig.dir * Math.max(sig.atr, 0.05), trig: sig.trig, lvl: sig.lvl, peak: pk.bid, iv: pk.iv, delta: pk.delta, flatMin: P.extNow && !CFG.syms.includes(s) ? P.extNow.flat : CFG.dte === 0 ? 935 : 950, ext: P.extNow && !CFG.syms.includes(s) ? P.extNow.name : undefined };
     if (SWEEP_REAL_ORDERS && sig.trig === 'sweep') {
       const cid = 'sweep-entry-' + r.pos.t0;
       try {
-        const o = await alpacaBuy1(pk.inst, r.pos.qty, cid);
+        const lim = SWEEPX_LIMIT ? sweepxLimitPx(pk.bid, pk.ask) : null; // SWEEPX_LIMIT: limit at the mid (rounded up to the cent, never above the ask); otherwise the old market order
+        const o = lim !== null ? await alpacaBuyLimit(pk.inst, r.pos.qty, cid, lim) : await alpacaBuy1(pk.inst, r.pos.qty, cid);
         r.pos.real = { entryOrderId: o.id, entryCid: cid, pending: 'entry', since: Date.now() };
+        if (lim !== null) { r.pos.real.limit = lim; r.pos.real.ms = SWEEPX_LIMIT_MS; }
+        if (sx) { try { r.pos.sxT = inf.bar.t; sweepxRecord(r, s, sig, inf, sx, 'entered', { quotedBid: pk.bid, quotedAsk: pk.ask, limitPx: lim, orderType: lim !== null ? 'limit' : 'market' }); } catch (e2) {} }
       } catch (e) {
         logSignal(s, sig, inf.bar.c, 'skipped', 'sweep real order failed: ' + String(e && e.message || e).slice(0, 160));
         r.pos = null; continue;
       }
     }
+    if (sx && r.pos.sxT === undefined) { try { r.pos.sxT = inf.bar.t; sweepxRecord(r, s, sig, inf, sx, 'entered', { quotedBid: pk.bid, quotedAsk: pk.ask, orderType: 'simulated' }); } catch (e2) {} }
     openShadow(r.pos);
     logSignal(s, sig, inf.bar.c, 'entered', pk.type + ' ' + pk.strike + ' exp ' + pk.exp + ' @ ask $' + pk.ask.toFixed(2) + (r.pos.real ? ' (real Alpaca paper order, pending fill)' : ''));
   }
