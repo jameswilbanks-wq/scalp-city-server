@@ -154,3 +154,6 @@ Live CSK Nov 12-19: 10 closed trades, +$278, 9 winners (winners avg about +$46, 
 
 ## 2026-11-20 — `bt33` CSK multi-day study built
 Code `study_csk_multiday.js`, launcher in `server.js` (one-shot, 245 s after boot, runs 30-60 minutes), test 10/10 with six mutation checks caught, runner dry-run clean on a fake feed. Local until pushed. Result lands in kv `bt33`.
+
+## 2026-11-20 — go-live planning
+Draft spec `docs/csk-order-path-spec.md` (Phase 1: real multi-leg paper orders for CSK, `CSK_REAL_ON` default off). Awaiting James's review and decisions D1-D4. Phase 2 (real money) not started; the paper-only rule stands. James to apply for Alpaca live options (Level 3) approval early and ask Alpaca the open questions (section 8 of the spec). `bt33` multi-day study still running/awaiting review.
