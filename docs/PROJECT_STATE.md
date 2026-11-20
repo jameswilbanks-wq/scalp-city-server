@@ -157,3 +157,6 @@ Code `study_csk_multiday.js`, launcher in `server.js` (one-shot, 245 s after boo
 
 ## 2026-11-20 — go-live planning
 Draft spec `docs/csk-order-path-spec.md` (Phase 1: real multi-leg paper orders for CSK, `CSK_REAL_ON` default off). Awaiting James's review and decisions D1-D4. Phase 2 (real money) not started; the paper-only rule stands. James to apply for Alpaca live options (Level 3) approval early and ask Alpaca the open questions (section 8 of the spec). `bt33` multi-day study still running/awaiting review.
+
+## 2026-11-20 — `bt33` CSK multi-day study result
+Control reproduced `bt9` exactly. No multi-day cell passed; the only passing cells are 0DTE hold: SPY 0.45% (live CSK) and QQQ 0.75% (a possible variant, hypothesis only). 0DTE edge at $0.03 per leg per fill is only about +$1.4-$1.7 per spread, so real fill quality is the key risk for going live. Multi-day spreads: no case for a book. 0DTE CSK stays; no live change.
