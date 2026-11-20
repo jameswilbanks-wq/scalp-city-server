@@ -145,3 +145,6 @@ Control reproduced `bt22` within tolerance. No variant passed for QQQ or SPY; X9
 
 ## 2026-11-20 — `bt32` X9 level-exit study built, awaiting push
 Approved by James; code `study_x9_level.js`, launcher in `server.js` (one-shot after boot, delay 225 s), test passes 11/11 with three mutation checks caught. Local only: push deferred because a CSK position was open at 11:54 ET. Pending local commits: `0d25ddf` (docs) and the bt32 commit. Push after 16:00 ET or with James's OK; then confirm Render `live` and read kv `bt32`.
+
+## 2026-11-20 — `bt32` X9 level-exit study result
+Pushed (7566dde, Render live 17:24 UTC), ran once, 0 errors. Control E0L reproduced bt31 exactly. No variant passed for QQQ or SPY; live X9 rules unchanged. Only lead: QQQ E4 (exit on a close through VWAP instead of EMA9) +$2.4 per trade over E0 in both train and lock, below the +$3 bar, interval spans zero; hypothesis only. SPY X9 has no edge under any exit tested (all negative at $0.03). Open question for James: keep SPY X9 running?
