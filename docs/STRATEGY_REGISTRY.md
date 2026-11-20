@@ -206,6 +206,12 @@ James asked whether the active strategies do meaningfully better on SPY or QQQ, 
 
 **No case emerged for isolating capital toward SPY anywhere.** QQQ is at or ahead of SPY in every active book studied. **Nothing has been implemented from this** — it's evidence for a future live-trading capital-isolation decision, not a change to any book's current configuration.
 
+## Triple RSI — daily mean reversion, SPY/QQQ shares — DRY-RUN ONLY (added 2026-11-19)
+
+**Rules (baseline, unchanged):** Wilder RSI(5) on adjusted daily closes < 30, three strictly lower RSI sessions, RSI three days ago < 60, close > SMA(200); exit when RSI crosses back above 50. Long shares only; no stop in the baseline. Decide on the completed daily bar, fill at the next open (Model B).
+**Backtest (historical, not profits; `docs/TRIPLE_RSI_README.md`):** 150 trades 1999-2026, Model B win rate 77%, +0.95%/trade, but in the market ~8% of days and +32.7% total on $2,000 vs buy-and-hold far higher; recent weaker (2026: 9 trades, 44% wins). Worst trade -9.8% with no stop.
+**Run mode:** Render cron `triple-rsi-dryrun`, `python -m execution.triple_rsi_paper --once`, config `config/triple_rsi.yaml` (`mode: DRY_RUN`). No broker calls, no keys. Not subject to the correlation cap (shares, no orders). Ephemeral state caveat in PROJECT_STATE.md. PAPER mode needs persisted state first and James's separate approval.
+
 ## Retired/rejected candidates
 
 - Single-stock 0DTE (PLTR, NVDA, TSLA) — lost $5-9/trade under every sweep exit tested (`bt8`).

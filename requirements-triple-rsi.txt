@@ -1,0 +1,9 @@
+# Python dependencies for the Triple RSI strategy (backtest + paper executor). Python 3.11+.
+# Install:  python -m venv .venv-trsi && .venv-trsi/Scripts/python -m pip install -r requirements-triple-rsi.txt   (Windows)
+pandas>=2.2
+numpy>=1.26
+matplotlib>=3.8
+pyyaml>=6.0
+requests>=2.31
+yfinance>=0.2.40      # keyless fallback data source for backtests / DRY_RUN; Alpaca data is used when credentials are in the environment
+tzdata>=2024.1        # America/New_York on Windows

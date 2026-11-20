@@ -1,0 +1,57 @@
+# Triple RSI configuration. No secrets live here: Alpaca credentials come ONLY from environment variables.
+# Live trading is not a supported mode: the executor accepts DRY_RUN or PAPER and nothing else.
+
+mode: DRY_RUN            # DRY_RUN = signals only, cannot submit orders | PAPER = Alpaca PAPER endpoint. Start in DRY_RUN until the integration tests pass.
+enabled: true            # master switch: false makes the executor exit without doing anything
+
+# Strategy parameters. These ARE the original published rules (the immutable baseline).
+# The executor refuses to run any other parameters unless reports/triple_rsi/promotion.json promoted exactly that label.
+strategy:
+  rsi_len: 5
+  oversold: 30
+  prior_max: 60
+  exit_level: 50
+  sma_len: 200
+  atr_len: 14
+  atr_stop_mult: null    # safeguard, not an original rule; null = off (baseline)
+  max_hold: null         # safeguard, not an original rule; null = off (baseline)
+  vix_max: null          # regime filter, not an original rule; null = off (baseline)
+
+universe: [SPY, QQQ]     # optional expansion: IWM, DIA, liquid stocks (stocks carry survivorship bias in backtests)
+
+account:
+  initial_equity: 2000   # the strategy's OWN notional; the Alpaca paper account is much larger and is never used for sizing
+  fractional: true
+
+risk:
+  max_alloc_pct: 0.20        # per symbol, of the strategy's own equity
+  max_combined_pct: 0.40     # all strategy positions together
+  risk_pct: 0.01             # planned loss budget per trade (only enforceable when an ATR stop is on)
+  daily_loss_pct: 0.02       # block NEW entries when the day's loss reaches this share of the start-of-day equity
+  slippage_bps: 5            # per side, Model B and paper-cost assumptions
+  gap_buffer_pct: 0.01       # extra overnight-gap allowance in the stop-loss estimate (stops never guarantee the loss cap)
+
+backtest:
+  history_start: "1999-01-01"
+  data_source: auto          # auto = Alpaca if credentials are in the environment, else yfinance (keyless)
+  model_a_slippage_bps: 0    # the original published model assumes no costs
+  splits:                    # chronological; the final test period is never used to choose a variant
+    train_end: "2012-12-31"
+    validation_end: "2018-12-31"   # final untouched test = 2019-01-01 to the end of the data
+
+selection:                   # gates a variant must pass before it can even be considered
+  min_validation_trades: 10
+  max_extra_drawdown_pts: 3.0
+  min_test_trades: 15
+  walk_forward_min_train_trades: 10
+  min_sharpe_improvement: 0.10        # a candidate must beat the baseline by this much on the untouched test, not just tie it
+  min_expectancy_improvement_pct: 0.10
+
+execution:
+  state_dir: reports/triple_rsi/state      # persistent signal / order / execution records (idempotency)
+  log_dir: reports/triple_rsi/logs
+  order_type: market                       # market orders in the regular session after the signal day
+  time_in_force: day
+  max_retries: 3
+  stale_data_max_days: 4                   # refuse to trade if the newest completed bar is older than this many calendar days
+  paper_base_url: https://paper-api.alpaca.markets

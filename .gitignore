@@ -1,3 +1,10 @@
 node_modules
 .env
 *.log
+
+# Triple RSI (Python) local artifacts
+.venv-trsi/
+__pycache__/
+data/triple_rsi/
+reports/triple_rsi/state/
+reports/triple_rsi/logs/

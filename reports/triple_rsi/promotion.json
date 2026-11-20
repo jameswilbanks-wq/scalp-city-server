@@ -1,0 +1,22 @@
+{
+  "promoted": false,
+  "candidate": {
+    "variant": "sma=150",
+    "label": "rsi5-os30-ex50-sma150-noatr-nohold-novix"
+  },
+  "reasons": [
+    "FAILED: test sharpe improves by a material margin",
+    "FAILED: test expectancy improves by a material margin"
+  ],
+  "checks": {
+    "test trades >= min": true,
+    "test expectancy > 0": true,
+    "test sharpe >= baseline": true,
+    "test max drawdown not materially worse": true,
+    "test sharpe improves by a material margin": false,
+    "test expectancy improves by a material margin": false
+  },
+  "gate_passed": false,
+  "human_approved": false,
+  "note": "17 variants were compared with the baseline; a pass here is weak evidence. The materiality checks were added after the first run (the first-run gate let a statistical tie through)."
+}

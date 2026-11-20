@@ -115,3 +115,6 @@ Still pending: whether to build BRT's Stage 0 study (`bt25`) given IB's failure 
 - **Sweep's lock-period backtest showing negative avg/PF<1 for both SPY and QQQ** (surfaced 2026-11-18 during the per-symbol analysis) — not yet investigated as its own question.
 - **Whether/how to isolate capital or strategies by symbol (SPY vs. QQQ) once live with real money** — James has asked to start thinking about this; the per-symbol evidence gathered 2026-11-18 is a first pass, not a decision.
 - **Whether to build the ORB exit study `bt27`** (spec: `orb-exit-study-spec.md`) — awaiting James's decision. Also open: a priority rule so the $500 correlation cap does not routinely block ORB.
+
+## 2026-11-19 — Triple RSI: dry run only, on a Render cron (James)
+James asked to deploy all built-but-undeployed strategies for tomorrow's evaluation. The only one fitting was Triple RSI. He first chose paper orders on the main Alpaca paper account, then, after being told the cron's disk is ephemeral (state lost between runs) and that keys/state/data-timing needed work, chose **dry run**. Decision: ship as DRY_RUN cron, no orders, no keys; PAPER only after state persistence is built and approved. BRT, IB, FP, EMA, VWAP were not deployed (unbuilt/failed/retired).
