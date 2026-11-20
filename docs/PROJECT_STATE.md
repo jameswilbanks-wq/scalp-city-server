@@ -139,3 +139,6 @@ James's observation that X9 runs up about +$100 and fades (QQQ has no trail; fla
 
 ## 2026-11-20 — `bt27` ORB15 exit study result
 Control reproduced `bt13` exactly. Live rules (L0) in the backtest: +$8.99 per trade at $0.01 per leg and +$4.99 at $0.03 (n=1330, Mar 2024 to 2026-11-11). None of V1-V9 beat them (all fail the pre-registered criteria); the -50% premium stop is neutral on average, not the cause of the live losses. Live ORB (9 trades, -$485) is statistically consistent with the thin backtest edge. ORB rules unchanged. Edge remains thin and fragile (config chosen from a grid; confirmation period not a clean holdout).
+
+## 2026-11-20 — `bt31` X9 exit study result
+Control reproduced `bt22` within tolerance. No variant passed for QQQ or SPY; X9 exit rules unchanged. QQQ's flat +70% target beat every trail/hybrid/lock tested (by $2.61-$7.61 per trade, intervals spanning zero); a trail banks more of the +40% runs (94-99% finish positive vs 79%) but lowers the average. SPY X9 (trail reference) is about -$0.83 per trade at $0.01 and -$4.83 at $0.03 over the last year and no exit variant makes it profitable at $0.03; whether to keep SPY X9 running is a question for James, not changed.
