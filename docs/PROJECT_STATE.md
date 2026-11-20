@@ -142,3 +142,6 @@ Control reproduced `bt13` exactly. Live rules (L0) in the backtest: +$8.99 per t
 
 ## 2026-11-20 — `bt31` X9 exit study result
 Control reproduced `bt22` within tolerance. No variant passed for QQQ or SPY; X9 exit rules unchanged. QQQ's flat +70% target beat every trail/hybrid/lock tested (by $2.61-$7.61 per trade, intervals spanning zero); a trail banks more of the +40% runs (94-99% finish positive vs 79%) but lowers the average. SPY X9 (trail reference) is about -$0.83 per trade at $0.01 and -$4.83 at $0.03 over the last year and no exit variant makes it profitable at $0.03; whether to keep SPY X9 running is a question for James, not changed.
+
+## 2026-11-20 — `bt32` X9 level-exit study built, awaiting push
+Approved by James; code `study_x9_level.js`, launcher in `server.js` (one-shot after boot, delay 225 s), test passes 11/11 with three mutation checks caught. Local only: push deferred because a CSK position was open at 11:54 ET. Pending local commits: `0d25ddf` (docs) and the bt32 commit. Push after 16:00 ET or with James's OK; then confirm Render `live` and read kv `bt32`.
