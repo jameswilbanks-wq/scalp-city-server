@@ -151,3 +151,6 @@ Pushed (7566dde, Render live 17:24 UTC), ran once, 0 errors. Control E0L reprodu
 
 ## 2026-11-20 — CSK live review and CSK2 added
 Live CSK Nov 12-19: 10 closed trades, +$278, 9 winners (winners avg about +$46, one -$134 QQQ 3x stop), $46.33 average over 6 closed days; no fees deducted; far above the backtest per-spread figure (unexplained, small sample). Added CSK2, a second entry window at 12:30 ET with the same rules (see DECISIONS). Test `test/csk2.test.js` (5). bt32 result docs ride in the same push.
+
+## 2026-11-20 — `bt33` CSK multi-day study built
+Code `study_csk_multiday.js`, launcher in `server.js` (one-shot, 245 s after boot, runs 30-60 minutes), test 10/10 with six mutation checks caught, runner dry-run clean on a fake feed. Local until pushed. Result lands in kv `bt33`.

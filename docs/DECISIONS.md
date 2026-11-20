@@ -139,3 +139,6 @@ After the live CSK review (10 trades Nov 12-19, +$278, 9 winners, avg $46.33 per
 
 ## 2026-11-20 — correlation cap $500 -> $800 for CSK2 (James: "change the cap to fit our new strategy here. yes, let's leave qqq as suggested.")
 Cap value was left to me; chose $800 (see RISK_POLICY). Applies to all books on SPY/QQQ. QQQ stays in CSK and CSK2 (SPY-only not adopted). Revert is one env var. Judge forward results per slot and per symbol.
+
+## 2026-11-20 — CSK multi-day study `bt33` approved and built (James: "test away as proposed (and this would not replace our 0DTE. it would be in addition.")
+Read-only study of call spreads expiring 1-5 trading days out, as an addition to 0DTE CSK (not a replacement). Spec and six criteria fixed before the run, including a plateau rule and 99% intervals because about 150 cells are compared. Control must reproduce `bt9`. Unmodeled: early assignment, overnight margin, bid/ask. No live rule changes; a passing cell would only be a candidate for a forward-paper book needing James's separate yes.
