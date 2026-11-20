@@ -91,7 +91,7 @@ James asked for a full review of live performance across all books after 8 tradi
 | EMA (main) | **Paused** — no profitable variant found in 3 studies | Retired Nov 13 |
 | VWAP (main) | **Paused** — never had an edge | Retired Nov 13 |
 | 15-min-break (main) | **Paused** — superseded by the ORB book | Retired Nov 13 |
-| ORB (opening-range breakout) | **Active**, 15-min version, rules unchanged. Detection fix and spread logging deployed Nov 18; exit study `bt27` proposed, awaiting James | Nov 10, switched to 15-min Nov 12 |
+| ORB (opening-range breakout) | **Active**, 15-min version, rules unchanged. Detection fix and spread logging deployed Nov 18; exit study `bt27` approved 2026-11-20, built and queued (read-only), result pending | Nov 10, switched to 15-min Nov 12 |
 | CSK (call credit spreads) | **Active** — only strategy with a full real-price validation; QQQ ahead of SPY both periods | Nov 11 |
 | X9 (EMA9×VWAP) | **Active**, per-symbol exit split (QQQ flat TP, SPY trail); QQQ clearly ahead of SPY even with each symbol's own best exit | Nov 12, split Nov 13 |
 | FP (fair pricing theory) | **RETIRED (`FP_ON=0`), Nov 18.** `bt26`'s trend filter does not fix the reversion leg in any of 4 tested variants. Any open FP position at the time of the change is still managed to its normal exit; only new entries are blocked | Nov 12 live; retired Nov 18 |
@@ -119,12 +119,12 @@ Both IB and BRT arrived the same way: James shared a YouTube video, a *different
 4. **No broker-resident stop exists for options at Alpaca (confirmed Nov 14)** — sweep's real-order pilot (and any future options real-order pilot) has no floor at the broker if the Render app itself goes down. Needs a decision before any live pilot: external watchdog, tighter outage alerting, or accept as documented risk.
 5. **AI overlay is armed but still unconfirmed** — CDR continues to fire zero live trades, so there's nothing yet for the overlay to have shadowed.
 6. **BRT's open decisions are unanswered** (DECISIONS.md 2026-11-14) — nothing can be built until James responds.
-7. **ORB exit study `bt27` awaiting James's decision**; the $500 correlation cap blocked 2 of 7 ORB signals and has no ORB priority rule.
+7. **ORB exit study `bt27` approved 2026-11-20 and running read-only on the server (result in kv `bt27`)**; the $500 correlation cap blocked 2 of 7 ORB signals and has no ORB priority rule.
 
 ## Next steps
 
 - Finish the move to Claude Code: verify connectors, repoint `RUNBOOK.md` and the morning-review prompt at the repo, commit `CLAUDE.md` and `docs/` outside market hours.
-- **Decide on ORB `bt27`** (spec in `orb-exit-study-spec.md`); meanwhile ORB keeps running unchanged. After about 15 live ORB trades, compare the new `spreadIn`/`spreadOut` data with the backtest's $0.01/fill assumption.
+- **Read the ORB `bt27` result when it lands** (spec in `orb-exit-study-spec.md`, section 7 fixes the interpretations); meanwhile ORB keeps running unchanged. After about 15 live ORB trades, compare the new `spreadIn`/`spreadOut` data with the backtest's $0.01/fill assumption.
 - **Look into Sweep's lock-period backtest showing negative avg/PF<1 on both symbols.**
 - **Get James's answers on BRT's open decisions** and, if approved, build `study_brt.js` (kv `bt25`) using the `study_ib.js` harness pattern.
 - Confirm Robinhood's early-close behavior for spreads.

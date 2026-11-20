@@ -1,6 +1,6 @@
 # ORB15 live-vs-backtest review and exit study (proposed `bt27`) — DRAFT
 
-Status: **study proposal only, not approved, not built.** Drafted 2026-11-18 after the first review of live ORB results. The two engineering fixes in section 4 (signal detection, bid/spread logging) were approved and deployed the same day (commit `7d78f9b`); ORB entry/exit rules are unchanged. Verified facts, assumptions and proposals are kept separate below.
+Status: **APPROVED by James 2026-11-20 ("yes"), built as `study_orb_exit.js`, runs once on the server and saves to kv `bt27`. See section 7 for the interpretations fixed BEFORE the run.** Original status: study proposal only, not approved, not built. Drafted 2026-11-18 after the first review of live ORB results. The two engineering fixes in section 4 (signal detection, bid/spread logging) were approved and deployed the same day (commit `7d78f9b`); ORB entry/exit rules are unchanged. Verified facts, assumptions and proposals are kept separate below.
 
 ## 1. Verified facts (from Supabase journal, `bt13`, repo code, Alpaca bars, Render deploys)
 
@@ -67,3 +67,15 @@ Track exit-mix vs backtest, signals per symbol-session (expect about 1; every mi
 1. Approve building `bt27` as specified (pending).
 2. ~~Approve the `orb15Sig` robustness fix and entry-bid logging~~ — approved and deployed 2026-11-18.
 3. Keep ORB running unchanged while `bt27` is decided/run (recommended; no rule changes made).
+
+## 7. Interpretations fixed before the run (2026-11-20, written before any bt27 result existed)
+The spec above left these open; they are fixed here and are not to be changed after results arrive.
+1. **V3, V4, V5 keep the live -50% premium stop.** They replace only the underlying-based breakeven (underlying BE off). The underlying stop (other side of the range), the 1.25R target and the 15:30 time exit stay. V1 has no premium stop at all; V2 uses -35%.
+2. **Premium exits use closed 1-minute option bars.** A bar counts as closed at bar.t + 60 s; the exit price is that bar's close. Entry price is the open of the entry-minute bar (as `bt13`). Underlying exits keep `bt13`'s 5-minute logic and exit at the last option trade at that time.
+3. **Premium lock/trail arming** uses closes and takes effect from the following bar: V3 arms at a close >= +30% over entry (stop = entry premium), V4 at >= +50%, V5 arms when the peak close >= +25% and exits when a close <= entry + 50% of (peak - entry).
+4. **Periods:** dev = 2024-03 to 2025-12, confirmation = 2026-01 to 2026-11-11 (not an untouched holdout, as stated above). Sessions from 2026-11-12 are excluded; they are the forward-paper period.
+5. **Criteria, exact reading:** (1) variant average per trade minus L0 average per trade >= $5 in all four symbol x period cells, at $0.01 per leg; (2) pooled paired-by-day bootstrap 95% interval of that difference excludes zero (2000 resamples of days, both symbols together, fixed seed); (3) pooled average after dropping the variant's best 5 trades is above zero at $0.01; (4) criterion (1) repeated at $0.03 per leg; (5) at least 100 trades per symbol x period cell after any filter. Note for the record: the improvement over L0 is mathematically the same at any per-leg cost (both sides pay the same two legs), so (4) cannot fail where (1) passes. To keep the cost test meaningful, **absolute average at $0.03 per leg is reported for every variant** and a variant whose absolute average is at or below zero at $0.03 is described as "less bad, not profitable" and goes to James, not to a replacement.
+6. **V9:** both V9a (V3 + V6) and V9b (V3 + V7) are computed and logged; V9 is reported only if V3 and that filter each pass all five criteria alone, choosing the one with the larger pooled improvement.
+7. **Variants logged:** L0, V1 to V8, V9a, V9b (11 per symbol, 22 total), plus the diagnostics: exit mix, average entry premium, and for L0 premium-stop trades the result had no premium stop been used.
+8. **Control:** V1 must reproduce `bt13` cells for e15 / 1.25R / BE 0.5R (trade count within 3, average within $0.50). If it does not, every result is reported as unverified.
+9. **Nothing changes automatically.** No ORB rule is changed by this study; any replacement or pause is James's decision.
