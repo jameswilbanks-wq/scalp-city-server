@@ -136,3 +136,6 @@ Approved the five variants E1-E5 (two closes, 0.25 ATR buffer, 2-candle grace, V
 
 ## 2026-11-20 — CSK2: second call-spread entry window, live in paper (James: "put that second one in live asap")
 After the live CSK review (10 trades Nov 12-19, +$278, 9 winners, avg $46.33 per closed day, no fees deducted, sample too small) James asked for a second entry time to build forward data faster. Decision: same rules as CSK (0.45% OTM short, $2 width, 3x stop, natural fills, correlation cap unchanged), second window default 12:30 ET (`CSK2_MIN=750`, 20-minute window), one spread per symbol per slot; slot 1 unchanged. `CSK2_ON=0` turns it off. 12:30 was my choice, **not backtested**; it is a forward test, to be judged per slot after about 30 trades. James also floated SPY-only: not adopted (backtest has QQQ ahead of SPY in both periods; live SPY 6/6 vs QQQ 3/4 is too few trades).
+
+## 2026-11-20 — correlation cap $500 -> $800 for CSK2 (James: "change the cap to fit our new strategy here. yes, let's leave qqq as suggested.")
+Cap value was left to me; chose $800 (see RISK_POLICY). Applies to all books on SPY/QQQ. QQQ stays in CSK and CSK2 (SPY-only not adopted). Revert is one env var. Judge forward results per slot and per symbol.
