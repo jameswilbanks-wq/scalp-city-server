@@ -133,3 +133,6 @@ Both IB and BRT arrived the same way: James shared a YouTube video, a *different
 - Build the day-type (chop/trend) regime-matching backtest (not started).
 - Decide how to live with the no-broker-stop gap before any live pilot (blocker 4 above).
 - When James is ready to go live with real money: revisit the per-symbol capital-isolation question with fresh eyes (and, ideally, more live-paper days by then) before acting on it — nothing has been implemented, this is evidence-gathering only.
+
+## 2026-11-20 — X9 exit study `bt31` (read-only) queued
+James's observation that X9 runs up about +$100 and fades (QQQ has no trail; flat +70% target never reached by a +40% run) led to `bt31` (spec `x9-exit-study-spec.md`, 12 variants per symbol vs the current live rules). Runs once on the server after boot (about 215 s; waits for any running `bt27`), result in kv `bt31` (progress `bt31p`). No live X9 behavior change. `bt27` (ORB exit study) finished the same day; its analysis is saved and not yet reviewed with James.

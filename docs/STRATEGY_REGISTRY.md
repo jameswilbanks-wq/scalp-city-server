@@ -142,6 +142,9 @@ Never had a real edge in any study (`bt`, `bt2`). Retired alongside EMA.
 
 ## X9 — EMA9×VWAP crossover (own book) — ACTIVE, per-symbol exit split
 
+**2026-11-20 exit review:** QQQ exit = flat +70% take-profit only (no trail); SPY exit = trail (arm +25%, keep half the peak gain). Live Nov 12-20: 18 trades, net -$236; 7 trades peaked at +$42 or more and gave back most of it. Exit study `bt31` approved and queued (read-only, 12 variants, criteria fixed in `x9-exit-study-spec.md`). No rule change.
+
+
 **Hypothesis:** from a creator reel (@austin.daytrades). EMA9 crossing above/below a VWAP-like average signals direction.
 **Underlyings:** SPY, QQQ (falls back to `CFG.syms`, so inherits the IWM exclusion). **Expiry:** 0DTE.
 **Entry:** EMA9 crossing above VWAP → buy same-day ATM call; crossing below → buy put. Entries 9:45-15:30 ET, one open position per symbol.
