@@ -71,3 +71,5 @@ The CDR AI trade-management overlay (see STRATEGY_REGISTRY.md) is shadow-log onl
 - Any real-order pilot for CDR (only after it has a backtest and a sample).
 - **How to close the no-broker-stop gap for options** before any live pilot (see "General operational risk notes" above).
 - Whether/how to extend the AI advisory overlay beyond CDR shadow-logging, once there's enough shadow-decision history to judge it against CDR's own deterministic outcomes.
+
+**2026-11-20 CSK2:** up to two CSK spreads per symbol per day (one per slot), so up to four open at once. The unchanged $500 correlation cap bounds this: with spreads risking about $140 each, a fourth concurrent SPY/QQQ spread is normally blocked and logged as skipped. No limit was changed. Raising the cap needs James's explicit yes.

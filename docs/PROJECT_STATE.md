@@ -148,3 +148,6 @@ Approved by James; code `study_x9_level.js`, launcher in `server.js` (one-shot a
 
 ## 2026-11-20 — `bt32` X9 level-exit study result
 Pushed (7566dde, Render live 17:24 UTC), ran once, 0 errors. Control E0L reproduced bt31 exactly. No variant passed for QQQ or SPY; live X9 rules unchanged. Only lead: QQQ E4 (exit on a close through VWAP instead of EMA9) +$2.4 per trade over E0 in both train and lock, below the +$3 bar, interval spans zero; hypothesis only. SPY X9 has no edge under any exit tested (all negative at $0.03). Open question for James: keep SPY X9 running?
+
+## 2026-11-20 — CSK live review and CSK2 added
+Live CSK Nov 12-19: 10 closed trades, +$278, 9 winners (winners avg about +$46, one -$134 QQQ 3x stop), $46.33 average over 6 closed days; no fees deducted; far above the backtest per-spread figure (unexplained, small sample). Added CSK2, a second entry window at 12:30 ET with the same rules (see DECISIONS). Test `test/csk2.test.js` (5). bt32 result docs ride in the same push.

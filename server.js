@@ -756,14 +756,17 @@ async function manageOrbN() {
 /* ORBN-END */
 /* ---------- Call credit spread paper book (CSK). James approved 2026-11-11 after studies bt6/bt7 on real option prices: selling same-day call spreads from 11:00 ET on SPY and QQQ and HOLDING TO THE CLOSE was positive in both the tuning and the locked period on both symbols ($2 wide about +$4 to +$5 per spread per day at $0.01 per leg slippage, about 87-90% winners, worst day about -$200); closing at 15:30 lost and an underlying stop gave up most of the profit. The open question is the real bid/ask cost, so this book records live quotes. One spread per symbol per day: at 11:00 ET sell the call nearest 0.45% above the price and buy the call $2 higher (same-day expiry). Paper fill at the NATURAL price (sell at the bid, buy at the ask); the mid is recorded too. Held to the close and settled on the last price (capped at the width). It also records, without acting on them, the cost to close at 15:30 ET and when the price first closes above the short strike. Assignment and early-close risks at a real broker are NOT modeled. CSK_ON=0 turns it off. ---------- */
 const CSK_ON = process.env.CSK_ON !== '0', CSK = { syms: (process.env.CSK_SYMS || 'SPY,QQQ').split(',').map(x => x.trim().toUpperCase()).filter(Boolean), pct: +process.env.CSK_PCT || 0.0045, width: +process.env.CSK_WIDTH || 2, min: +process.env.CSK_MIN || 660, stop: process.env.CSK_STOP === '0' ? 0 : (+process.env.CSK_STOP || 3) };
+/* CSK2 (James approved 2026-11-20: "put that second one in live asap"): a SECOND entry window for the same call-spread rules (same 0.45% OTM short strike, $2 width, 3x stop, natural fills, correlation cap), default 12:30 ET (min 750), one spread per symbol per slot. UNTESTED hypothesis (no backtest of this entry time yet; see docs/STRATEGY_REGISTRY.md). Slot 1 keeps its original done-key (sym) so it is unchanged. CSK2_ON=0 turns the second slot off; CSK2_MIN moves it. */
+const CSK2 = { on: process.env.CSK2_ON !== '0', min: +process.env.CSK2_MIN || 750 };
+function cskSlot(min) { if (min >= CSK.min && min < CSK.min + 20) return { n: 1, tag: '' }; if (CSK2.on && min >= CSK2.min && min < CSK2.min + 20) return { n: 2, tag: '@2' }; return null; }
 async function cskQuotes(ids) { const qd = await rh('get_option_quotes', { instrument_ids: ids }), by = {}; (qd.results || []).forEach(z => { if (z.quote) by[z.quote.instrument_id] = z.quote; }); return by; }
 async function cskLook() {
   const r = P.rec; if (!CSK_ON || !r || r.shut || !marketOpen(Date.now())) return;
   r.csk = r.csk || { open: [], trades: [], pnl: 0, done: {} };
-  const e = nowET(); if (e.min < CSK.min || e.min >= CSK.min + 20) return;
+  const e = nowET(), slot = cskSlot(e.min); if (!slot) return;
   for (const s of CSK.syms) {
-    if (r.csk.done[s]) continue; const inf = P.info[s]; if (!inf || !inf.bar) continue;
-    r.csk.done[s] = true; const px = inf.bar.c, fake = { dir: -1, trig: 'cspread' };
+    const dk = s + slot.tag; if (r.csk.done[dk]) continue; const inf = P.info[s]; if (!inf || !inf.bar) continue;
+    r.csk.done[dk] = true; const px = inf.bar.c, fake = { dir: -1, trig: 'cspread' };
     try {
       const ch = await getChain(s), today = e.day; if (!ch.dates.includes(today)) { logSignal(s, fake, px, 'skipped', 'call spread: no same-day expiry'); continue; }
       const list = (await getInst(ch, today, 'call')).slice().sort((a, b) => a.strike - b.strike), want = px * (1 + CSK.pct);
@@ -777,7 +780,7 @@ async function cskLook() {
       if (!(nat >= 0.03)) { logSignal(s, fake, px, 'skipped', 'call spread: credit under 3 cents at the bid/ask (' + nat.toFixed(2) + ', mid ' + mid.toFixed(2) + ')'); continue; }
       const width = lg.strike - sh.strike, addRisk = Math.max(0, width * 100 - nat * 100);
       { const corr = corrCapBlocks(r, s, addRisk); if (corr) { logSignal(s, fake, px, 'skipped', 'call spread: would push ' + s + '-group open risk to $' + corr.next.toFixed(0) + ', over the $' + CORR_CAP_USD + ' correlation cap'); continue; } }
-      r.csk.open.push({ sym: s, exp: today, ks: sh.strike, kl: lg.strike, instS: sh.id, instL: lg.id, t0: Date.now(), entryU: px, sBid: sB, sAsk: sA, lBid: lB, lAsk: lA, creditNat: nat, creditMid: mid, qAge: age, width });
+      r.csk.open.push({ sym: s, exp: today, ks: sh.strike, kl: lg.strike, instS: sh.id, instL: lg.id, t0: Date.now(), entryU: px, sBid: sB, sAsk: sA, lBid: lB, lAsk: lA, creditNat: nat, creditMid: mid, qAge: age, width, slot: slot.n });
       logSignal(s, fake, px, 'entered', 'sold call spread ' + sh.strike + '/' + lg.strike + ' exp ' + today + ' for $' + nat.toFixed(2) + ' at the bid/ask (mid $' + mid.toFixed(2) + ')');
     } catch (err) { logSignal(s, fake, px, 'skipped', 'call spread: could not load option data (' + ((err && err.code) || (err && err.message) || 'error') + ')'); }
   }
@@ -785,7 +788,7 @@ async function cskLook() {
 }
 function cskClose(p, costNat, costMid, u, reason) {
   const k = P.rec.csk, pnl = Math.round((p.creditNat - costNat) * 10000) / 100, pnlMid = Math.round((p.creditMid - costMid) * 10000) / 100;
-  k.trades.push({ sym: p.sym, type: 'call spread', strike: p.ks, kl: p.kl, exp: p.exp, entryT: iso(p.t0), exitT: iso(Date.now()), entryU: p.entryU, closeU: u, creditNat: p.creditNat, creditMid: p.creditMid, sBid: p.sBid, sAsk: p.sAsk, lBid: p.lBid, lAsk: p.lAsk, closeNat: costNat, closeMid: costMid, pnl, pnlMid, reason, trig: 'cspread', qty: 1, at330: p.at330 || null, ustop: p.ustop || null, pnl330: p.at330 ? Math.round((p.creditNat - p.at330.closeNat) * 10000) / 100 : null, pnlUstop: p.ustop ? Math.round((p.creditNat - p.ustop.closeNat) * 10000) / 100 : null });
+  k.trades.push({ sym: p.sym, type: 'call spread', strike: p.ks, kl: p.kl, exp: p.exp, entryT: iso(p.t0), exitT: iso(Date.now()), entryU: p.entryU, closeU: u, creditNat: p.creditNat, creditMid: p.creditMid, sBid: p.sBid, sAsk: p.sAsk, lBid: p.lBid, lAsk: p.lAsk, closeNat: costNat, closeMid: costMid, pnl, pnlMid, reason, trig: 'cspread', qty: 1, slot: p.slot || 1, at330: p.at330 || null, ustop: p.ustop || null, pnl330: p.at330 ? Math.round((p.creditNat - p.at330.closeNat) * 10000) / 100 : null, pnlUstop: p.ustop ? Math.round((p.creditNat - p.ustop.closeNat) * 10000) / 100 : null });
   k.pnl = Math.round((k.pnl + pnl) * 100) / 100; k.open = k.open.filter(x => x !== p);
 }
 async function cskManage() {
