@@ -1,6 +1,6 @@
 # CSK real order path (Alpaca PAPER first): build spec
 
-Status: **DRAFT FOR JAMES'S REVIEW. Not approved, not built.** Written 2026-11-20 after James asked how to go live and said "yes" to drafting this spec. Facts, assumptions, open decisions and things only James can do are kept separate. **This spec covers Phase 1 only: real multi-leg orders against the Alpaca PAPER account. Going live with real money is Phase 2, listed in section 9 as gates only, and needs a separate explicit decision and a change to the paper-only rule in `CLAUDE.md`.**
+Status: **PHASE 1 APPROVED (D1-D4 yes, 2026-11-20) AND BUILT, SWITCHED OFF (CSK_REAL_ON unset). Real-money Phase 2 not approved.** Written 2026-11-20 after James asked how to go live and said "yes" to drafting this spec. Facts, assumptions, open decisions and things only James can do are kept separate. **This spec covers Phase 1 only: real multi-leg orders against the Alpaca PAPER account. Going live with real money is Phase 2, listed in section 9 as gates only, and needs a separate explicit decision and a change to the paper-only rule in `CLAUDE.md`.**
 
 ## 1. Why
 CSK is the only book with a full real-price validation, and the plan (PROJECT_STATE goal ladder) is "30-60 trades, then go live small". Today CSK places **no orders at all**: it books simulated natural fills (`cskLook`/`cskClose` in `server.js`). Going live safely means first proving a real order path, in paper, that behaves like the simulated book and tells us what real fills would cost.

@@ -781,6 +781,7 @@ async function cskLook() {
       const width = lg.strike - sh.strike, addRisk = Math.max(0, width * 100 - nat * 100);
       { const corr = corrCapBlocks(r, s, addRisk); if (corr) { logSignal(s, fake, px, 'skipped', 'call spread: would push ' + s + '-group open risk to $' + corr.next.toFixed(0) + ', over the $' + CORR_CAP_USD + ' correlation cap'); continue; } }
       r.csk.open.push({ sym: s, exp: today, ks: sh.strike, kl: lg.strike, instS: sh.id, instL: lg.id, t0: Date.now(), entryU: px, sBid: sB, sAsk: sA, lBid: lB, lAsk: lA, creditNat: nat, creditMid: mid, qAge: age, width, slot: slot.n });
+      try { await cskRealEnter(r, r.csk.open[r.csk.open.length - 1]); } catch (err) { P.cskRealErr = String(err && err.message || err).slice(0, 120); }
       logSignal(s, fake, px, 'entered', 'sold call spread ' + sh.strike + '/' + lg.strike + ' exp ' + today + ' for $' + nat.toFixed(2) + ' at the bid/ask (mid $' + mid.toFixed(2) + ')');
     } catch (err) { logSignal(s, fake, px, 'skipped', 'call spread: could not load option data (' + ((err && err.code) || (err && err.message) || 'error') + ')'); }
   }
@@ -790,6 +791,7 @@ function cskClose(p, costNat, costMid, u, reason) {
   const k = P.rec.csk, pnl = Math.round((p.creditNat - costNat) * 10000) / 100, pnlMid = Math.round((p.creditMid - costMid) * 10000) / 100;
   k.trades.push({ sym: p.sym, type: 'call spread', strike: p.ks, kl: p.kl, exp: p.exp, entryT: iso(p.t0), exitT: iso(Date.now()), entryU: p.entryU, closeU: u, creditNat: p.creditNat, creditMid: p.creditMid, sBid: p.sBid, sAsk: p.sAsk, lBid: p.lBid, lAsk: p.lAsk, closeNat: costNat, closeMid: costMid, pnl, pnlMid, reason, trig: 'cspread', qty: 1, slot: p.slot || 1, at330: p.at330 || null, ustop: p.ustop || null, pnl330: p.at330 ? Math.round((p.creditNat - p.at330.closeNat) * 10000) / 100 : null, pnlUstop: p.ustop ? Math.round((p.creditNat - p.ustop.closeNat) * 10000) / 100 : null });
   k.pnl = Math.round((k.pnl + pnl) * 100) / 100; k.open = k.open.filter(x => x !== p);
+  try { cskRealOnClose(p, costNat, reason, /^expired/.test(reason)); } catch (err) { P.cskRealErr = String(err && err.message || err).slice(0, 120); }
 }
 async function cskManage() {
   const k = P.rec && P.rec.csk; if (!k || !k.open.length) return;
@@ -817,6 +819,44 @@ async function cskManage() {
     saveRec();
   } catch (err) { P.cskErr = String(err && err.message || err).slice(0, 120); }
 }
+/* CSK-REAL-BEGIN. CSK real order path, Phase 1 (James approved 2026-11-20: "D1 - yes D2 - yes D3 - ok D4 - yes existing"; spec docs/csk-order-path-spec.md). Mirrors each SIMULATED CSK spread with a real multi-leg limit order on the Alpaca PAPER account (apTrade is hardcoded to the paper endpoint; no live key exists here). OFF unless CSK_REAL_ON=1. The simulated book still makes every entry/exit decision and is untouched; this only adds real orders, reconciles them against Alpaca once a minute (two consecutive mismatches halt new real orders for the day) and records slippage. CSK_REAL_QTY (default 1, hard max 5) lots; CSK_REAL_DAYLIMIT (default 540) = daily real-loss halt in $. D2: at 15:50 ET real spreads with the underlying at/above the short strike or within 0.10% of it are closed (real orders only; the simulated book still holds to expiry). */
+const CSKO = require('./csk_orders.js');
+const CSK_REAL_ON = process.env.CSK_REAL_ON === '1', CSK_REAL_QTY = Math.min(5, Math.max(1, Math.floor(+process.env.CSK_REAL_QTY || 1))), CSK_REAL_DAYLIMIT = +process.env.CSK_REAL_DAYLIMIT || 540;
+const cskRealApi = { place: p => apTrade('POST', '/v2/orders', p), get: id => apTrade('GET', '/v2/orders/' + id + '?nested=true'), cancel: id => apTrade('DELETE', '/v2/orders/' + id), getByCid: cid => apTrade('GET', '/v2/orders:by_client_order_id?client_order_id=' + encodeURIComponent(cid)), openOrders: () => apTrade('GET', '/v2/orders?status=open&limit=100'), positions: () => apTrade('GET', '/v2/positions') };
+function cskRealState(r) { r.cskreal = r.cskreal || { list: [], halted: false, haltWhy: '', lastRecon: 0, reconMiss: 0 }; return r.cskreal; }
+function cskRealDayLoss(st) { return Math.round(st.list.reduce((a, x) => a + (+x.realPnl || 0), 0) * 100) / 100; }
+async function cskRealEnter(r, p) {
+  if (!CSK_REAL_ON || !p) return; const st = cskRealState(r), R = CSKO.newReal(p, { qty: CSK_REAL_QTY }, Date.now()); p.realId = R.id; if (st.list.some(x => x.id === R.id)) return;
+  let bp = NaN; try { const a = await apTrade('GET', '/v2/account'); bp = +a.options_buying_power; } catch (e) {}
+  const why = isFinite(bp) ? CSKO.riskCheck({ on: true, halted: st.halted, haltWhy: st.haltWhy, qty: R.qty, qtyMax: CSK_REAL_QTY, ks: p.ks, kl: p.kl, expShort: p.exp, expLong: p.exp, bp, maxLoss: p.width * 100 - p.creditNat * 100, dayLoss: cskRealDayLoss(st), dayLimit: CSK_REAL_DAYLIMIT }) : 'account read failed, no real order sent';
+  if (why) { R.state = 'blocked'; R.why = why; } st.list.push(R);
+}
+function cskRealOnClose(p, costNat, reason, expired) {
+  const st = P.rec && P.rec.cskreal, R = st && p.realId ? st.list.find(x => x.id === p.realId) : null; if (!R) return;
+  if (expired) { CSKO.settleReal(R, costNat, Date.now()); return; }
+  if (/^stop/.test(reason) && !CSKO.startExit(R, reason, costNat, Date.now()) && R.state === 'entering') R.pendingStop = { reason, costNat };
+}
+async function cskRealTick() {
+  const r = P.rec, st = r && r.cskreal; if (!st || !st.list.length) return;
+  const e = nowET(), ctx = { now: Date.now(), api: cskRealApi, cfg: { creditSign: -1 }, afterCutoff: e.min >= 955 }; let changed = false;
+  for (const R of st.list) {
+    if (R.state === 'open' && R.pendingStop) { CSKO.startExit(R, R.pendingStop.reason, R.pendingStop.costNat, ctx.now); R.pendingStop = null; changed = true; }
+    if (R.state === 'open' && !R.preChecked && e.min >= 950 && e.min < 955) {
+      const u = P.info[R.sym] && P.info[R.sym].bar ? P.info[R.sym].bar.c : null;
+      if (CSKO.preCloseDecision(u, R.ks, 0.001)) { try { const q = await cskQuotes([R.instS, R.instL]), a = q[R.instS], b = q[R.instL]; if (a && b) { CSKO.startExit(R, 'pre-close D2 (short ' + R.ks + ', underlying ' + u + ')', Math.max(0.01, Math.round((+a.ask_price - +b.bid_price) * 100) / 100), ctx.now); R.preChecked = true; changed = true; } } catch (err) {} }
+      else if (u !== null) { R.preChecked = true; changed = true; }
+    }
+    const was = R.state; let ev; try { ev = await CSKO.advance(R, ctx); } catch (err) { R.error = String(err && err.message || err).slice(0, 160); }
+    if (ev || R.state !== was) { changed = true; if (ev) slog('csk_real', { id: R.id, ev, state: R.state, why: R.why || null }); }
+  }
+  if (Date.now() - (st.lastRecon || 0) >= 60000 && st.list.some(x => !['nofill', 'blocked'].includes(x.state))) {
+    st.lastRecon = Date.now(); changed = true;
+    try { const probs = CSKO.reconcile(st.list, await cskRealApi.openOrders(), await cskRealApi.positions()); if (probs.length) { st.reconMiss = (st.reconMiss || 0) + 1; st.lastProblems = probs.slice(0, 5); if (st.reconMiss >= 2 && !st.halted) { st.halted = true; st.haltWhy = probs.join('; ').slice(0, 300); } } else st.reconMiss = 0; } catch (err) {}
+  }
+  if (changed) saveRec();
+}
+function cskRealSummary(r) { const st = r && r.cskreal; return st ? { on: CSK_REAL_ON, qty: CSK_REAL_QTY, halted: st.halted, haltWhy: st.haltWhy, dayLoss: cskRealDayLoss(st), problems: st.lastProblems || [], list: st.list.map(x => ({ id: x.id, state: x.state, why: x.why || null, credit: x.fillPx === undefined ? null : x.fillPx, slip: x.slip === undefined ? null : x.slip, pnl: x.realPnl === undefined ? null : x.realPnl })) } : null; }
+/* CSK-REAL-END */
 /* ---------- Opening-range iron condor paper book (CDR). James shared a standalone, test-covered Python prototype
    (bot.py/test_bot.py) on 2026-11-12 and asked to add it; ported here as a new book so it runs on the same always-on
    server as everything else, journaled the same way, instead of a separate kept-awake local process. One difference
@@ -1289,6 +1329,7 @@ async function tick() {
     try { if (open) await fpLook(); await fpManage(); } catch (e) { P.fpErr = String(e && e.message || e).slice(0, 120); }
     try { if (open) await x9Look(); await x9Manage(); } catch (e) { P.x9Err = String(e && e.message || e).slice(0, 120); }
     try { if (open) await cskLook(); await cskManage(); } catch (e) { P.cskErr = String(e && e.message || e).slice(0, 120); }
+    try { await cskRealTick(); } catch (e) { P.cskRealErr = String(e && e.message || e).slice(0, 120); }
     try { if (open) await cdrLook(); await cdrManage(); } catch (e) { P.cdrErr = String(e && e.message || e).slice(0, 120); }
     try { if (open) await wheel2CspTick(); } catch (e) { P.wheel2CspErr = String(e && e.message || e).slice(0, 120); }
     if (open) { try { await orbLook(); await manageOrb(); } catch (e) { P.orbErr = String(e && e.message || e).slice(0, 120); } } else { try { await manageOrb(); } catch (e) {} }
@@ -1438,7 +1479,7 @@ function status() {
     orb: r && r.orbk ? { pnl: r.orbk.pnl, closed: r.orbk.trades.length, open: r.orbk.open.length, on: ORB_ON, mode: ORB_MODE, r: ORB_R, be: ORB_BE } : null,
     fairPrice: r && r.fpk ? { pnl: r.fpk.pnl, closed: r.fpk.trades.length, open: r.fpk.open.length, on: FP_ON, err: P.fpErr } : null,
     x9: r && r.x9k ? { pnl: r.x9k.pnl, closed: r.x9k.trades.length, open: r.x9k.open.length, on: X9_ON, err: P.x9Err } : null,
-    callSpreads: r && r.csk ? { pnl: r.csk.pnl, closed: r.csk.trades.length, open: r.csk.open.length, on: CSK_ON, err: P.cskErr } : null,
+    callSpreads: r && r.csk ? { pnl: r.csk.pnl, closed: r.csk.trades.length, open: r.csk.open.length, on: CSK_ON, err: P.cskErr, real: cskRealSummary(r), realErr: P.cskRealErr || null } : null,
     condor: r && r.cdrk ? { pnl: r.cdrk.pnl, closed: r.cdrk.trades.length, open: r.cdrk.open.length, on: CDR_ON, err: P.cdrErr } : null,
     shadow: r && r.sh ? { pnl: r.sh.pnl, closed: r.sh.trades.length, open: r.sh.open.length } : null,
     pos: p ? { sym: p.sym, type: p.type, strike: p.strike, exp: p.exp, entryAsk: p.entryAsk, qty: p.qty || 1, half: p.half || null, t0: p.t0, bid: p.live && p.live.bid, peak: p.peak, asOf: p.live && p.live.t, stopPx: CFG.usd ? p.entryAsk - CFG.usd.stop / 100 : p.entryAsk * (1 - CFG.premStop), targetPx: CFG.usd ? p.entryAsk + CFG.usd.tp / 100 : p.entryAsk * (1 + CFG.tpUp) } : null,

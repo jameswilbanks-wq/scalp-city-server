@@ -18,6 +18,13 @@ function mlegPayload(o) {
   return { order_class: 'mleg', qty: String(o.qty), type: 'limit', limit_price: cents(px), time_in_force: 'day', client_order_id: o.cid,
     legs: [{ symbol: o.short, ratio_qty: '1', side: open ? 'sell' : 'buy', position_intent: open ? 'sell_to_open' : 'buy_to_close' }, { symbol: o.long, ratio_qty: '1', side: open ? 'buy' : 'sell', position_intent: open ? 'buy_to_open' : 'sell_to_close' }] };
 }
+// net fill price of a multi-leg order: the parent filled_avg_price when present, else computed from the legs (credit = sold - bought for an open, debit = bought - sold for a close); null when unknown
+function fillPx(o, kind) {
+  const pp = o && o.filled_avg_price; if (pp !== null && pp !== undefined && pp !== '' && isFinite(+pp)) return Math.abs(+pp);
+  const legs = (o && o.legs) || []; if (legs.length < 2) return null; let sold = 0, bought = 0;
+  for (const l of legs) { const v = l.filled_avg_price; if (v === null || v === undefined || v === '' || !isFinite(+v)) return null; if (String(l.side).toLowerCase() === 'sell') sold += +v; else bought += +v; }
+  return r2(kind === 'open' ? sold - bought : bought - sold);
+}
 function classify(o, qty) {
   const st = String((o && o.status) || '').toLowerCase(), fq = +((o && o.filled_qty) || 0);
   if (st === 'filled' && fq >= qty) return 'filled';
@@ -77,7 +84,7 @@ async function advance(R, ctx) {
   let o; try { o = await ctx.api.get(L.orderId); } catch (e) { return; } // transient: retry next tick
   const c = classify(o, R.qty);
   if (c === 'filled') {
-    const px = Math.abs(+o.filled_avg_price);
+    const px = fillPx(o, side === 'entry' ? 'open' : 'close'); if (px === null) { R.alert = 'filled but net price unreadable'; return 'fill_price_unknown'; }
     if (side === 'entry') { R.state = 'open'; R.fillPx = px; R.filledAt = ctx.now; R.slip = r2(px - R.creditNat); R.fillS = Math.round((ctx.now - R.since) / 1000); return 'entry_filled'; }
     R.state = 'closed'; R.exitPx = px; R.closedAt = ctx.now; R.realPnl = r2((R.fillPx - px) * 100 * R.qty); return 'exit_filled';
   }
@@ -91,4 +98,4 @@ async function advance(R, ctx) {
   const wait = side === 'exit' && L.attempt >= L.ladder.length - 1 ? EXIT_RETRY_MS : STEP_MS; // working
   if (!L.canceling && ctx.now - L.sentAt >= wait) { L.canceling = true; try { await ctx.api.cancel(L.orderId); } catch (e) {} return 'cancel_sent'; }
 }
-module.exports = { occ, cidOf, entryLadder, exitLadder, mlegPayload, classify, riskCheck, preCloseDecision, newReal, startExit, settleReal, reconcile, advance, TERMINAL, STEP_MS };
+module.exports = { fillPx, occ, cidOf, entryLadder, exitLadder, mlegPayload, classify, riskCheck, preCloseDecision, newReal, startExit, settleReal, reconcile, advance, TERMINAL, STEP_MS };

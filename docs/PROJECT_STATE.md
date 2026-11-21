@@ -160,3 +160,6 @@ Draft spec `docs/csk-order-path-spec.md` (Phase 1: real multi-leg paper orders f
 
 ## 2026-11-20 — `bt33` CSK multi-day study result
 Control reproduced `bt9` exactly. No multi-day cell passed; the only passing cells are 0DTE hold: SPY 0.45% (live CSK) and QQQ 0.75% (a possible variant, hypothesis only). 0DTE edge at $0.03 per leg per fill is only about +$1.4-$1.7 per spread, so real fill quality is the key risk for going live. Multi-day spreads: no case for a book. 0DTE CSK stays; no live change.
+
+## 2026-11-20 — CSK real order path built, switched OFF
+Code deployed (`csk_orders.js`, CSK-REAL block in `server.js`), tests: `test/cskreal.test.js` (18), `test/cskreal_wire.test.js` (12), all other test files still pass. Nothing sends orders until `CSK_REAL_ON=1` is set in Render (needs James's yes). Next: enable on paper at 1 lot, judge per spec section 6 after 20 trading days. Open unknowns (need a market-hours fill): fill price vs mid/natural, stop/market support on mleg, in-the-money expiry handling, fees.

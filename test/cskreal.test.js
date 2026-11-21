@@ -73,5 +73,12 @@ t('reconciliation: unknown csk- open order, wrong or missing position are proble
   assert.deepStrictEqual(C.reconcile([R], [], good.concat([{ symbol: 'AAPL250101C00100000', qty: '1', side: 'long' }])), [], 'unrelated positions (e.g. Sweep) are ignored');
   const E = mk(); assert.deepStrictEqual(C.reconcile([E], [], [{ symbol: E.short, qty: '1', side: 'short' }]), [], 'entering: ambiguous, skipped'); R.state = 'closed'; assert.ok(C.reconcile([R], [], good).length > 0, 'a closed spread should have no leftover legs');
 });
+t('net fill price: parent price (sign ignored) else computed from legs; unreadable stays unknown and the order is not treated as filled-with-price', async () => {
+  assert.strictEqual(C.fillPx({ filled_avg_price: '-0.58' }, 'open'), 0.58);
+  const L = (a, b) => ({ legs: [{ side: 'sell', filled_avg_price: a }, { side: 'buy', filled_avg_price: b }] });
+  assert.strictEqual(C.fillPx(L('1.20', '0.62'), 'open'), 0.58); assert.strictEqual(C.fillPx({ legs: [{ side: 'buy', filled_avg_price: '1.90' }, { side: 'sell', filled_avg_price: '0.10' }] }, 'close'), 1.8); assert.strictEqual(C.fillPx(L('1.2', null), 'open'), null); assert.strictEqual(C.fillPx({}, 'open'), null);
+  const b = new Broker(), R = mk(); await C.advance(R, ctxOf(b, 1000)); Object.assign(b.orders.o1, { status: 'filled', filled_qty: '1', filled_avg_price: null }); assert.strictEqual(await C.advance(R, ctxOf(b, 2000)), 'fill_price_unknown'); assert.strictEqual(R.state, 'entering');
+  b.orders.o1.legs = L('1.20', '0.62').legs; assert.strictEqual(await C.advance(R, ctxOf(b, 3000)), 'entry_filled'); assert.strictEqual(R.fillPx, 0.58);
+});
 t('module source guard: no network, env, require or URLs in csk_orders.js', () => { const src = fs.readFileSync(path.join(__dirname, '..', 'csk_orders.js'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, ''); assert.ok(!/fetch\(|process\.env|require\(|https?:\/\//.test(src)); });
 (async () => { for (const [n, f] of tests) { try { await f(); pass++; console.log('ok   ' + n); } catch (e) { console.error('FAIL ' + n + '\n' + (e && e.stack || e)); process.exitCode = 1; } } console.log(pass + '/' + tests.length + ' passed'); })();
