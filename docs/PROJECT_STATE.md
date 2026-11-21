@@ -169,3 +169,6 @@ James said yes. Render env set explicitly (merge): CSK_REAL_ON=1, CSK_REAL_QTY=1
 
 ## 2026-11-20 — bt34 daily-direction Stage 0 queued
 Read-only study runs once ~4.5 minutes after the next boot (kv `bt34`, progress `bt34p`). Nothing trades. Result decides whether a daily-direction call/put book is worth a Stage 1 (real option prices) test.
+
+## 2026-11-20 — bt34 result
+No daily-direction indicator passed Stage 0 on SPY or QQQ (best SPY fade-the-gap +5.4 bps, CI [-3.1,+15.4], sign flips in holdout; a coin flip beat every QQQ indicator). No Stage 1, no book. Direction stays with the existing books (ORB15, X9, Sweep) and CSK (which does not need a direction call).
