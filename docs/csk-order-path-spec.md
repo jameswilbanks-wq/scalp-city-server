@@ -53,3 +53,11 @@ At least 30-60 closed CSK trades with a positive average over all trading days; 
 
 ## 10. Rollout
 Build with `CSK_REAL_ON` default off; tests first; deploy outside market hours; enabling it is a separate yes from James. No change to the simulated CSK book, its backtests, strikes or stops.
+
+## 11. Paper probe result (2026-11-20, 19:28 ET, market closed; James approved "yes")
+One test order on the Alpaca PAPER account, via the paper connector: SPY 731/733 call spread for 2026-11-23, `mleg` limit, qty 1, net limit **-1.50** (far above market, so it could not fill), `client_order_id csk-probe-20261120-1`, then cancelled. Verified from the order records:
+- **Unknown 1 (mleg accepted on paper): YES.** Status `accepted`, Level 3 approved, options buying power $59,180.
+- **Unknown 2 (credit sign): a negative `limit_price` is stored and accepted as a credit** (`limit_price: "-1.5"`); matches `creditSign: -1` in `csk_orders.js`. Whether a credit limit actually fills at the right price still needs a live-market fill test.
+- Cancel works on the parent order id; both legs become `canceled`. The parent record has empty `symbol`/`side`; leg detail is in `legs` (request with nested=true). Orders carry `expires_at` 21:15Z on expiry day.
+- Order accepted outside market hours and would have queued for the open: the real path must only send during market hours.
+- **Still unknown (needs market hours / a real fill):** stop/market support on mleg; fill price behaviour vs mid/natural; in-the-money expiry handling; options fees. No position was opened.
