@@ -163,3 +163,6 @@ Control reproduced `bt9` exactly. No multi-day cell passed; the only passing cel
 
 ## 2026-11-20 — CSK real order path built, switched OFF
 Code deployed (`csk_orders.js`, CSK-REAL block in `server.js`), tests: `test/cskreal.test.js` (18), `test/cskreal_wire.test.js` (12), all other test files still pass. Nothing sends orders until `CSK_REAL_ON=1` is set in Render (needs James's yes). Next: enable on paper at 1 lot, judge per spec section 6 after 20 trading days. Open unknowns (need a market-hours fill): fill price vs mid/natural, stop/market support on mleg, in-the-money expiry handling, fees.
+
+## 2026-11-20 evening — CSK real orders (paper) ENABLED
+James said yes. Render env set explicitly (merge): CSK_REAL_ON=1, CSK_REAL_QTY=1, CSK_REAL_DAYLIMIT=540; deploy dep-dc0eenjm8hqs73e88ijg live 00:36Z (commit 557b633). First real paper orders expected Mon 2026-11-23 11:00 ET (slot 1) and 12:30 ET (slot 2). Check Monday: callSpreads.real on the status endpoint, Alpaca paper orders/positions, slippage vs simulated natural. Kill switch: CSK_REAL_ON=0 (then check Alpaca paper positions by hand).
