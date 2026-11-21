@@ -166,3 +166,6 @@ Code deployed (`csk_orders.js`, CSK-REAL block in `server.js`), tests: `test/csk
 
 ## 2026-11-20 evening — CSK real orders (paper) ENABLED
 James said yes. Render env set explicitly (merge): CSK_REAL_ON=1, CSK_REAL_QTY=1, CSK_REAL_DAYLIMIT=540; deploy dep-dc0eenjm8hqs73e88ijg live 00:36Z (commit 557b633). First real paper orders expected Mon 2026-11-23 11:00 ET (slot 1) and 12:30 ET (slot 2). Check Monday: callSpreads.real on the status endpoint, Alpaca paper orders/positions, slippage vs simulated natural. Kill switch: CSK_REAL_ON=0 (then check Alpaca paper positions by hand).
+
+## 2026-11-20 — bt34 daily-direction Stage 0 queued
+Read-only study runs once ~4.5 minutes after the next boot (kv `bt34`, progress `bt34p`). Nothing trades. Result decides whether a daily-direction call/put book is worth a Stage 1 (real option prices) test.
