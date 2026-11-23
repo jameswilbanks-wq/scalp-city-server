@@ -54,11 +54,21 @@ function reconcile(list, openOrders, positions) {
   const problems = [], tracked = new Set(); list.forEach(R => [R.entry, R.exit].forEach(L => { if (L) { (L.orders || []).forEach(x => tracked.add(x.cid)); if (L.cid) tracked.add(L.cid); } }));
   (openOrders || []).forEach(o => { if (String(o.client_order_id || '').startsWith('csk-') && !tracked.has(o.client_order_id)) problems.push('unknown open order ' + o.client_order_id); });
   const exp = {}, skip = new Set(), universe = new Set();
-  list.forEach(R => { universe.add(R.short); universe.add(R.long); if (R.state === 'entering') { skip.add(R.short); skip.add(R.long); }
+  list.forEach(R => { universe.add(R.short); universe.add(R.long); if (R.state === 'entering' || R.state === 'expired') { skip.add(R.short); skip.add(R.long); }
     if (R.state === 'open' || R.state === 'exiting') { exp[R.short] = (exp[R.short] || 0) - R.qty; exp[R.long] = (exp[R.long] || 0) + R.qty; } });
   (positions || []).forEach(x => { if (!universe.has(x.symbol) || skip.has(x.symbol)) return; const q = (String(x.side).toLowerCase() === 'short' ? -1 : 1) * Math.abs(+x.qty); if (q !== (exp[x.symbol] || 0)) problems.push('position ' + x.symbol + ' is ' + q + ', expected ' + (exp[x.symbol] || 0)); });
   universe.forEach(s => { if (skip.has(s)) return; if ((exp[s] || 0) !== 0 && !(positions || []).some(x => x.symbol === s)) problems.push('missing position ' + s + ', expected ' + exp[s]); });
   return problems;
+}
+// a new spread must not share an option contract with a spread that is still live: Alpaca nets positions per contract and would read the new leg as a close (seen 2026-11-23: SPY slot 2 long 728 = slot 1 short 728, order rejected 422)
+function legOverlap(list, R) { const live = ['entering', 'open', 'exiting', 'exit_failed']; const x = list.find(o => o !== R && live.includes(o.state) && (o.short === R.short || o.short === R.long || o.long === R.short || o.long === R.long)); return x ? x.id : null; }
+// true realized P&L of one spread from the broker's FILL activities (catches broker-initiated closes such as alpaca auto_liquidate): cash from every fill on its two contracts, plus any leg still held at expiry valued at intrinsic against the underlying close. null when it cannot be valued.
+function pnlFromFills(R, fills, uClose) {
+  let cash = 0, n = 0; const net = {};
+  for (const f of fills || []) { if (f.symbol !== R.short && f.symbol !== R.long) continue; const q = +f.qty, px = +f.price, buy = String(f.side).toLowerCase() === 'buy'; cash += (buy ? -1 : 1) * px * q; net[f.symbol] = (net[f.symbol] || 0) + (buy ? q : -q); n++; }
+  if (!n) return null; let resid = 0;
+  for (const sy of [R.short, R.long]) { const q = net[sy] || 0; if (!q) continue; if (uClose === null || uClose === undefined) return null; resid += q * Math.max(0, uClose - (sy === R.short ? R.ks : R.kl)); }
+  return r2((cash + resid) * 100);
 }
 // one state-machine step for a real spread. ctx: {now, api, cfg:{creditSign}, afterCutoff}. Returns an event string or undefined.
 async function place(R, ctx, side) {
@@ -98,4 +108,4 @@ async function advance(R, ctx) {
   const wait = side === 'exit' && L.attempt >= L.ladder.length - 1 ? EXIT_RETRY_MS : STEP_MS; // working
   if (!L.canceling && ctx.now - L.sentAt >= wait) { L.canceling = true; try { await ctx.api.cancel(L.orderId); } catch (e) {} return 'cancel_sent'; }
 }
-module.exports = { fillPx, occ, cidOf, entryLadder, exitLadder, mlegPayload, classify, riskCheck, preCloseDecision, newReal, startExit, settleReal, reconcile, advance, TERMINAL, STEP_MS };
+module.exports = { legOverlap, pnlFromFills, fillPx, occ, cidOf, entryLadder, exitLadder, mlegPayload, classify, riskCheck, preCloseDecision, newReal, startExit, settleReal, reconcile, advance, TERMINAL, STEP_MS };

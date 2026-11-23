@@ -791,7 +791,7 @@ function cskClose(p, costNat, costMid, u, reason) {
   const k = P.rec.csk, pnl = Math.round((p.creditNat - costNat) * 10000) / 100, pnlMid = Math.round((p.creditMid - costMid) * 10000) / 100;
   k.trades.push({ sym: p.sym, type: 'call spread', strike: p.ks, kl: p.kl, exp: p.exp, entryT: iso(p.t0), exitT: iso(Date.now()), entryU: p.entryU, closeU: u, creditNat: p.creditNat, creditMid: p.creditMid, sBid: p.sBid, sAsk: p.sAsk, lBid: p.lBid, lAsk: p.lAsk, closeNat: costNat, closeMid: costMid, pnl, pnlMid, reason, trig: 'cspread', qty: 1, slot: p.slot || 1, at330: p.at330 || null, ustop: p.ustop || null, pnl330: p.at330 ? Math.round((p.creditNat - p.at330.closeNat) * 10000) / 100 : null, pnlUstop: p.ustop ? Math.round((p.creditNat - p.ustop.closeNat) * 10000) / 100 : null });
   k.pnl = Math.round((k.pnl + pnl) * 100) / 100; k.open = k.open.filter(x => x !== p);
-  try { cskRealOnClose(p, costNat, reason, /^expired/.test(reason)); } catch (err) { P.cskRealErr = String(err && err.message || err).slice(0, 120); }
+  try { cskRealOnClose(p, costNat, reason, /^expired/.test(reason), u); } catch (err) { P.cskRealErr = String(err && err.message || err).slice(0, 120); }
 }
 async function cskManage() {
   const k = P.rec && P.rec.csk; if (!k || !k.open.length) return;
@@ -822,18 +822,19 @@ async function cskManage() {
 /* CSK-REAL-BEGIN. CSK real order path, Phase 1 (James approved 2026-11-20: "D1 - yes D2 - yes D3 - ok D4 - yes existing"; spec docs/csk-order-path-spec.md). Mirrors each SIMULATED CSK spread with a real multi-leg limit order on the Alpaca PAPER account (apTrade is hardcoded to the paper endpoint; no live key exists here). OFF unless CSK_REAL_ON=1. The simulated book still makes every entry/exit decision and is untouched; this only adds real orders, reconciles them against Alpaca once a minute (two consecutive mismatches halt new real orders for the day) and records slippage. CSK_REAL_QTY (default 1, hard max 5) lots; CSK_REAL_DAYLIMIT (default 540) = daily real-loss halt in $. D2: at 15:50 ET real spreads with the underlying at/above the short strike or within 0.10% of it are closed (real orders only; the simulated book still holds to expiry). */
 const CSKO = require('./csk_orders.js');
 const CSK_REAL_ON = process.env.CSK_REAL_ON === '1', CSK_REAL_QTY = Math.min(5, Math.max(1, Math.floor(+process.env.CSK_REAL_QTY || 1))), CSK_REAL_DAYLIMIT = +process.env.CSK_REAL_DAYLIMIT || 540;
-const cskRealApi = { place: p => apTrade('POST', '/v2/orders', p), get: id => apTrade('GET', '/v2/orders/' + id + '?nested=true'), cancel: id => apTrade('DELETE', '/v2/orders/' + id), getByCid: cid => apTrade('GET', '/v2/orders:by_client_order_id?client_order_id=' + encodeURIComponent(cid)), openOrders: () => apTrade('GET', '/v2/orders?status=open&limit=100'), positions: () => apTrade('GET', '/v2/positions') };
+const cskRealApi = { place: p => apTrade('POST', '/v2/orders', p), get: id => apTrade('GET', '/v2/orders/' + id + '?nested=true'), cancel: id => apTrade('DELETE', '/v2/orders/' + id), getByCid: cid => apTrade('GET', '/v2/orders:by_client_order_id?client_order_id=' + encodeURIComponent(cid)), openOrders: () => apTrade('GET', '/v2/orders?status=open&limit=100'), positions: () => apTrade('GET', '/v2/positions'), fills: day => apTrade('GET', '/v2/account/activities/FILL?date=' + day + '&page_size=100') };
 function cskRealState(r) { r.cskreal = r.cskreal || { list: [], halted: false, haltWhy: '', lastRecon: 0, reconMiss: 0 }; return r.cskreal; }
 function cskRealDayLoss(st) { return Math.round(st.list.reduce((a, x) => a + (+x.realPnl || 0), 0) * 100) / 100; }
 async function cskRealEnter(r, p) {
   if (!CSK_REAL_ON || !p) return; const st = cskRealState(r), R = CSKO.newReal(p, { qty: CSK_REAL_QTY }, Date.now()); p.realId = R.id; if (st.list.some(x => x.id === R.id)) return;
   let bp = NaN; try { const a = await apTrade('GET', '/v2/account'); bp = +a.options_buying_power; } catch (e) {}
   const why = isFinite(bp) ? CSKO.riskCheck({ on: true, halted: st.halted, haltWhy: st.haltWhy, qty: R.qty, qtyMax: CSK_REAL_QTY, ks: p.ks, kl: p.kl, expShort: p.exp, expLong: p.exp, bp, maxLoss: p.width * 100 - p.creditNat * 100, dayLoss: cskRealDayLoss(st), dayLimit: CSK_REAL_DAYLIMIT }) : 'account read failed, no real order sent';
-  if (why) { R.state = 'blocked'; R.why = why; } st.list.push(R);
+  let why2 = why; if (!why2) { const ov = CSKO.legOverlap(st.list, R); if (ov) why2 = 'legs overlap live real spread ' + ov + ' (Alpaca nets positions per contract); no real order sent'; }
+  if (why2) { R.state = 'blocked'; R.why = why2; } st.list.push(R);
 }
-function cskRealOnClose(p, costNat, reason, expired) {
+function cskRealOnClose(p, costNat, reason, expired, u) {
   const st = P.rec && P.rec.cskreal, R = st && p.realId ? st.list.find(x => x.id === p.realId) : null; if (!R) return;
-  if (expired) { CSKO.settleReal(R, costNat, Date.now()); return; }
+  if (expired) { CSKO.settleReal(R, costNat, Date.now()); R.settleU = u === undefined ? null : u; return; }
   if (/^stop/.test(reason) && !CSKO.startExit(R, reason, costNat, Date.now()) && R.state === 'entering') R.pendingStop = { reason, costNat };
 }
 async function cskRealTick() {
@@ -845,6 +846,9 @@ async function cskRealTick() {
       const u = P.info[R.sym] && P.info[R.sym].bar ? P.info[R.sym].bar.c : null;
       if (CSKO.preCloseDecision(u, R.ks, 0.001)) { try { const q = await cskQuotes([R.instS, R.instL]), a = q[R.instS], b = q[R.instL]; if (a && b) { CSKO.startExit(R, 'pre-close D2 (short ' + R.ks + ', underlying ' + u + ')', Math.max(0.01, Math.round((+a.ask_price - +b.bid_price) * 100) / 100), ctx.now); R.preChecked = true; changed = true; } } catch (err) {} }
       else if (u !== null) { R.preChecked = true; changed = true; }
+    }
+    if ((R.state === 'expired' || R.state === 'closed') && !R.verified && (R.vt || 0) < 12 && e.min >= 962) { // true P&L from Alpaca's fills (catches broker auto-liquidation); the journal figure assumed expiry
+      R.vt = (R.vt || 0) + 1; try { const bar = P.info[R.sym] && P.info[R.sym].bar, p = CSKO.pnlFromFills(R, await cskRealApi.fills(R.day), R.settleU !== null && R.settleU !== undefined ? R.settleU : (bar ? bar.c : null)); if (p !== null) { R.realPnlJournal = R.realPnl; R.realPnl = p; R.verified = true; changed = true; } } catch (err) {}
     }
     const was = R.state; let ev; try { ev = await CSKO.advance(R, ctx); } catch (err) { R.error = String(err && err.message || err).slice(0, 160); }
     if (ev || R.state !== was) { changed = true; if (ev) slog('csk_real', { id: R.id, ev, state: R.state, why: R.why || null }); }

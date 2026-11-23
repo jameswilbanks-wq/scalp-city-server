@@ -80,5 +80,21 @@ t('net fill price: parent price (sign ignored) else computed from legs; unreadab
   const b = new Broker(), R = mk(); await C.advance(R, ctxOf(b, 1000)); Object.assign(b.orders.o1, { status: 'filled', filled_qty: '1', filled_avg_price: null }); assert.strictEqual(await C.advance(R, ctxOf(b, 2000)), 'fill_price_unknown'); assert.strictEqual(R.state, 'entering');
   b.orders.o1.legs = L('1.20', '0.62').legs; assert.strictEqual(await C.advance(R, ctxOf(b, 3000)), 'entry_filled'); assert.strictEqual(R.fillPx, 0.58);
 });
+t('leg overlap: a spread sharing any contract with a live spread is detected (seen 2026-11-23: slot 2 long 728 = slot 1 short 728); closed or expired spreads do not block', () => {
+  const a = mk({ ks: 728, kl: 730 }); a.state = 'open'; const b = mk({ slot: 2, ks: 726, kl: 728 }); assert.strictEqual(C.legOverlap([a], b), a.id); const c = mk({ slot: 2, ks: 731, kl: 733 }); assert.strictEqual(C.legOverlap([a], c), null);
+  a.state = 'expired'; assert.strictEqual(C.legOverlap([a], b), null); a.state = 'closed'; assert.strictEqual(C.legOverlap([a], b), null); a.state = 'exiting'; assert.strictEqual(C.legOverlap([a], b), a.id);
+});
+t('true P&L from fills: 2026-11-23 QQQ slot 2 (sold 654 @1.74, bought 656 @1.05, Alpaca auto-liquidated the short at 0.73) is -$4, not the +$69 the expiry assumption gave; normal expiry and a stop exit also match', () => {
+  const R = mk({ sym: 'QQQ', exp: '2026-11-23', ks: 654, kl: 656 }), f = (symbol, side, price) => ({ symbol, side, price: String(price), qty: '1' });
+  assert.strictEqual(C.pnlFromFills(R, [f(R.short, 'sell_short', 1.74), f(R.long, 'buy', 1.05), f(R.short, 'buy', 0.73)], 654.3), -4);
+  assert.strictEqual(C.pnlFromFills(R, [f(R.short, 'sell_short', 1.74), f(R.long, 'buy', 1.05)], 653), 69, 'expired worthless');
+  assert.strictEqual(C.pnlFromFills(R, [f(R.short, 'sell_short', 1.74), f(R.long, 'buy', 1.05)], 655), -31, 'short 1 in the money: credit 0.69 minus 1.00 intrinsic');
+  assert.strictEqual(C.pnlFromFills(R, [f(R.short, 'sell_short', 1.74), f(R.long, 'buy', 1.05), f(R.short, 'buy', 2.5), f(R.long, 'sell', 0.7)], null), -111, 'fully closed needs no underlying');
+  assert.strictEqual(C.pnlFromFills(R, [f(R.short, 'sell_short', 1.74), f(R.long, 'buy', 1.05)], null), null, 'a held leg cannot be valued without the underlying'); assert.strictEqual(C.pnlFromFills(R, [f('SPY261123C00700000', 'buy', 1)], 1), null);
+});
+t('reconciliation ignores expired spreads (Alpaca lists expired legs until its overnight cleanup) but still catches a missing leg of an open spread', async () => {
+  const b = new Broker(), R = mk(); await C.advance(R, ctxOf(b, 0)); b.fill('o1', -0.58); await C.advance(R, ctxOf(b, 10)); const good = [{ symbol: R.short, qty: '1', side: 'short' }, { symbol: R.long, qty: '1', side: 'long' }];
+  assert.ok(C.reconcile([R], [], [good[1]]).some(p => /missing position/.test(p))); C.settleReal(R, 0, 99); assert.deepStrictEqual(C.reconcile([R], [], good), []); assert.deepStrictEqual(C.reconcile([R], [], []), []);
+});
 t('module source guard: no network, env, require or URLs in csk_orders.js', () => { const src = fs.readFileSync(path.join(__dirname, '..', 'csk_orders.js'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, ''); assert.ok(!/fetch\(|process\.env|require\(|https?:\/\//.test(src)); });
 (async () => { for (const [n, f] of tests) { try { await f(); pass++; console.log('ok   ' + n); } catch (e) { console.error('FAIL ' + n + '\n' + (e && e.stack || e)); process.exitCode = 1; } } console.log(pass + '/' + tests.length + ' passed'); })();
