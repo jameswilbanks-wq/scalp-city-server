@@ -52,10 +52,10 @@ t('expiry: real record settled at the same settle value, no order sent', async (
   const w = build({ CSK_REAL_ON: '1' }), p = spread(); await w.cskRealEnter(w.P.rec, p); await w.cskRealTick(); w.fill('o1', -0.57); await w.cskRealTick(); const n = posts(w).length; w.cskRealOnClose(p, 0, 'expired worthless', true);
   assert.strictEqual(w.P.rec.cskreal.list[0].state, 'expired'); assert.strictEqual(w.P.rec.cskreal.list[0].realPnl, 57); assert.strictEqual(posts(w).length, n);
 });
-t('D2 at 15:50 ET: underlying within 0.10% of the short strike closes the real spread; far below does not', async () => {
-  const w = build({ CSK_REAL_ON: '1' }); await w.cskRealEnter(w.P.rec, spread()); await w.cskRealTick(); w.fill('o1', -0.57); await w.cskRealTick(); w.ctl.min = 951; w.P.info.SPY.bar.c = 710.4; await w.cskRealTick();
+t('D2 at 15:40 ET: underlying within 0.10% of the short strike closes the real spread; far below does not', async () => {
+  const w = build({ CSK_REAL_ON: '1' }); await w.cskRealEnter(w.P.rec, spread()); await w.cskRealTick(); w.fill('o1', -0.57); await w.cskRealTick(); w.ctl.min = 941; w.P.info.SPY.bar.c = 710.4; await w.cskRealTick();
   const x = posts(w)[1][2]; assert.strictEqual(x.limit_price, '0.22'); assert.ok(/pre-close D2/.test(w.P.rec.cskreal.list[0].exitReason));
-  const v = build({ CSK_REAL_ON: '1' }); await v.cskRealEnter(v.P.rec, spread()); await v.cskRealTick(); v.fill('o1', -0.57); await v.cskRealTick(); v.ctl.min = 951; v.P.info.SPY.bar.c = 705; await v.cskRealTick(); assert.strictEqual(posts(v).length, 1); assert.strictEqual(v.P.rec.cskreal.list[0].state, 'open');
+  const v = build({ CSK_REAL_ON: '1' }); await v.cskRealEnter(v.P.rec, spread()); await v.cskRealTick(); v.fill('o1', -0.57); await v.cskRealTick(); v.ctl.min = 941; v.P.info.SPY.bar.c = 705; await v.cskRealTick(); assert.strictEqual(posts(v).length, 1); assert.strictEqual(v.P.rec.cskreal.list[0].state, 'open');
 });
 t('reconciliation: two consecutive mismatches halt new real orders; one clean read resets; an unrelated Sweep position is ignored', async () => {
   const w = build({ CSK_REAL_ON: '1' }); await w.cskRealEnter(w.P.rec, spread()); await w.cskRealTick(); w.fill('o1', -0.57); await w.cskRealTick(); const st = w.P.rec.cskreal;

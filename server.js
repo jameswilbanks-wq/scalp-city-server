@@ -842,7 +842,7 @@ async function cskRealTick() {
   const e = nowET(), ctx = { now: Date.now(), api: cskRealApi, cfg: { creditSign: -1 }, afterCutoff: e.min >= 955 }; let changed = false;
   for (const R of st.list) {
     if (R.state === 'open' && R.pendingStop) { CSKO.startExit(R, R.pendingStop.reason, R.pendingStop.costNat, ctx.now); R.pendingStop = null; changed = true; }
-    if (R.state === 'open' && !R.preChecked && e.min >= 950 && e.min < 955) {
+    if (R.state === 'open' && !R.preChecked && e.min >= 940 && e.min < 945) {
       const u = P.info[R.sym] && P.info[R.sym].bar ? P.info[R.sym].bar.c : null;
       if (CSKO.preCloseDecision(u, R.ks, 0.001)) { try { const q = await cskQuotes([R.instS, R.instL]), a = q[R.instS], b = q[R.instL]; if (a && b) { CSKO.startExit(R, 'pre-close D2 (short ' + R.ks + ', underlying ' + u + ')', Math.max(0.01, Math.round((+a.ask_price - +b.bid_price) * 100) / 100), ctx.now); R.preChecked = true; changed = true; } } catch (err) {} }
       else if (u !== null) { R.preChecked = true; changed = true; }

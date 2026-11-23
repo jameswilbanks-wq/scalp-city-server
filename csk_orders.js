@@ -41,7 +41,7 @@ function riskCheck(c) {
   if (c.dayLoss <= -Math.abs(c.dayLimit)) return 'daily real loss limit reached ($' + c.dayLoss + ')';
   return null;
 }
-// D2: at 15:50 ET close a spread whose short strike is in the money or within pct of the underlying
+// D2: at 15:40 ET close a spread whose short strike is in the money or within pct of the underlying
 function preCloseDecision(u, ks, pct) { return u !== null && u !== undefined && u >= ks * (1 - pct); }
 function newReal(p, cfg, now) {
   const day = p.exp, R = { id: p.sym + '|s' + p.slot + '|' + day, sym: p.sym, slot: p.slot || 1, day, exp: p.exp, ks: p.ks, kl: p.kl, short: occ(p.sym, p.exp, p.ks), long: occ(p.sym, p.exp, p.kl), instS: p.instS, instL: p.instL, qty: cfg.qty, creditNat: p.creditNat, creditMid: p.creditMid, state: 'entering', since: now };
