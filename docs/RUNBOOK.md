@@ -175,3 +175,6 @@ How it works: the server flags the position (`manual: true`) and the book's own 
 
 ## 2026-11-24 — PAPER / REAL toggle
 On the web page, the PAPER | REAL switch is at the top next to SCALP CITY (it remembers your choice in the browser). REAL opens a separate red page showing why it is not connected and the readiness list. It cannot place orders; there is no real-account code in this version. To go back, tap PAPER on the Real page.
+
+## 2026-11-24 — On-demand order book (`mank`)
+City page panel "ON-DEMAND 0DTE (PAPER)", `POST /api/ondemand?sym=&side=call|put&qty=1..3` (behind the key). Journal list `rec:YYYY-MM-DD` -> `mank` (`open`, `trades`, `pnl`); signals log as trig `manual`. Close via the Close button (`/api/closebook?book=man`) or automatically at 15:45 ET. Add `mank.open` to the open-position check before a market-hours deploy (the heartbeat open map now includes `mank`). Env: `MAN_ON` (0 = off), `MAN_MAXPREM` (default 400), `MAN_STOP` (default 0 = no stop).

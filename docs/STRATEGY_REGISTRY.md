@@ -236,3 +236,6 @@ James asked whether the active strategies do meaningfully better on SPY or QQQ, 
 
 ## 2026-11-20 — CSK real execution (paper), not a strategy change
 Entry, strikes, width, stop and slots are unchanged and still decided by the simulated book. The real layer only mirrors them with orders. One behavioural difference, approved as D2: real spreads near the money are closed at 15:40 ET instead of held to expiry. Off until `CSK_REAL_ON=1`.
+
+## 2026-11-24 — MAN (on-demand order) is not a strategy
+Discretionary paper trades by James (call or put, SPY or QQQ, 1 to 3 contracts, same-day, buy at ask, sell at bid). No backtest, no edge claim, excluded from every strategy evaluation. Listed here so its trades are never mistaken for book results.

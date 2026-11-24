@@ -149,6 +149,7 @@ select:focus-visible,input:focus-visible,button:focus-visible{outline:2px solid 
 #goals .gn{margin-top:5px;font-size:9px;letter-spacing:.04em;color:var(--dim);line-height:1.25}
 @keyframes gpulse{50%{box-shadow:0 0 16px rgba(52,255,154,.95),0 0 32px rgba(52,255,154,.5)}}
 @media (prefers-reduced-motion:reduce){#goals .gr.on{animation:none}}
+#odBox{pointer-events:auto;align-self:flex-start;font:600 12px var(--f-disp);letter-spacing:.06em;padding:8px 10px;border:1px dashed var(--cyan,#38f4d8);border-radius:8px;background:rgba(8,6,38,.8);color:#e9e9ff;margin-top:6px}#odBox select{font:inherit;background:#0b0840;color:#e9e9ff;border:1px solid #3a3f88;border-radius:6px;padding:6px}#odBox .odb{font:700 12px var(--f-disp);letter-spacing:.08em;padding:9px 12px;min-height:40px;border-radius:6px;border:1px solid #34ff9a;background:rgba(6,40,24,.85);color:#34ff9a;cursor:pointer}#odBox .odb.put{border-color:#ff3d6e;color:#ff3d6e;background:rgba(40,6,24,.85)}#odBox .odb.arm{background:#ffb000;color:#000;border-color:#ffb000}#odMsg{margin-top:4px;min-height:14px}
 #tradeExit,#cskBtns button{pointer-events:auto;align-self:flex-start;font:700 13px var(--f-disp);letter-spacing:.1em;padding:12px 18px;min-height:44px;border:1px solid var(--red);background:rgba(40,6,24,.85);color:var(--red);border-radius:8px;box-shadow:0 0 14px rgba(255,61,110,.3)}#tradeExit.arm,#cskBtns button.arm{background:var(--red);color:#fff}#cskBtns{display:flex;flex-direction:column;gap:6px;align-items:flex-start}#cskBtns button{align-self:flex-start;font:700 13px var(--f-disp);letter-spacing:.1em;padding:12px 18px;min-height:44px;border:1px solid var(--red);background:rgba(40,6,24,.85);color:var(--red);border-radius:8px}
 #tradeCard.up{border-color:var(--green);box-shadow:0 0 18px rgba(52,255,154,.28)}#tradeCard.dn{border-color:var(--red);box-shadow:0 0 18px rgba(255,61,110,.28)}#tradeCard.stale{border-color:var(--amber);box-shadow:0 0 18px rgba(255,210,63,.25)}
 #tradeCard .tcs{font-size:9px;letter-spacing:.12em;color:var(--dim)}#tradeCard .tcc{font-family:var(--f-disp);font-weight:700;font-size:15px;letter-spacing:.04em}
@@ -197,6 +198,7 @@ select:focus-visible,input:focus-visible,button:focus-visible{outline:2px solid 
     <div id="tradeCard" hidden role="status" aria-live="off"></div>
     <button id="tradeExit" type="button" hidden></button>
     <div id="cskBtns"></div>
+    <div id="odBox" hidden><b>ON-DEMAND 0DTE (PAPER)</b> <select id="odSym" aria-label="Symbol"><option>SPY</option><option>QQQ</option></select> <select id="odQty" aria-label="Contracts"><option>1</option><option>2</option><option>3</option></select><span> contracts</span> <button type="button" id="odCall" class="odb">BUY CALL</button> <button type="button" id="odPut" class="odb">BUY PUT</button><div id="odMsg" class="dim"></div></div>
     <button class="pill" id="srvFeed" type="button" hidden></button>
   </header>
 
@@ -2237,6 +2239,7 @@ function srvPanelRender(){renderOrb();renderWheel();
   ((r&&r.orb&&r.orb.open)||[]).forEach(function(o){var p=orbPnl(o);addOpenRow('ORB',o,o.sym+' '+o.strike+(o.type==='call'?'C':'P'),p,'stop '+(+o.stopU).toFixed(2)+' · target '+(+o.tgtU).toFixed(2))});
   ((r&&r.csk&&r.csk.open)||[]).forEach(function(o){var p=o.live&&o.creditNat!=null?Math.round((o.creditNat-o.live.closeNat)*100)/100:null;addOpenRow('CSK',o,o.sym+' '+o.ks+'/'+o.kl+'C',p,'short call spread, held to the close')});
   ((r&&r.x9&&r.x9.open)||[]).forEach(function(o){var p=o.live&&o.entryAsk!=null?Math.round((o.live.bid-o.entryAsk)*100)/100:null;addOpenRow('X9',o,o.sym+' '+o.strike+(o.type==='call'?'C':'P'),p)});
+  ((r&&r.od&&r.od.open)||[]).forEach(function(o){var p=o.live&&o.live.bid!=null?Math.round((o.live.bid-o.entryAsk)*100*(o.qty||1)):null;addOpenRow('MAN',o,(o.qty||1)+'x '+o.sym+' '+o.strike+(o.type==='call'?'C':'P'),p,'on-demand, flat 15:45 ET')});
   ((r&&r.orbn&&r.orbn.open)||[]).forEach(function(o){var p=orbPnl(o);addOpenRow('ORBN',o,o.sym+' '+o.strike+(o.type==='call'?'C':'P'),p,'stop '+(+o.stopU).toFixed(2)+' · target '+(+o.tgtU).toFixed(2))});
   ((r&&r.fp&&r.fp.open)||[]).forEach(function(o){var p=o.live&&o.entryAsk!=null?Math.round((o.live.bid-o.entryAsk)*100)/100:null;addOpenRow('FP',o,o.sym+' '+o.strike+(o.type==='call'?'C':'P')+(o.kind?' ('+o.kind+')':''),p)});
   ((r&&r.cdr&&r.cdr.open)||[]).forEach(function(o){var p=o.live&&o.credit!=null&&o.live.closeDebit!=null?Math.round((o.credit-o.live.closeDebit)*100)/100:null;addOpenRow('CDR',o,o.sym+' '+o.klp+'/'+o.ksp+'P '+o.ksc+'/'+o.klc+'C',p,'iron condor, $'+o.width+' wings')});
@@ -2280,7 +2283,7 @@ function acctSet(a){
 }
 document.querySelectorAll('#acctSwitch button,#acctSwitch2 button').forEach(function(b){b.addEventListener('click',function(){acctSet(b.dataset.a)})});
 setInterval(realLoad,10000);
-var BOOKKEY={ORB:'orb',ORBN:'orbn',X9:'x9',FP:'fp',CDR:'cdr',CSK:'csk'};
+var BOOKKEY={ORB:'orb',ORBN:'orbn',X9:'x9',FP:'fp',CDR:'cdr',CSK:'csk',MAN:'man'};
 var Web={dayArm:0,timer:null,key:'',trades:[],armed:0,last:null,bArm:null,
   bArmed:function(bk,o){return !!(Web.bArm&&Web.bArm.id===bk+'|'+o.sym+'|'+o.t0&&Date.now()-Web.bArm.t<5000)},
   /* manual close of any non-main server paper position: first tap arms for 5 s, second tap sends it. The server flags the position and the book's own close path books it (reason manual). */
@@ -2290,8 +2293,19 @@ var Web={dayArm:0,timer:null,key:'',trades:[],armed:0,last:null,bArm:null,
     try{var r=await (await Web.api('/api/closebook?book='+bk+'&sym='+encodeURIComponent(o.sym)+'&t0='+encodeURIComponent(o.t0),'POST')).json();
       $('srvCtlMsg').textContent=r.ok?(r.closed?('Closed '+bk.toUpperCase()+' '+o.sym+' (paper)'+(r.pnl!=null?': '+money(+r.pnl,true):'')+'.'):(r.note||'Queued.')):('Could not close: '+(r.error||'unknown'));await Web.load()}catch(e){$('srvCtlMsg').textContent='Could not reach the server.'}renderAct()
   },
+  /* on-demand 0DTE order: pick symbol and contracts, tap BUY CALL or BUY PUT, tap again within 5 s to send. Paper only; the server journals it in its own book and closes it on Close or at 15:45 ET. */
+  odArm:null,
+  odGo:async function(side){
+    var sym=$('odSym').value,qty=$('odQty').value,id=side+'|'+sym+'|'+qty;
+    if(!(Web.odArm&&Web.odArm.id===id&&Date.now()-Web.odArm.t<5000)){Web.odArm={id:id,t:Date.now()};Web.odPaint();$('odMsg').textContent='Tap again within 5 seconds to BUY '+qty+' '+sym+' 0DTE '+side.toUpperCase()+' (paper).';setTimeout(Web.odPaint,5200);return}
+    Web.odArm=null;Web.odPaint();$('odMsg').textContent='Placing…';
+    try{var r=await (await Web.api('/api/ondemand?sym='+encodeURIComponent(sym)+'&side='+side+'&qty='+encodeURIComponent(qty),'POST')).json();
+      $('odMsg').textContent=r.ok?('Bought '+r.qty+'x '+r.sym+' '+r.strike+(r.type==='call'?'C':'P')+' exp '+r.exp+' at ask $'+(+r.ask).toFixed(2)+' (cost $'+Math.round(r.cost)+', paper).'):('Not placed: '+(r.error||'unknown'));await Web.load()}catch(e){$('odMsg').textContent='Could not reach the server.'}renderAct()
+  },
+  odPaint:function(){var a=Web.odArm&&Date.now()-Web.odArm.t<5000;['call','put'].forEach(function(sd){var b=$(sd==='call'?'odCall':'odPut'),on=a&&Web.odArm.id.indexOf(sd+'|')===0;b.className='odb'+(sd==='put'?' put':'')+(on?' arm':'');b.textContent=on?'TAP AGAIN: BUY '+sd.toUpperCase():'BUY '+sd.toUpperCase()})},
   start:function(){
     Web.key=new URLSearchParams(location.search).get('key')||'';
+    $('odBox').hidden=false;$('odCall').addEventListener('click',function(){Web.odGo('call')});$('odPut').addEventListener('click',function(){Web.odGo('put')});['odSym','odQty'].forEach(function(i){$(i).addEventListener('change',function(){Web.odArm=null;Web.odPaint();$('odMsg').textContent=''})});
     $('acctSwitch').hidden=false;try{if(localStorage.getItem('sc_acct')==='real')acctSet('real')}catch(e){}
     $('app').classList.add('web');S.mode='live';liveOK=false;S.accounts=[];fillAccts();
     setStatus('','LOADING SERVER DATA');

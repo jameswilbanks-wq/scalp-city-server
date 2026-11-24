@@ -378,6 +378,7 @@ function corrGroupOpenRiskUSD(rec) {
   for (const p of (rec.fpk && rec.fpk.open || [])) if (CORR_GROUPS.includes(p.sym)) t += (p.entryAsk || 0) * 100;
   for (const p of (rec.csk && rec.csk.open || [])) if (CORR_GROUPS.includes(p.sym)) t += Math.max(0, (p.width || 0) * 100 - (p.creditNat || 0) * 100);
   for (const p of (rec.cdrk && rec.cdrk.open || [])) if (CORR_GROUPS.includes(p.sym)) t += (p.risk || 0);
+  for (const p of (rec.mank && rec.mank.open || [])) if (CORR_GROUPS.includes(p.sym)) t += (p.entryAsk || 0) * 100 * (p.qty || 1);
   return Math.round(t * 100) / 100;
 }
 /* CSK PRIORITY (James 2026-11-24: "give csk priority"; background: on 2026-11-24 two X9 calls used the cap room and the 12:30 CSK slot was skipped). Every book except CSK sees the room still owed to CSK entries that have not been made yet: one spread's worst-case risk (width x 100 minus about $40 of credit, $160 for a $2 spread) for each CSK symbol in a slot whose window has not ended and whose done-flag is not set. Once a slot is entered, skipped or its window ends, the reserve disappears. CSK's own check passes prio=true and ignores the reserve. No other rule changes. */
@@ -433,7 +434,7 @@ function heartbeat() {
       bookErr: { fp: P.fpErr || '', x9: P.x9Err || '', csk: P.cskErr || '', cdr: P.cdrErr || '', wheel2Csp: P.wheel2CspErr || '', orb: P.orbErr || '', orbn: P.orbnErr || '', vt: P.vtErr || '' },
       books: (typeof bookDiag === 'function') ? bookDiag() : null,
       scanBars, day: rec.day || null, trades: (rec.trades || []).length, shut: rec.shut || '',
-      open: { main: !!rec.pos, orbk: n('orbk'), orbnk: n('orbnk'), csk: n('csk'), x9k: n('x9k'), fpk: n('fpk'), cdrk: n('cdrk') } });
+      open: { main: !!rec.pos, orbk: n('orbk'), orbnk: n('orbnk'), csk: n('csk'), x9k: n('x9k'), fpk: n('fpk'), cdrk: n('cdrk'), mank: n('mank') } });
   } catch (e) { slog('heartbeat_error', { e: String((e && e.message) || e).slice(0, 100) }); }
 }
 
@@ -1349,6 +1350,7 @@ async function tick() {
     try { if (open) await wheel2CspTick(); } catch (e) { P.wheel2CspErr = String(e && e.message || e).slice(0, 120); }
     if (open) { try { await orbLook(); await manageOrb(); } catch (e) { P.orbErr = String(e && e.message || e).slice(0, 120); } } else { try { await manageOrb(); } catch (e) {} }
     try { if (open) await orbnLook(); await manageOrbN(); } catch (e) { P.orbnErr = String(e && e.message || e).slice(0, 120); } // ORBN: own try/catch so it can never disturb ORB, Sweep or any other book
+    try { await manageMan(); } catch (e) { P.manErr = String(e && e.message || e).slice(0, 120); } // on-demand book: own try/catch
     if (open) { try { await vtTick(); } catch (e) { P.vtErr = String(e && e.message || e).slice(0, 120); } }
     P.stage = 'entry'; if (!P.rec.pos && !P.rec.shut) await lookForEntry();
     P.msg = P.rec.shut ? 'Done for the day (' + P.rec.shut + ').' : (ext ? 'Extended hours (' + ext.name + '-market): scanning ' + EXT_SYMS.join(', ') + '. Last check ' : 'Running. Last check ') + new Date().toISOString().slice(11, 19) + ' UTC.';
@@ -1409,7 +1411,59 @@ async function manualClose() {
 }
 
 /* Manual close of ANY open server paper position (James 2026-11-24: "when there is a orb, or x9 or csk open order there isn't a way to manually close out the trade"). The position is flagged and the book's own manage function closes it on a fresh price, so the journal row, P&L fields and (for CSK) the real mirror exit use exactly the normal close path; reason is 'manual' / 'manual close'. Paper only. The main Sweep position keeps its own /api/close. */
-const MANUAL_BOOKS = { orb: ['orbk', manageOrb], orbn: ['orbnk', manageOrbN], x9: ['x9k', x9Manage], fp: ['fpk', fpManage], csk: ['csk', cskManage], cdr: ['cdrk', cdrManage] };
+/* ON-DEMAND ORDER (MAN) -- James 2026-11-24: "create for me a on demand call or put order ... on demand 0DTE order creation. call/put? what symbol? and how many (1,2,3)?". A discretionary PAPER trade: James picks call or put, SPY or QQQ, and 1 to 3 contracts; the server buys the nearest-the-money SAME-DAY option at the ask (simulated fill, same contract picker as the ORB book, premium cap $400 per contract), journals it in its own list r.mank (separate from every strategy book and from the evidence for them), and manages it: manual Close at the bid any time, forced flat at 15:45 ET (before expiry), optional automatic stop only if MAN_STOP is set (default 0 = none; the loss is capped at the premium paid). No Alpaca order, no Robinhood order, paper only. Entries 9:35-15:30 ET, at most 3 open, still subject to the SPY/QQQ correlation cap (and the room reserved for CSK). Not a strategy: results are discretionary and are never mixed into backtest or forward evidence. */
+const MAN_ON = process.env.MAN_ON !== '0', MAN = { maxQty: 3, maxOpen: 3, maxPrem: +process.env.MAN_MAXPREM || 400, from: 575, to: 930, flat: 945, stop: +process.env.MAN_STOP || 0 };
+async function manualEnter(sym, side, qty) {
+  const r = P.rec, now = Date.now();
+  if (!MAN_ON) return { ok: false, error: 'on-demand orders are switched off (MAN_ON=0)' };
+  if (!r) return { ok: false, error: 'the journal is not loaded yet' };
+  if (r.shut) return { ok: false, error: 'trading is stopped for today (' + r.shut + ')' };
+  if (!CFG.syms.includes(sym)) return { ok: false, error: 'symbol must be one of ' + CFG.syms.join(', ') };
+  if (side !== 'call' && side !== 'put') return { ok: false, error: 'side must be call or put' };
+  qty = +qty; if (!Number.isInteger(qty) || qty < 1 || qty > MAN.maxQty) return { ok: false, error: 'quantity must be 1 to ' + MAN.maxQty };
+  if (!marketOpen(now)) return { ok: false, error: 'market is closed' };
+  const e = nowET(); if (e.min < MAN.from || e.min >= MAN.to) return { ok: false, error: 'on-demand entries run 9:35 to 15:30 ET' };
+  r.mank = r.mank || { open: [], trades: [], pnl: 0 };
+  if (r.mank.open.length >= MAN.maxOpen) return { ok: false, error: MAN.maxOpen + ' on-demand positions are already open; close one first' };
+  if (P.manBusy) return { ok: false, error: 'another on-demand order is being placed, try again in a moment' };
+  P.manBusy = true;
+  try {
+    const inf = P.info[sym], px = inf && inf.bar && inf.bar.c, dir = side === 'call' ? 1 : -1, sig = { dir, trig: 'manual' };
+    if (!(px > 0) || now - (inf.bar.t + 60000) > 300000) return { ok: false, error: 'no fresh ' + sym + ' price yet (older than 5 minutes)' };
+    let pk; try { pk = await pickContract(sym, dir, px, MAN.maxPrem, 0); } catch (err) { pk = { why: 'could not load option data (' + ((err && err.code) || 'error') + ')' }; }
+    if (pk.why) { logSignal(sym, sig, px, 'skipped', 'on-demand ' + side + ': ' + pk.why); saveRec(); return { ok: false, error: pk.why }; }
+    if (P.rec !== r || r.shut) return { ok: false, error: 'the trading day changed or stopped while the order was being placed' };
+    const cost = Math.round(pk.ask * 100 * qty * 100) / 100, corr = corrCapBlocks(r, sym, cost);
+    if (corr) { const why = 'would push ' + sym + '-group open risk to $' + corr.next.toFixed(0) + ', over the $' + CORR_CAP_USD + ' correlation cap'; logSignal(sym, sig, px, 'skipped', 'on-demand ' + side + ': ' + why); saveRec(); return { ok: false, error: why }; }
+    const p = { book: 'man', sym, dir, type: pk.type, strike: pk.strike, exp: pk.exp, inst: pk.inst, t0: now, entryAsk: pk.ask, entryBid: pk.bid, entryU: px, qAge: pk.qAge, qty, peak: pk.bid, iv: pk.iv, delta: pk.delta, stopPct: MAN.stop, flatMin: MAN.flat };
+    r.mank.open.push(p);
+    logSignal(sym, sig, px, 'entered', 'on-demand ' + qty + 'x ' + pk.type + ' ' + pk.strike + ' exp ' + pk.exp + ' @ ask $' + pk.ask.toFixed(2) + ' (cost $' + cost.toFixed(0) + ')');
+    saveRec();
+    return { ok: true, sym, type: pk.type, strike: pk.strike, exp: pk.exp, qty, ask: pk.ask, bid: pk.bid, cost, t0: now };
+  } finally { P.manBusy = false; }
+}
+async function manageMan() {
+  const mk = P.rec && P.rec.mank; if (!mk || !mk.open.length) return;
+  try {
+    const qd = await rh('get_option_quotes', { instrument_ids: mk.open.map(x => x.inst) }), by = {};
+    (qd.results || []).forEach(z => { if (z.quote) by[z.quote.instrument_id] = z.quote; });
+    const e = nowET();
+    for (const p of mk.open.slice()) {
+      const q = by[p.inst]; if (!q) continue; const bid = +q.bid_price; if (!(bid >= 0)) continue;
+      const due = e.min >= p.flatMin; // a stale quote never blocks a manual close or the 15:45 flat
+      if (!p.manual && !due && q.updated_at && Date.now() - Date.parse(q.updated_at) > 180000) continue;
+      p.peak = Math.max(p.peak || 0, bid); p.live = { bid, ask: +q.ask_price, t: Date.now(), age: q.updated_at ? Date.now() - Date.parse(q.updated_at) : null };
+      const reason = p.manual ? 'manual' : due ? 'time' : (p.stopPct && bid <= p.entryAsk * (1 - p.stopPct / 100)) ? 'stop' : null;
+      if (reason) {
+        const pnl = Math.round((bid - p.entryAsk) * 100 * p.qty * 100) / 100, u = P.info[p.sym] && P.info[p.sym].bar && P.info[p.sym].bar.c;
+        mk.trades.push({ sym: p.sym, type: p.type, strike: p.strike, exp: p.exp, entryT: iso(p.t0), entryAsk: p.entryAsk, entryBid: p.entryBid, exitT: iso(Date.now()), exitBid: bid, exitAsk: p.live.ask, pnl, peakBid: p.peak, reason, trig: 'manual', qty: p.qty, entryU: p.entryU, exitU: u || null, entryQAge: p.qAge, exitQAge: p.live.age });
+        mk.pnl = Math.round((mk.pnl + pnl) * 100) / 100; mk.open = mk.open.filter(x => x !== p);
+      }
+    }
+    saveRec();
+  } catch (err) { /* never disturb another book */ }
+}
+const MANUAL_BOOKS = { man: ['mank', manageMan], orb: ['orbk', manageOrb], orbn: ['orbnk', manageOrbN], x9: ['x9k', x9Manage], fp: ['fpk', fpManage], csk: ['csk', cskManage], cdr: ['cdrk', cdrManage] };
 async function manualCloseBook(book, sym, t0) {
   const b = MANUAL_BOOKS[book]; if (!b) return { ok: false, error: 'unknown book' };
   const k = P.rec && P.rec[b[0]], p = k && k.open.find(x => x.sym === sym && String(x.t0) === String(t0));
@@ -1471,6 +1525,7 @@ function recOut() {
   return r ? { shut: r.shut || '', day: r.day, pnl: r.pnl, ntr: r.trades.length, tr: r.trades.slice(-30).map(t => ({ sym: t.sym, k: t.strike, ty: t.type, in: t.entryT, pnl: t.pnl, why: t.reason, strat: t.trig + (t.run ? ' run' : '') })), sh: r.sh ? r.sh.pnl : null,
     orb: r.orbk ? { pnl: r.orbk.pnl, open: r.orbk.open.map(o => ({ sym: o.sym, strike: o.strike, type: o.type, exp: o.exp, entryAsk: o.entryAsk, t0: o.t0, man: !!o.manual, stopU: o.stopU, tgtU: o.tgtU, live: o.live })), trades: r.orbk.trades.map(t => ({ sym: t.sym, strike: t.strike, type: t.type, entryT: t.entryT, pnl: t.pnl, reason: t.reason })) } : null,
     orbn: r.orbnk ? { pnl: r.orbnk.pnl, open: r.orbnk.open.map(o => ({ sym: o.sym, strike: o.strike, type: o.type, exp: o.exp, entryAsk: o.entryAsk, t0: o.t0, man: !!o.manual, stopU: o.stopU, tgtU: o.tgtU, live: o.live })), trades: r.orbnk.trades.map(t => ({ sym: t.sym, strike: t.strike, type: t.type, entryT: t.entryT, pnl: t.pnl, reason: t.reason })) } : null,
+    od: r.mank ? { pnl: r.mank.pnl, open: r.mank.open.map(o => ({ sym: o.sym, strike: o.strike, type: o.type, exp: o.exp, qty: o.qty, entryAsk: o.entryAsk, t0: o.t0, man: !!o.manual, live: o.live })), trades: r.mank.trades.map(t => ({ sym: t.sym, strike: t.strike, type: t.type, qty: t.qty, entryT: t.entryT, pnl: t.pnl, reason: t.reason })) } : null,
     csk: r.csk ? { pnl: r.csk.pnl, on: CSK_ON, open: r.csk.open.map(o => ({ sym: o.sym, ks: o.ks, kl: o.kl, exp: o.exp, t0: o.t0, man: !!o.manual, creditNat: o.creditNat, live: o.live })), trades: r.csk.trades.map(t => ({ sym: t.sym, ks: t.strike, kl: t.kl, entryT: t.entryT, pnl: t.pnl, reason: t.reason })) } : null,
     x9: r.x9k ? { pnl: r.x9k.pnl, on: X9_ON, open: r.x9k.open.map(o => ({ sym: o.sym, strike: o.strike, type: o.type, exp: o.exp, entryAsk: o.entryAsk, t0: o.t0, man: !!o.manual, live: o.live })), trades: r.x9k.trades.map(t => ({ sym: t.sym, strike: t.strike, type: t.type, entryT: t.entryT, pnl: t.pnl, reason: t.reason })) } : null,
     fp: r.fpk ? { pnl: r.fpk.pnl, on: FP_ON, open: r.fpk.open.map(o => ({ sym: o.sym, strike: o.strike, type: o.type, exp: o.exp, kind: o.kind, entryAsk: o.entryAsk, t0: o.t0, man: !!o.manual, live: o.live })), trades: r.fpk.trades.map(t => ({ sym: t.sym, strike: t.strike, type: t.type, kind: t.kind, entryT: t.entryT, pnl: t.pnl, reason: t.reason })) } : null,
@@ -1897,6 +1952,7 @@ const server = http.createServer(async (req, res) => {
     if (u.pathname === '/api/real' && req.method === 'GET') return send(res, 200, realStatus());
     if (u.pathname.startsWith('/api/real')) return send(res, 403, { ok: false, error: 'real trading is not enabled in this build' });
     if (req.method === 'POST' && u.pathname === '/api/closebook') { const sy = (u.searchParams.get('sym') || '').toUpperCase(); if (!/^[A-Z.]{1,6}$/.test(sy)) return send(res, 400, { ok: false, error: 'bad symbol' }); return send(res, 200, await manualCloseBook(u.searchParams.get('book') || '', sy, u.searchParams.get('t0') || '')); }
+    if (req.method === 'POST' && u.pathname === '/api/ondemand') { const sy = (u.searchParams.get('sym') || '').toUpperCase(); if (!/^[A-Z.]{1,6}$/.test(sy)) return send(res, 400, { ok: false, error: 'bad symbol' }); return send(res, 200, await manualEnter(sy, (u.searchParams.get('side') || '').toLowerCase(), u.searchParams.get('qty'))); }
     return send(res, 404, 'Not found', 'text/plain');
   } catch (e) { return send(res, 500, { error: String(e && e.message || e) }); }
 });
