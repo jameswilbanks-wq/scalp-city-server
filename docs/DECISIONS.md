@@ -163,3 +163,6 @@ CSK is the only book in the real-money plan. Start at ladder step 1 (1 lot each 
 
 ## 2026-11-24 — Level 3 options approval on the live account (James: "i've been approved for level 3 options trading in my live account. we can cross that off the list")
 Recorded in `REAL_TRADING_PLAN.md` section 3 as done (reported by James, not verified from the broker; account assumed to be Alpaca live, to be confirmed). Crosses off the options-approval part of step 8 only. Nothing is connected and the paper-only rule in `CLAUDE.md` is unchanged.
+
+## 2026-11-24 — Broker decided: Alpaca live, unfunded (James: "this is alpaca. we will plan on this for now. there is no money in this live account yet. i will reserve moving money into it until we are ready to go live")
+Real-money plan uses the Alpaca live account (Level 3 approved). It holds no money; James funds it only at go-live. Nothing is connected: no live keys anywhere, the Alpaca live connector stays disconnected here, no real-account code exists, and the paper-only rule in `CLAUDE.md` is unchanged.
