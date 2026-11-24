@@ -37,7 +37,9 @@ Status: **NOT STARTED. Nothing is connected.** Written 2026-11-24 after James as
 
 Step-up rules: move up one step only after at least 30 closed trades at the current size (about 15 trading days), an average over all trading days that is positive and at least half the backtest pace for that step, and no day worse than 1.5x the expected worst day. Step back one level if the running drawdown exceeds 10 days of average profit. Stop and review after any day losing more than the previous step's worst day. The $800 correlation cap must rise with each step (about $1,450 at step 4, $3,200 at step 6); each cap change needs James's explicit yes. Daily real-loss halt starts at $540 (2x the step-1 worst day) and is raised with each step. A `CSK_QTY` sizing setting (default 1) will be built only when the ladder is reached and with James's yes; nothing changes today. Starting real size therefore is **step 1: 1 lot each of SPY and QQQ, daily loss halt $540**.
 
-Still open: James's yes to Alpaca live, and the written real-money risk policy (step 4 above).
+**Done 2026-11-24:** James reports he has been approved for Level 3 options trading on his live account (reported by James; not verified from the broker, and assumed to be the Alpaca live account, to be confirmed when we reach step 2). This covers the options-approval part of step 8 only; fees, margin and day-trade rules there are still unchecked. Approval does not connect anything.
+
+Still open: James's yes to Alpaca live (confirming it is the account that was approved), and the written real-money risk policy (step 4 above).
 
 ## 4. Known gaps carried forward
 No broker-resident option stop (step 7). Alpaca closes near/in-the-money short options itself around 15:45 ET (seen 2026-11-23). Options fees on the real account are unmeasured. Paper fills are simulated and say nothing about live fill quality.

@@ -160,3 +160,6 @@ Built the toggle at the top of the web page and a separate REAL page (readiness 
 
 ## 2026-11-24 — Real-money plan answers (James: "1. what would you recommend 2. yes csk only 3. what you recommended as the start stepping up")
 CSK is the only book in the real-money plan. Start at ladder step 1 (1 lot each of SPY and QQQ, daily real-loss halt $540) and step up only by the rules recorded in `REAL_TRADING_PLAN.md` section 3. Broker recommendation given: Alpaca live (same API and `mleg` path as the paper build; Robinhood has no official options API); James's yes to that recommendation pending. Nothing is connected and the paper-only rule in `CLAUDE.md` is unchanged.
+
+## 2026-11-24 — Level 3 options approval on the live account (James: "i've been approved for level 3 options trading in my live account. we can cross that off the list")
+Recorded in `REAL_TRADING_PLAN.md` section 3 as done (reported by James, not verified from the broker; account assumed to be Alpaca live, to be confirmed). Crosses off the options-approval part of step 8 only. Nothing is connected and the paper-only rule in `CLAUDE.md` is unchanged.
