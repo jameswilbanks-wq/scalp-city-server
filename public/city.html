@@ -149,7 +149,7 @@ select:focus-visible,input:focus-visible,button:focus-visible{outline:2px solid 
 #goals .gn{margin-top:5px;font-size:9px;letter-spacing:.04em;color:var(--dim);line-height:1.25}
 @keyframes gpulse{50%{box-shadow:0 0 16px rgba(52,255,154,.95),0 0 32px rgba(52,255,154,.5)}}
 @media (prefers-reduced-motion:reduce){#goals .gr.on{animation:none}}
-#tradeExit{pointer-events:auto;align-self:flex-start;font:700 13px var(--f-disp);letter-spacing:.1em;padding:12px 18px;min-height:44px;border:1px solid var(--red);background:rgba(40,6,24,.85);color:var(--red);border-radius:8px;box-shadow:0 0 14px rgba(255,61,110,.3)}#tradeExit.arm{background:var(--red);color:#fff}
+#tradeExit,#cskBtns button{pointer-events:auto;align-self:flex-start;font:700 13px var(--f-disp);letter-spacing:.1em;padding:12px 18px;min-height:44px;border:1px solid var(--red);background:rgba(40,6,24,.85);color:var(--red);border-radius:8px;box-shadow:0 0 14px rgba(255,61,110,.3)}#tradeExit.arm,#cskBtns button.arm{background:var(--red);color:#fff}#cskBtns{display:flex;flex-direction:column;gap:6px;align-items:flex-start}#cskBtns button{align-self:flex-start;font:700 13px var(--f-disp);letter-spacing:.1em;padding:12px 18px;min-height:44px;border:1px solid var(--red);background:rgba(40,6,24,.85);color:var(--red);border-radius:8px}
 #tradeCard.up{border-color:var(--green);box-shadow:0 0 18px rgba(52,255,154,.28)}#tradeCard.dn{border-color:var(--red);box-shadow:0 0 18px rgba(255,61,110,.28)}#tradeCard.stale{border-color:var(--amber);box-shadow:0 0 18px rgba(255,210,63,.25)}
 #tradeCard .tcs{font-size:9px;letter-spacing:.12em;color:var(--dim)}#tradeCard .tcc{font-family:var(--f-disp);font-weight:700;font-size:15px;letter-spacing:.04em}
 #tradeCard .tcp{font-family:var(--f-disp);font-weight:700;font-size:26px;line-height:1.15;font-variant-numeric:tabular-nums}#tradeCard .tcl{color:var(--dim)}#tradeCard .tcl b{color:var(--ink);font-weight:600}
@@ -184,6 +184,7 @@ select:focus-visible,input:focus-visible,button:focus-visible{outline:2px solid 
     <div class="row" id="posRow"><button class="pill" id="posPill" type="button" hidden></button><button class="pill" id="orbPill" type="button" hidden title="Opening-range breakout book (separate 1-contract paper trades)"></button><button class="pill" id="wheelPill" type="button" hidden title="Wheel strategy (James's separate Alpaca paper account, isolated covered-call test)"></button></div>
     <div id="tradeCard" hidden role="status" aria-live="off"></div>
     <button id="tradeExit" type="button" hidden></button>
+    <div id="cskBtns"></div>
     <button class="pill" id="srvFeed" type="button" hidden></button>
   </header>
 
@@ -2120,6 +2121,9 @@ function renderAct(){
   else if(pp.dataset.srv){pp.dataset.srv='';if(!(P.rec&&P.rec.pos))pp.hidden=true}
   var isMainTrade=ACT&&(ACT.strat==='EMA'||ACT.strat==='Sweep'||ACT.strat==='Sweep (run)');
   var ex=$('tradeExit');ex.hidden=!(WEB&&ACT&&ACT.src==='SERVER PAPER'&&(isMainTrade||BOOKKEY[ACT.strat])&&!S.room);if(!ex.hidden){var ar=isMainTrade?Date.now()-Web.armed<5000:Web.bArmed(BOOKKEY[ACT.strat],ACT.pos);ex.className=ar?'arm':'';ex.textContent=ar?'TAP AGAIN TO EXIT (PAPER)':'EXIT TRADE NOW'}
+  /* CSK spreads are not in the rotating card, so each open CSK spread gets its own fixed close button (web page only). */
+  var cb=$('cskBtns');cb.textContent='';
+  if(WEB&&!S.room&&SRV.rec&&SRV.state==='ok'&&SRV.rec.csk)(SRV.rec.csk.open||[]).forEach(function(o){if(o.man)return;var b=document.createElement('button'),ar=Web.bArmed('csk',o);b.type='button';b.className=ar?'arm':'';b.textContent=ar?'TAP AGAIN TO CLOSE CSK '+o.sym+' (PAPER)':'CLOSE CSK '+o.sym+' '+o.ks+'/'+o.kl+' NOW';b.addEventListener('click',function(){Web.closeBook('csk',o)});cb.appendChild(b)});
   if(ACT)flAttach(ACT.pos.sym);else FL.g.visible=false;
   if(typeof srvPanelRender==='function')srvPanelRender();
   goalsRender();dayRender();

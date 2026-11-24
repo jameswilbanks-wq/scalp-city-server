@@ -57,6 +57,6 @@ t('tick lock: while the tick holds the lock the close is queued and flagged, not
 t('source guard: the route validates the symbol, is POST only and sits behind the key check; the city page only shows the button on the web page', () => {
   const route = SRC.indexOf("u.pathname === '/api/closebook'"), auth = SRC.indexOf('if (!authed(u, req))'); assert.ok(route > auth && auth > 0, 'route is after the auth check');
   assert.ok(/req\.method === 'POST' && u\.pathname === '\/api\/closebook'/.test(SRC)); assert.ok(/\[A-Z\.\]\{1,6\}/.test(SRC.slice(route, route + 400)));
-  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'city.html'), 'utf8'); assert.ok(/if\(WEB&&bk&&!o\.man\)/.test(html)); assert.ok(/\/api\/closebook\?book=/.test(html));
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'city.html'), 'utf8'); assert.ok(/if\(WEB&&bk&&!o\.man\)/.test(html)); assert.ok(/\/api\/closebook\?book=/.test(html)); assert.ok(/id="cskBtns"/.test(html) && /Web\.closeBook\('csk',o\)/.test(html), 'fixed CSK close buttons outside the server panel');
 });
 (async () => { for (const [n, f] of tests) { try { await f(); pass++; console.log('ok   ' + n); } catch (e) { console.error('FAIL ' + n + '\n' + (e && e.stack || e)); process.exitCode = 1; } } console.log(pass + '/' + tests.length + ' passed'); })();
