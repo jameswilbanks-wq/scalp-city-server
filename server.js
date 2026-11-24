@@ -380,9 +380,16 @@ function corrGroupOpenRiskUSD(rec) {
   for (const p of (rec.cdrk && rec.cdrk.open || [])) if (CORR_GROUPS.includes(p.sym)) t += (p.risk || 0);
   return Math.round(t * 100) / 100;
 }
-function corrCapBlocks(rec, sym, addRiskUSD) {
+/* CSK PRIORITY (James 2026-11-24: "give csk priority"; background: on 2026-11-24 two X9 calls used the cap room and the 12:30 CSK slot was skipped). Every book except CSK sees the room still owed to CSK entries that have not been made yet: one spread's worst-case risk (width x 100 minus about $40 of credit, $160 for a $2 spread) for each CSK symbol in a slot whose window has not ended and whose done-flag is not set. Once a slot is entered, skipped or its window ends, the reserve disappears. CSK's own check passes prio=true and ignores the reserve. No other rule changes. */
+function cskReservedUSD(rec) {
+  if (!CSK_ON || !rec || rec.shut) return 0;
+  const e = nowET(), done = (rec.csk && rec.csk.done) || {}, slots = [{ tag: '', min: CSK.min }]; if (CSK2.on) slots.push({ tag: '@2', min: CSK2.min });
+  let n = 0; for (const sl of slots) if (e.min < sl.min + 20) for (const sy of CSK.syms) if (CORR_GROUPS.includes(sy) && !done[sy + sl.tag]) n++;
+  return n * Math.max(0, CSK.width * 100 - 40);
+}
+function corrCapBlocks(rec, sym, addRiskUSD, prio) {
   if (!CORR_CAP_USD || !CORR_GROUPS.includes(sym)) return null;
-  const cur = corrGroupOpenRiskUSD(rec), next = Math.round((cur + (addRiskUSD || 0)) * 100) / 100;
+  const cur = corrGroupOpenRiskUSD(rec) + (prio ? 0 : cskReservedUSD(rec)), next = Math.round((cur + (addRiskUSD || 0)) * 100) / 100;
   return next > CORR_CAP_USD ? { cur, next } : null;
 }
 /* AI trade-management overlay (James approved 2026-11-14, ported from his ai_trade_overlay.py prototype --
@@ -779,7 +786,7 @@ async function cskLook() {
       const sB = +a.bid_price, sA = +a.ask_price, lB = +b.bid_price, lA = +b.ask_price, nat = Math.round((sB - lA) * 100) / 100, mid = Math.round(((sB + sA) / 2 - (lB + lA) / 2) * 1000) / 1000;
       if (!(nat >= 0.03)) { logSignal(s, fake, px, 'skipped', 'call spread: credit under 3 cents at the bid/ask (' + nat.toFixed(2) + ', mid ' + mid.toFixed(2) + ')'); continue; }
       const width = lg.strike - sh.strike, addRisk = Math.max(0, width * 100 - nat * 100);
-      { const corr = corrCapBlocks(r, s, addRisk); if (corr) { logSignal(s, fake, px, 'skipped', 'call spread: would push ' + s + '-group open risk to $' + corr.next.toFixed(0) + ', over the $' + CORR_CAP_USD + ' correlation cap'); continue; } }
+      { const corr = corrCapBlocks(r, s, addRisk, true); if (corr) { logSignal(s, fake, px, 'skipped', 'call spread: would push ' + s + '-group open risk to $' + corr.next.toFixed(0) + ', over the $' + CORR_CAP_USD + ' correlation cap'); continue; } }
       r.csk.open.push({ sym: s, exp: today, ks: sh.strike, kl: lg.strike, instS: sh.id, instL: lg.id, t0: Date.now(), entryU: px, sBid: sB, sAsk: sA, lBid: lB, lAsk: lA, creditNat: nat, creditMid: mid, qAge: age, width, slot: slot.n });
       try { await cskRealEnter(r, r.csk.open[r.csk.open.length - 1]); } catch (err) { P.cskRealErr = String(err && err.message || err).slice(0, 120); }
       logSignal(s, fake, px, 'entered', 'sold call spread ' + sh.strike + '/' + lg.strike + ' exp ' + today + ' for $' + nat.toFixed(2) + ' at the bid/ask (mid $' + mid.toFixed(2) + ')');

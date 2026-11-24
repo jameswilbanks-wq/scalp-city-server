@@ -178,3 +178,6 @@ Built and tested locally (`test/manual_close.test.js` 10, plus a CSK real-mirror
 
 ## 2026-11-24 — PAPER / REAL toggle built (not pushed yet)
 Toggle plus REAL page (readiness only, nothing connected) built and tested locally: `test/real_page.test.js` 5/5, all test files pass. Pushed only after the 16:00 ET close (James's earlier instruction), together with the CSK close-button fix `ea6c4c8`. Plan and open decisions: `REAL_TRADING_PLAN.md`.
+
+## 2026-11-24 — Slot 2 skipped by the cap, fixed and re-run
+Both 12:30 CSK spreads were skipped (cap); cap raised to $1,200 via Render env; CSK priority built (`test/csk_priority.test.js`); slot 2 re-run at 12:44 ET (late entry, labelled in DECISIONS). The four commits plus manual close, Real page and docs push after the 16:00 ET close. Note for slot-2 evaluation: before today it also skipped whenever other books filled the cap, a selection effect.
