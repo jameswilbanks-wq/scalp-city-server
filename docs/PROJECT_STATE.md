@@ -172,3 +172,6 @@ Read-only study runs once ~4.5 minutes after the next boot (kv `bt34`, progress 
 
 ## 2026-11-20 — bt34 result
 No daily-direction indicator passed Stage 0 on SPY or QQQ (best SPY fade-the-gap +5.4 bps, CI [-3.1,+15.4], sign flips in holdout; a coin flip beat every QQQ indicator). No Stage 1, no book. Direction stays with the existing books (ORB15, X9, Sweep) and CSK (which does not need a direction call).
+
+## 2026-11-24 — Manual close buttons for all books
+Built and tested locally (`test/manual_close.test.js` 10, plus a CSK real-mirror case in `cskreal_wire.test.js`; all test files pass; mutation check caught a removed X9 hook). Not pushed during market hours per James's instruction; push after the 16:00 ET close, then confirm Render `live` and add the notes item. Open: after the first real use, confirm the journal row (reason `manual`) and, for CSK with real orders on, the real exit in Alpaca.

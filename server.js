@@ -702,10 +702,10 @@ async function manageOrb() {
     (qd.results || []).forEach(z => { if (z.quote) by[z.quote.instrument_id] = z.quote; });
     for (const p of ob.open.slice()) {
       const q = by[p.inst]; if (!q) continue; const bid = +q.bid_price; if (!(bid >= 0)) continue;
-      if (q.updated_at && Date.now() - Date.parse(q.updated_at) > 180000) continue;
+      if (!p.manual && q.updated_at && Date.now() - Date.parse(q.updated_at) > 180000) continue;
       p.peak = Math.max(p.peak || 0, bid); p.live = { bid, ask: +q.ask_price, t: Date.now(), age: q.updated_at ? Date.now() - Date.parse(q.updated_at) : null };
       if (p.be && !p.beT) { for (const x of (P.bars[p.sym] || [])) { if (x.t <= p.sigT) continue; if (p.dir > 0 ? x.l <= p.stopU : x.h >= p.stopU) break; if (p.dir * ((p.dir > 0 ? x.h : x.l) - p.entryU) >= p.be * p.riskU) { p.stopU = p.entryU; p.beT = x.t; break; } } } // break-even: from the bar AFTER the one that reached +0.5R
-      const reason = exitReason(p, {}, bid, P.info[p.sym], P.bars[p.sym]);
+      const reason = p.manual ? 'manual' : exitReason(p, {}, bid, P.info[p.sym], P.bars[p.sym]);
       if (reason) {
         const pnl = Math.round((bid - p.entryAsk) * 10000) / 100;
         ob.trades.push({ sym: p.sym, type: p.type, strike: p.strike, exp: p.exp, entryT: iso(p.t0), entryAsk: p.entryAsk, entryBid: p.entryBid, exitT: iso(Date.now()), exitBid: bid, exitAsk: p.live.ask, spreadIn: Math.round((p.entryAsk - p.entryBid) * 100) / 100, spreadOut: Math.round((p.live.ask - bid) * 100) / 100, delta: p.delta, iv: p.iv, pnl, peakBid: p.peak, reason: reason === 'stop' && p.beT ? 'breakeven' : reason, trig: 'orb5', orbV: p.orbV, qty: 1, entryU: p.entryU, stopU: p.stopU, tgtU: p.tgtU, riskU: p.riskU, entryQAge: p.qAge, exitQAge: p.live.age });
@@ -740,10 +740,10 @@ async function manageOrbN() {
     (qd.results || []).forEach(z => { if (z.quote) by[z.quote.instrument_id] = z.quote; });
     for (const p of ob.open.slice()) {
       const q = by[p.inst]; if (!q) continue; const bid = +q.bid_price; if (!(bid >= 0)) continue;
-      if (q.updated_at && Date.now() - Date.parse(q.updated_at) > 180000) continue;
+      if (!p.manual && q.updated_at && Date.now() - Date.parse(q.updated_at) > 180000) continue;
       p.peak = Math.max(p.peak || 0, bid); p.live = { bid, ask: +q.ask_price, t: Date.now(), age: q.updated_at ? Date.now() - Date.parse(q.updated_at) : null };
       if (p.be && !p.beT) { for (const x of (P.bars[p.sym] || [])) { if (x.t <= p.sigT) continue; if (p.dir > 0 ? x.l <= p.stopU : x.h >= p.stopU) break; if (p.dir * ((p.dir > 0 ? x.h : x.l) - p.entryU) >= p.be * p.riskU) { p.stopU = p.entryU; p.beT = x.t; break; } } }
-      const reason = exitReason(p, {}, bid, P.info[p.sym], P.bars[p.sym]);
+      const reason = p.manual ? 'manual' : exitReason(p, {}, bid, P.info[p.sym], P.bars[p.sym]);
       if (reason) {
         const pnl = Math.round((bid - p.entryAsk) * 10000) / 100;
         ob.trades.push({ book: 'orbn', sym: p.sym, type: p.type, strike: p.strike, exp: p.exp, entryT: iso(p.t0), entryAsk: p.entryAsk, entryBid: p.entryBid, exitT: iso(Date.now()), exitBid: bid, exitAsk: p.live.ask, spreadIn: Math.round((p.entryAsk - p.entryBid) * 100) / 100, spreadOut: Math.round((p.live.ask - bid) * 100) / 100, delta: p.delta, iv: p.iv, pnl, peakBid: p.peak, reason: reason === 'stop' && p.beT ? 'breakeven' : reason, trig: 'orbn', orbV: p.orbV, qty: 1, entryU: p.entryU, stopU: p.stopU, tgtU: p.tgtU, riskU: p.riskU, entryQAge: p.qAge, exitQAge: p.live.age });
@@ -802,6 +802,7 @@ async function cskManage() {
       for (const p of k.open) {
         const a = q[p.instS], b = q[p.instL], u = P.info[p.sym] && P.info[p.sym].bar ? P.info[p.sym].bar.c : null; if (u !== null) p.lastU = u;
         if (a && b) { const nat = Math.round((+a.ask_price - +b.bid_price) * 100) / 100, mid = Math.round(((+a.bid_price + +a.ask_price) / 2 - (+b.bid_price + +b.ask_price) / 2) * 1000) / 1000, fresh = Math.max(Date.now() - Date.parse(a.updated_at || 0), Date.now() - Date.parse(b.updated_at || 0)) <= 180000; p.live = { closeNat: nat, closeMid: mid, t: Date.now(), u };
+          if (p.manual) { cskClose(p, nat, mid, u, 'manual close'); continue; } // James's manual close: buy back at the natural price (a real mirror order, if any, exits on its ladder)
           if (e.min >= 930 && !p.at330) p.at330 = { closeNat: nat, closeMid: mid, u, t: iso(Date.now()) };
           if (u !== null && u > p.ks && !p.ustop) p.ustop = { closeNat: nat, closeMid: mid, u, t: iso(Date.now()) };
           /* 3x STOP (James approved 2026-11-11 after study bt9: a 3x stop kept most of the hold-to-close average and cut the worst day from about -$200 to -$120/-$150; 2x and take-profit rules cost more than they saved). Fires only on two consecutive fresh reads with the MID (not the natural) at or above 3x the mid credit, so one wide quote cannot trigger it; the buy-back is filled at the natural price. CSK_STOP=0 turns it off; CSK_STOP=2.5 changes the multiple. */
@@ -835,7 +836,7 @@ async function cskRealEnter(r, p) {
 function cskRealOnClose(p, costNat, reason, expired, u) {
   const st = P.rec && P.rec.cskreal, R = st && p.realId ? st.list.find(x => x.id === p.realId) : null; if (!R) return;
   if (expired) { CSKO.settleReal(R, costNat, Date.now()); R.settleU = u === undefined ? null : u; return; }
-  if (/^stop/.test(reason) && !CSKO.startExit(R, reason, costNat, Date.now()) && R.state === 'entering') R.pendingStop = { reason, costNat };
+  if (/^(stop|manual)/.test(reason) && !CSKO.startExit(R, reason, costNat, Date.now()) && R.state === 'entering') R.pendingStop = { reason, costNat };
 }
 async function cskRealTick() {
   const r = P.rec, st = r && r.cskreal; if (!st || !st.list.length) return;
@@ -984,6 +985,7 @@ async function cdrManage() {
       const have = ids.every(id => q[id] && q[id].updated_at && Date.now() - Date.parse(q[id].updated_at) <= 180000 && +q[id].ask_price >= 0);
       const debit = have ? Math.max(0.01, Math.ceil((+q[p.instLP].ask_price + +q[p.instLC].ask_price - +q[p.instSP].bid_price - +q[p.instSC].bid_price) * 100) / 100) : null;
       p.live = debit === null ? p.live : { closeDebit: debit, t: Date.now() };
+      if (p.manual) { const dm = debit !== null ? debit : (p.live && p.live.closeDebit !== undefined ? p.live.closeDebit : null); if (dm !== null) { cdrClose(p, Math.min(p.width, dm), 'manual close'); continue; } if (!k.haltedToday && e.min < CDR.timeExit) continue; } // manual close; with no quote at all it waits (instead of the automatic stale-quote exit at the full wing width) unless the halt or time exit is due anyway
       let reason = null;
       if (k.haltedToday) reason = 'daily halt';
       else if (e.min >= CDR.timeExit) reason = 'time exit';
@@ -1068,7 +1070,7 @@ async function x9Manage() {
     const e = nowET();
     for (const p of k.open.slice()) {
       const q = by[p.inst]; if (!q) continue; const bid = +q.bid_price; if (!(bid >= 0)) continue;
-      if (q.updated_at && Date.now() - Date.parse(q.updated_at) > 180000) continue;
+      if (!p.manual && q.updated_at && Date.now() - Date.parse(q.updated_at) > 180000) continue;
       p.peak = Math.max(p.peak || 0, bid); p.live = { bid, ask: +q.ask_price, t: Date.now(), age: q.updated_at ? Date.now() - Date.parse(q.updated_at) : null };
       const bars = x9Bars(p.sym), last = bars && bars.length ? bars[bars.length - 1] : null; let reason = ''; // same candle size as entry (x9Bars), so exits read the same EMA9/VWAP the entry signal used
       if (last && last.t > p.sigT) { if (Engine.x9Exit(last, p.dir)) reason = 'level'; else { const x = Engine.x9At(bars, bars.length - 1); if (x && x.dir === -p.dir) reason = 'reverse'; } }
@@ -1084,6 +1086,7 @@ async function x9Manage() {
       if (!reason && bid <= p.entryAsk * (1 - X9.stopPct / 100)) reason = 'premium stop';
       if (!reason && e.min >= p.flatMin) reason = 'eod';
       if (!reason && !marketOpen(Date.now())) reason = 'eod';
+      if (p.manual) reason = 'manual';
       if (reason) {
         const pnl = Math.round((bid - p.entryAsk) * 10000) / 100;
         k.trades.push({ sym: p.sym, type: p.type, strike: p.strike, exp: p.exp, entryT: iso(p.t0), entryAsk: p.entryAsk, exitT: iso(Date.now()), exitBid: bid, pnl, peakBid: p.peak, reason, trig: 'x9', qty: 1, entryU: p.entryU, exitU: last ? last.c : null, entryQAge: p.qAge, exitQAge: p.live.age });
@@ -1147,12 +1150,13 @@ async function fpManage() {
     const e = nowET();
     for (const p of k.open.slice()) {
       const q = by[p.inst]; if (!q) continue; const bid = +q.bid_price; if (!(bid >= 0)) continue;
-      if (q.updated_at && Date.now() - Date.parse(q.updated_at) > 180000) continue;
+      if (!p.manual && q.updated_at && Date.now() - Date.parse(q.updated_at) > 180000) continue;
       p.peak = Math.max(p.peak || 0, bid); p.live = { bid, ask: +q.ask_price, t: Date.now(), age: q.updated_at ? Date.now() - Date.parse(q.updated_at) : null };
       const bars = (P.bars[p.sym] || []).filter(b => b.t > p.sigT); let reason = '';
       for (const x of bars) { if (p.dir > 0 ? x.l <= p.stopU : x.h >= p.stopU) { reason = 'stop'; break; } if (p.dir > 0 ? x.h >= p.tgtU : x.l <= p.tgtU) { reason = 'target'; break; } }
       if (!reason && bid <= p.entryAsk * 0.5) reason = 'premium stop';
       if (!reason && (e.min >= 690 || !marketOpen(Date.now()))) reason = 'time';
+      if (p.manual) reason = 'manual';
       if (reason) {
         const pnl = Math.round((bid - p.entryAsk) * 10000) / 100, st = k.st[p.sym] || {};
         k.trades.push({ sym: p.sym, type: p.type, strike: p.strike, exp: p.exp, kind: p.kind, entryT: iso(p.t0), entryAsk: p.entryAsk, exitT: iso(Date.now()), exitBid: bid, pnl, peakBid: p.peak, reason, trig: 'fp', qty: 1, entryU: p.entryU, stopU: p.stopU, tgtU: p.tgtU, fair: p.fair, entryQAge: p.qAge, exitQAge: p.live.age });
@@ -1397,6 +1401,22 @@ async function manualClose() {
   closePaper('manual', bid, P.info[p.sym] || null); return { ok: true, bid };
 }
 
+/* Manual close of ANY open server paper position (James 2026-11-24: "when there is a orb, or x9 or csk open order there isn't a way to manually close out the trade"). The position is flagged and the book's own manage function closes it on a fresh price, so the journal row, P&L fields and (for CSK) the real mirror exit use exactly the normal close path; reason is 'manual' / 'manual close'. Paper only. The main Sweep position keeps its own /api/close. */
+const MANUAL_BOOKS = { orb: ['orbk', manageOrb], orbn: ['orbnk', manageOrbN], x9: ['x9k', x9Manage], fp: ['fpk', fpManage], csk: ['csk', cskManage], cdr: ['cdrk', cdrManage] };
+async function manualCloseBook(book, sym, t0) {
+  const b = MANUAL_BOOKS[book]; if (!b) return { ok: false, error: 'unknown book' };
+  const k = P.rec && P.rec[b[0]], p = k && k.open.find(x => x.sym === sym && String(x.t0) === String(t0));
+  if (!p) return { ok: false, error: 'that position is not open (it may have just closed)' };
+  if (!marketOpen(Date.now())) return { ok: false, error: 'market is closed' };
+  p.manual = true; saveRec();
+  for (let i = 0; i < 10 && P.busy; i++) await new Promise(r => setTimeout(r, 500));
+  if (P.busy) return { ok: true, closed: false, pending: true, note: 'Queued: the server is busy; it closes on the next price.' };
+  P.busy = true; // same lock the tick uses, so a manual close and a tick can never both close the same position
+  try { await b[1](); } catch (e) { /* the flag stays; the next tick retries */ } finally { P.busy = false; }
+  if (k.open.includes(p)) return { ok: true, closed: false, pending: true, note: 'Queued: no fresh price yet; it closes on the next price.' };
+  const t = k.trades[k.trades.length - 1] || {};
+  return { ok: true, closed: true, pnl: t.pnl, reason: t.reason };
+}
 
 /* ---------- city page (3D view) served from here so it works from anywhere ---------- */
 const fs = require('fs'), zlib = require('zlib'), path = require('path');
@@ -1424,11 +1444,12 @@ async function extraBars(list) {
 function recOut() {
   const r = P.rec;
   return r ? { shut: r.shut || '', day: r.day, pnl: r.pnl, ntr: r.trades.length, tr: r.trades.slice(-30).map(t => ({ sym: t.sym, k: t.strike, ty: t.type, in: t.entryT, pnl: t.pnl, why: t.reason, strat: t.trig + (t.run ? ' run' : '') })), sh: r.sh ? r.sh.pnl : null,
-    orb: r.orbk ? { pnl: r.orbk.pnl, open: r.orbk.open.map(o => ({ sym: o.sym, strike: o.strike, type: o.type, exp: o.exp, entryAsk: o.entryAsk, t0: o.t0, stopU: o.stopU, tgtU: o.tgtU, live: o.live })), trades: r.orbk.trades.map(t => ({ sym: t.sym, strike: t.strike, type: t.type, entryT: t.entryT, pnl: t.pnl, reason: t.reason })) } : null,
-    csk: r.csk ? { pnl: r.csk.pnl, on: CSK_ON, open: r.csk.open.map(o => ({ sym: o.sym, ks: o.ks, kl: o.kl, exp: o.exp, t0: o.t0, creditNat: o.creditNat, live: o.live })), trades: r.csk.trades.map(t => ({ sym: t.sym, ks: t.strike, kl: t.kl, entryT: t.entryT, pnl: t.pnl, reason: t.reason })) } : null,
-    x9: r.x9k ? { pnl: r.x9k.pnl, on: X9_ON, open: r.x9k.open.map(o => ({ sym: o.sym, strike: o.strike, type: o.type, exp: o.exp, entryAsk: o.entryAsk, t0: o.t0, live: o.live })), trades: r.x9k.trades.map(t => ({ sym: t.sym, strike: t.strike, type: t.type, entryT: t.entryT, pnl: t.pnl, reason: t.reason })) } : null,
-    fp: r.fpk ? { pnl: r.fpk.pnl, on: FP_ON, open: r.fpk.open.map(o => ({ sym: o.sym, strike: o.strike, type: o.type, exp: o.exp, kind: o.kind, entryAsk: o.entryAsk, t0: o.t0, live: o.live })), trades: r.fpk.trades.map(t => ({ sym: t.sym, strike: t.strike, type: t.type, kind: t.kind, entryT: t.entryT, pnl: t.pnl, reason: t.reason })) } : null,
-    cdr: r.cdrk ? { pnl: r.cdrk.pnl, on: CDR_ON, open: r.cdrk.open.map(o => ({ sym: o.sym, ksp: o.ksp, klp: o.klp, ksc: o.ksc, klc: o.klc, exp: o.exp, t0: o.t0, credit: o.credit, width: o.width, live: o.live })), trades: r.cdrk.trades.map(t => ({ sym: t.sym, ksp: t.ksp, klp: t.klp, ksc: t.ksc, klc: t.klc, entryT: t.entryT, pnl: t.pnl, reason: t.reason })), aiOverlayOn: AI_OVERLAY_ON, aiShadow: (r.cdrk.aiShadow || []).slice(-20).map(a => ({ t: a.t, kind: a.kind, sym: a.sym, action: a.decision.action, reason: a.decision.reason })) } : null,
+    orb: r.orbk ? { pnl: r.orbk.pnl, open: r.orbk.open.map(o => ({ sym: o.sym, strike: o.strike, type: o.type, exp: o.exp, entryAsk: o.entryAsk, t0: o.t0, man: !!o.manual, stopU: o.stopU, tgtU: o.tgtU, live: o.live })), trades: r.orbk.trades.map(t => ({ sym: t.sym, strike: t.strike, type: t.type, entryT: t.entryT, pnl: t.pnl, reason: t.reason })) } : null,
+    orbn: r.orbnk ? { pnl: r.orbnk.pnl, open: r.orbnk.open.map(o => ({ sym: o.sym, strike: o.strike, type: o.type, exp: o.exp, entryAsk: o.entryAsk, t0: o.t0, man: !!o.manual, stopU: o.stopU, tgtU: o.tgtU, live: o.live })), trades: r.orbnk.trades.map(t => ({ sym: t.sym, strike: t.strike, type: t.type, entryT: t.entryT, pnl: t.pnl, reason: t.reason })) } : null,
+    csk: r.csk ? { pnl: r.csk.pnl, on: CSK_ON, open: r.csk.open.map(o => ({ sym: o.sym, ks: o.ks, kl: o.kl, exp: o.exp, t0: o.t0, man: !!o.manual, creditNat: o.creditNat, live: o.live })), trades: r.csk.trades.map(t => ({ sym: t.sym, ks: t.strike, kl: t.kl, entryT: t.entryT, pnl: t.pnl, reason: t.reason })) } : null,
+    x9: r.x9k ? { pnl: r.x9k.pnl, on: X9_ON, open: r.x9k.open.map(o => ({ sym: o.sym, strike: o.strike, type: o.type, exp: o.exp, entryAsk: o.entryAsk, t0: o.t0, man: !!o.manual, live: o.live })), trades: r.x9k.trades.map(t => ({ sym: t.sym, strike: t.strike, type: t.type, entryT: t.entryT, pnl: t.pnl, reason: t.reason })) } : null,
+    fp: r.fpk ? { pnl: r.fpk.pnl, on: FP_ON, open: r.fpk.open.map(o => ({ sym: o.sym, strike: o.strike, type: o.type, exp: o.exp, kind: o.kind, entryAsk: o.entryAsk, t0: o.t0, man: !!o.manual, live: o.live })), trades: r.fpk.trades.map(t => ({ sym: t.sym, strike: t.strike, type: t.type, kind: t.kind, entryT: t.entryT, pnl: t.pnl, reason: t.reason })) } : null,
+    cdr: r.cdrk ? { pnl: r.cdrk.pnl, on: CDR_ON, open: r.cdrk.open.map(o => ({ sym: o.sym, ksp: o.ksp, klp: o.klp, ksc: o.ksc, klc: o.klc, exp: o.exp, t0: o.t0, man: !!o.manual, credit: o.credit, width: o.width, live: o.live })), trades: r.cdrk.trades.map(t => ({ sym: t.sym, ksp: t.ksp, klp: t.klp, ksc: t.ksc, klc: t.klc, entryT: t.entryT, pnl: t.pnl, reason: t.reason })), aiOverlayOn: AI_OVERLAY_ON, aiShadow: (r.cdrk.aiShadow || []).slice(-20).map(a => ({ t: a.t, kind: a.kind, sym: a.sym, action: a.decision.action, reason: a.decision.reason })) } : null,
     upd: new Date(P.lastTick || Date.now()).toISOString(), run: { running: !!P.ctl.running }, pos: r.pos ? { sym: r.pos.sym, strike: r.pos.strike, type: r.pos.type, exp: r.pos.exp, entryAsk: r.pos.entryAsk, entryBid: r.pos.entryBid, qty: r.pos.qty || 1, half: r.pos.half || null, peak: r.pos.peak, t0: r.pos.t0, trig: r.pos.trig, live: r.pos.live } : null } : null;
 }
 function liveData() { return { now: Date.now(), run: !!P.ctl.running, market: marketOpen(Date.now()), msg: P.msg, rec: recOut() }; }
@@ -1848,6 +1869,7 @@ const server = http.createServer(async (req, res) => {
     if (u.pathname === '/api/status') return send(res, 200, status());
     if (req.method === 'POST' && u.pathname === '/api/control') { P.ctl.running = u.searchParams.get('run') === '1'; await kset('control', P.ctl); setImmediate(tick); return send(res, 200, status()); }
     if (req.method === 'POST' && u.pathname === '/api/close') return send(res, 200, await manualClose());
+    if (req.method === 'POST' && u.pathname === '/api/closebook') { const sy = (u.searchParams.get('sym') || '').toUpperCase(); if (!/^[A-Z.]{1,6}$/.test(sy)) return send(res, 400, { ok: false, error: 'bad symbol' }); return send(res, 200, await manualCloseBook(u.searchParams.get('book') || '', sy, u.searchParams.get('t0') || '')); }
     return send(res, 404, 'Not found', 'text/plain');
   } catch (e) { return send(res, 500, { error: String(e && e.message || e) }); }
 });

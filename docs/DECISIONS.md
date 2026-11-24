@@ -151,3 +151,6 @@ James answered the spec questions: D1 price ladder yes, D2 pre-close close of in
 
 ## 2026-11-20 — daily-direction 0DTE call/put book: study first (bt34 Stage 0)
 James asked for a book that recognizes the day's direction from the best indicators and buys 0DTE calls/puts for maximum profit. Decision (mine, within read-only research): no live book yet; a pre-registered Stage 0 study (`docs/dir-signal-study-spec.md`, `bt34`) tests whether well-known indicators call the 10:30-to-close move at all, because earlier directional ideas (EMA, Sweep, IB, ORPB, ORB options expression) lost on real prices. A survivor goes to Stage 1 (real option prices), then a shadow book; each step needs James's explicit yes. 'Maximum profit' cannot be promised or tested; results are reported as historical, holdout and forward-paper separately.
+
+## 2026-11-24 — Manual close for every server paper book (James: "can you add this feature to all orders. don't push until after market closes")
+Built: manual close for ORB, ORBN, CSK, X9, FP and CDR positions (see RUNBOOK 2026-11-24). It is an operator control, not a strategy change: no entry, sizing, stop or target rule was touched; a manual exit is recorded as `manual` / `manual close` so studies can exclude those trades. Pushed only after the 16:00 ET close, as instructed.

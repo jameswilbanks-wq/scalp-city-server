@@ -2119,7 +2119,7 @@ function renderAct(){
   if(PILL){var q=PILL.pos,pn2=posPnl(PILL);pp.hidden=false;if(pn2!=null){pp.className='pill '+(pn2>=0?'up':'dn');pp.textContent=PILL.strat+' '+posLabel(PILL).replace(q.sym+' ','')+'  '+money(pn2,true)}else{pp.className='pill';pp.textContent=PILL.strat+' '+posLabel(PILL).replace(q.sym+' ','')+' open'}pp.dataset.srv='1'}
   else if(pp.dataset.srv){pp.dataset.srv='';if(!(P.rec&&P.rec.pos))pp.hidden=true}
   var isMainTrade=ACT&&(ACT.strat==='EMA'||ACT.strat==='Sweep'||ACT.strat==='Sweep (run)');
-  var ex=$('tradeExit');ex.hidden=!(WEB&&ACT&&ACT.src==='SERVER PAPER'&&isMainTrade&&!S.room);if(!ex.hidden){var ar=Date.now()-Web.armed<5000;ex.className=ar?'arm':'';ex.textContent=ar?'TAP AGAIN TO EXIT (PAPER)':'EXIT TRADE NOW'}
+  var ex=$('tradeExit');ex.hidden=!(WEB&&ACT&&ACT.src==='SERVER PAPER'&&(isMainTrade||BOOKKEY[ACT.strat])&&!S.room);if(!ex.hidden){var ar=isMainTrade?Date.now()-Web.armed<5000:Web.bArmed(BOOKKEY[ACT.strat],ACT.pos);ex.className=ar?'arm':'';ex.textContent=ar?'TAP AGAIN TO EXIT (PAPER)':'EXIT TRADE NOW'}
   if(ACT)flAttach(ACT.pos.sym);else FL.g.visible=false;
   if(typeof srvPanelRender==='function')srvPanelRender();
   goalsRender();dayRender();
@@ -2217,10 +2217,11 @@ function srvPanelRender(){renderOrb();renderWheel();
   sm.textContent=r?('Today: '+money(r.pnl||0,true)+' · '+(r.ntr||0)+' closed'+(r.pos?' · 1 open ('+r.pos.sym+' '+r.pos.strike+(r.pos.type==='call'?'C':'P')+')':'')+(r.sh!=null?' · tight-exit test (B): '+money(r.sh,true):'')+bookBit('ORB book',r.orb)+bookBit('CSK book',r.csk)+bookBit('X9 book',r.x9)+bookBit('FP book',r.fp)+bookBit('Condor book',r.cdr)+bookBit('Wheel book',r.wheel)):'';
   sm.className='mode '+(r&&r.pnl>0?'up':r&&r.pnl<0?'dn':'');
   tb.textContent='';
-  function addOpenRow(label,o,contract,pnl,detail){var tr=document.createElement('tr');tdTxt(tr,hm(new Date(o.t0).toISOString()));tdTxt(tr,label+' '+contract);tdTxt(tr,label);tdTxt(tr,pnl==null?'…':money(pnl,true),pnl>0?'up':pnl<0?'dn':'flat');tdTxt(tr,'OPEN'+(detail?' · '+detail:''));tb.appendChild(tr)}
+  function addOpenRow(label,o,contract,pnl,detail){var tr=document.createElement('tr');tdTxt(tr,hm(new Date(o.t0).toISOString()));tdTxt(tr,label+' '+contract);tdTxt(tr,label);tdTxt(tr,pnl==null?'…':money(pnl,true),pnl>0?'up':pnl<0?'dn':'flat');tdTxt(tr,'OPEN'+(detail?' · '+detail:'')+(o.man?' · closing…':''));var bk=BOOKKEY[label];if(WEB&&bk&&!o.man){var b=document.createElement('button'),ar=Web.bArmed(bk,o);b.type='button';b.className=ar?'btn arm':'btn';b.style.cssText='margin-left:8px;padding:2px 8px;width:auto';b.textContent=ar?'TAP AGAIN TO CLOSE':'Close';b.addEventListener('click',function(){Web.closeBook(bk,o)});tr.lastChild.appendChild(b)}tb.appendChild(tr)}
   ((r&&r.orb&&r.orb.open)||[]).forEach(function(o){var p=orbPnl(o);addOpenRow('ORB',o,o.sym+' '+o.strike+(o.type==='call'?'C':'P'),p,'stop '+(+o.stopU).toFixed(2)+' · target '+(+o.tgtU).toFixed(2))});
   ((r&&r.csk&&r.csk.open)||[]).forEach(function(o){var p=o.live&&o.creditNat!=null?Math.round((o.creditNat-o.live.closeNat)*100)/100:null;addOpenRow('CSK',o,o.sym+' '+o.ks+'/'+o.kl+'C',p,'short call spread, held to the close')});
   ((r&&r.x9&&r.x9.open)||[]).forEach(function(o){var p=o.live&&o.entryAsk!=null?Math.round((o.live.bid-o.entryAsk)*100)/100:null;addOpenRow('X9',o,o.sym+' '+o.strike+(o.type==='call'?'C':'P'),p)});
+  ((r&&r.orbn&&r.orbn.open)||[]).forEach(function(o){var p=orbPnl(o);addOpenRow('ORBN',o,o.sym+' '+o.strike+(o.type==='call'?'C':'P'),p,'stop '+(+o.stopU).toFixed(2)+' · target '+(+o.tgtU).toFixed(2))});
   ((r&&r.fp&&r.fp.open)||[]).forEach(function(o){var p=o.live&&o.entryAsk!=null?Math.round((o.live.bid-o.entryAsk)*100)/100:null;addOpenRow('FP',o,o.sym+' '+o.strike+(o.type==='call'?'C':'P')+(o.kind?' ('+o.kind+')':''),p)});
   ((r&&r.cdr&&r.cdr.open)||[]).forEach(function(o){var p=o.live&&o.credit!=null&&o.live.closeDebit!=null?Math.round((o.credit-o.live.closeDebit)*100)/100:null;addOpenRow('CDR',o,o.sym+' '+o.klp+'/'+o.ksp+'P '+o.ksc+'/'+o.klc+'C',p,'iron condor, $'+o.width+' wings')});
   var orbRows=((r&&r.orb&&r.orb.trades)||[]).map(function(t){return{in:t.entryT,sym:'ORB '+t.sym,k:t.strike,ty:t.type,pnl:t.pnl,why:t.reason,strat:'ORB'}});
@@ -2247,7 +2248,16 @@ $('srvKey').addEventListener('input',function(){try{localStorage.setItem('sc_srv
 
 /* ---------- web mode: city page served by the server itself ---------- */
 var WEB=!!window.__WEB__;
-var Web={dayArm:0,timer:null,key:'',trades:[],armed:0,last:null,
+var BOOKKEY={ORB:'orb',ORBN:'orbn',X9:'x9',FP:'fp',CDR:'cdr',CSK:'csk'};
+var Web={dayArm:0,timer:null,key:'',trades:[],armed:0,last:null,bArm:null,
+  bArmed:function(bk,o){return !!(Web.bArm&&Web.bArm.id===bk+'|'+o.sym+'|'+o.t0&&Date.now()-Web.bArm.t<5000)},
+  /* manual close of any non-main server paper position: first tap arms for 5 s, second tap sends it. The server flags the position and the book's own close path books it (reason manual). */
+  closeBook:async function(bk,o){
+    if(!Web.bArmed(bk,o)){Web.bArm={id:bk+'|'+o.sym+'|'+o.t0,t:Date.now()};renderAct();setTimeout(renderAct,5200);return}
+    Web.bArm=null;$('srvCtlMsg').textContent='Closing '+bk.toUpperCase()+' '+o.sym+'…';
+    try{var r=await (await Web.api('/api/closebook?book='+bk+'&sym='+encodeURIComponent(o.sym)+'&t0='+encodeURIComponent(o.t0),'POST')).json();
+      $('srvCtlMsg').textContent=r.ok?(r.closed?('Closed '+bk.toUpperCase()+' '+o.sym+' (paper)'+(r.pnl!=null?': '+money(+r.pnl,true):'')+'.'):(r.note||'Queued.')):('Could not close: '+(r.error||'unknown'));await Web.load()}catch(e){$('srvCtlMsg').textContent='Could not reach the server.'}renderAct()
+  },
   start:function(){
     Web.key=new URLSearchParams(location.search).get('key')||'';
     $('app').classList.add('web');S.mode='live';liveOK=false;S.accounts=[];fillAccts();
@@ -2333,7 +2343,7 @@ $('dayStop').addEventListener('click',async function(){
   if(Date.now()-Web.dayArm<5000){Web.dayArm=0;try{var j=await (await Web.api('/api/stopday','POST')).json();$('srvCtlMsg').textContent=j.ok?(j.closedAt!=null?'Sold at $'+(+j.closedAt).toFixed(2)+' and stopped for the day (paper).':'Stopped for the day (paper).'):('Could not stop: '+(j.error||'unknown'))}catch(e){}Web.load()}
   else{Web.dayArm=Date.now();dayRender();setTimeout(dayRender,5200)}
 });
-$('tradeExit').addEventListener('click',function(){Web.close();renderAct()});
+$('tradeExit').addEventListener('click',function(){if(ACT&&BOOKKEY[ACT.strat])Web.closeBook(BOOKKEY[ACT.strat],ACT.pos);else{Web.close();renderAct()}});
 
 /* ---------- boot ---------- */
 resize();applyCam();

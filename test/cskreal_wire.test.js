@@ -74,6 +74,10 @@ t('after the close the journal P&L is replaced by the P&L computed from Alpaca f
   w.ctl.min = 961; await w.cskRealTick(); assert.strictEqual(R.verified, undefined, 'not before 16:02 ET'); w.ctl.min = 962; await w.cskRealTick(); assert.strictEqual(R.realPnl, -4); assert.strictEqual(R.realPnlJournal, 69); assert.strictEqual(R.verified, true);
   const calls = w.calls.length; await w.cskRealTick(); assert.strictEqual(w.calls.filter(c => String(c[1]).includes('activities')).length, 1, 'fetched once');
 });
+t('manual close of a simulated spread starts the real exit at the simulated natural debit, same as a stop (reason manual close)', async () => {
+  const w = build({ CSK_REAL_ON: '1' }), p = spread(); await w.cskRealEnter(w.P.rec, p); await w.cskRealTick(); w.fill('o1', -0.57); await w.cskRealTick();
+  w.cskRealOnClose(p, 0.6, 'manual close', false); await w.cskRealTick(); const x = posts(w)[1][2]; assert.strictEqual(x.limit_price, '0.60'); assert.deepStrictEqual(x.legs.map(l => l.position_intent), ['buy_to_close', 'sell_to_close']); assert.ok(/manual close/.test(w.P.rec.cskreal.list[0].exitReason));
+});
 t('source guard: the block uses only apTrade (hardcoded paper endpoint); no other trading URL, no live key names, no secrets', () => {
   assert.ok(!/https?:\/\/|api\.alpaca\.markets|ALPACA_KEY|ALPACA_SECRET|APCA-/i.test(BLOCK)); assert.ok(/const ALPACA_PAPER_TRADING_BASE = 'https:\/\/paper-api\.alpaca\.markets'/.test(SRC)); assert.ok(!/ALPACA_LIVE/i.test(SRC));
 });
