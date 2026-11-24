@@ -1418,6 +1418,24 @@ async function manualCloseBook(book, sym, t0) {
   return { ok: true, closed: true, pnl: t.pnl, reason: t.reason };
 }
 
+/* REAL MONEY PAGE, SCAFFOLD ONLY (James 2026-11-24: "set this up for real trading just like the paper account but we will not connect this to a real money account until we are fully ready and we have worked through all the steps"). This build has the page, the toggle and the readiness gates. It contains NO order code, NO real-account endpoint and NO real-account network call: connected and canOrder are always false. The paper-only rule in CLAUDE.md stays in force. Credentials are only ever checked for presence, never read into a response. The steps still to work through are in docs/REAL_TRADING_PLAN.md. */
+const REAL_CHECKLIST = [
+  'James writes the go-live decision and the paper-only rule in CLAUDE.md is changed by him, in writing',
+  'Choose the broker and account; create separate real-account credentials that live only in Render env vars',
+  'Read-only connection first: balances and positions match the broker app for at least 5 trading days',
+  'Real-money risk policy: max loss per day, max position size, quantity cap, kill switch, all deterministic code (RISK_POLICY.md)',
+  'Real order path built on the same design as the CSK paper order path (idempotent ids, reconciliation, halts) and proven on the Alpaca PAPER account first',
+  'Paper forward results meet the acceptance bar for each book that would go live (CSK Phase 1: 20+ trading days, fills, no unresolved mismatches)',
+  'Broker-resident stops (or an accepted alternative) so a server restart cannot leave a real position unmanaged',
+  'Fees, margin, options approval level and day-trade rules checked against the real account',
+  'Kill switch and alerts tested; James watches the first tiny-size day (1 contract, hard daily loss limit)'
+];
+function realStatus() {
+  const on = process.env.REAL_ON === '1', hasKey = !!(process.env.REAL_ALPACA_KEY && process.env.REAL_ALPACA_SECRET), reasons = [];
+  if (!on) reasons.push('REAL_ON is not 1'); if (!hasKey) reasons.push('no real-account credentials are set'); reasons.push('real order path is not built in this version (page and gates only)');
+  return { mode: 'real', connected: false, canOrder: false, reasons, account: null, positions: [], trades: [], checklist: REAL_CHECKLIST.map(t => ({ text: t, done: false })) };
+}
+
 /* ---------- city page (3D view) served from here so it works from anywhere ---------- */
 const fs = require('fs'), zlib = require('zlib'), path = require('path');
 let CITY = null, CITY_GZ = null;
@@ -1869,6 +1887,8 @@ const server = http.createServer(async (req, res) => {
     if (u.pathname === '/api/status') return send(res, 200, status());
     if (req.method === 'POST' && u.pathname === '/api/control') { P.ctl.running = u.searchParams.get('run') === '1'; await kset('control', P.ctl); setImmediate(tick); return send(res, 200, status()); }
     if (req.method === 'POST' && u.pathname === '/api/close') return send(res, 200, await manualClose());
+    if (u.pathname === '/api/real' && req.method === 'GET') return send(res, 200, realStatus());
+    if (u.pathname.startsWith('/api/real')) return send(res, 403, { ok: false, error: 'real trading is not enabled in this build' });
     if (req.method === 'POST' && u.pathname === '/api/closebook') { const sy = (u.searchParams.get('sym') || '').toUpperCase(); if (!/^[A-Z.]{1,6}$/.test(sy)) return send(res, 400, { ok: false, error: 'bad symbol' }); return send(res, 200, await manualCloseBook(u.searchParams.get('book') || '', sy, u.searchParams.get('t0') || '')); }
     return send(res, 404, 'Not found', 'text/plain');
   } catch (e) { return send(res, 500, { error: String(e && e.message || e) }); }

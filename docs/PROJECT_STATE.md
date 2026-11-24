@@ -175,3 +175,6 @@ No daily-direction indicator passed Stage 0 on SPY or QQQ (best SPY fade-the-gap
 
 ## 2026-11-24 — Manual close buttons for all books
 Built and tested locally (`test/manual_close.test.js` 10, plus a CSK real-mirror case in `cskreal_wire.test.js`; all test files pass; mutation check caught a removed X9 hook). Not pushed during market hours per James's instruction; push after the 16:00 ET close, then confirm Render `live` and add the notes item. Open: after the first real use, confirm the journal row (reason `manual`) and, for CSK with real orders on, the real exit in Alpaca.
+
+## 2026-11-24 — PAPER / REAL toggle built (not pushed yet)
+Toggle plus REAL page (readiness only, nothing connected) built and tested locally: `test/real_page.test.js` 5/5, all test files pass. Pushed only after the 16:00 ET close (James's earlier instruction), together with the CSK close-button fix `ea6c4c8`. Plan and open decisions: `REAL_TRADING_PLAN.md`.

@@ -85,3 +85,6 @@ Deterministic checks before every real order: switch on, not halted, qty at most
 
 ## 2026-11-24 — Manual close (operator control)
 Any open server paper position can be closed by hand from the web page (RUNBOOK 2026-11-24). Safeguards: behind the existing key check, POST only, symbol validated, refused when the market is closed, two-tap confirmation in the UI, one close per position (shared tick lock). A manual exit of a CSK spread with real orders on exits the real spread on the same ladder as a stop. Manual trades carry reason `manual` / `manual close`; exclude them when judging a book's rules.
+
+## 2026-11-24 — Real money (scaffold only, not connected)
+Paper only remains the rule. The REAL page and `GET /api/real` report readiness only; every other `/api/real` call returns 403; the build has no live broker URL, no real order path, and never puts credentials in a response (`test/real_page.test.js`). Real-money limits (daily loss, size, quantity, kill switch) must be written here and implemented as deterministic code before step 5 of `REAL_TRADING_PLAN.md` starts.

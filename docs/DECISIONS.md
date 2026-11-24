@@ -154,3 +154,6 @@ James asked for a book that recognizes the day's direction from the best indicat
 
 ## 2026-11-24 — Manual close for every server paper book (James: "can you add this feature to all orders. don't push until after market closes")
 Built: manual close for ORB, ORBN, CSK, X9, FP and CDR positions (see RUNBOOK 2026-11-24). It is an operator control, not a strategy change: no entry, sizing, stop or target rule was touched; a manual exit is recorded as `manual` / `manual close` so studies can exclude those trades. Pushed only after the 16:00 ET close, as instructed.
+
+## 2026-11-24 — PAPER / REAL toggle and a Real page, scaffold only (James: "set this up for real trading just like the paper account but we will not connect this to a real money account until we are fully ready and we have worked through all the steps")
+Built the toggle at the top of the web page and a separate REAL page (readiness view, no order or close buttons). **No real-account code exists in this build and nothing is connected**; `connected` and `canOrder` are always false even with REAL_ON=1 and credentials set. The paper-only rule in `CLAUDE.md` is unchanged and still governs: only James can change it. The steps to work through before any connection are in `REAL_TRADING_PLAN.md`; each needs his explicit yes. Open: broker/account, first book, starting size.

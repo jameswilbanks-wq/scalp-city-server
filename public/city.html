@@ -158,17 +158,29 @@ select:focus-visible,input:focus-visible,button:focus-visible{outline:2px solid 
 #app.web #srvBtn{left:16px;bottom:96px}
 #app.web[data-mode] #hint{padding:0 100px}
 @media (prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+#acctSwitch{display:flex;gap:0;margin-left:8px}#acctSwitch button{font:700 11px var(--f-mono);letter-spacing:.1em;padding:6px 12px;min-height:32px;border:1px solid var(--cyan);background:transparent;color:var(--cyan);cursor:pointer}#acctSwitch button:first-child{border-radius:6px 0 0 6px}#acctSwitch button:last-child{border-radius:0 6px 6px 0;border-left:0}#acctSwitch button.on{background:var(--cyan);color:#041018}#acctSwitch button.on[data-a=real]{background:#ff1f59;border-color:#ff1f59;color:#fff}#acctSwitch button[data-a=real]{border-color:#ff1f59;color:#ff1f59}
+#realPage{position:fixed;inset:0;z-index:70;overflow:auto;background:#12040c;color:#ffe8ee;font:14px var(--f-mono);padding:0 16px 40px}#realPage[hidden]{display:none}#realPage .rbar{position:sticky;top:0;display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 0;background:#12040c;border-bottom:2px solid #ff1f59}#realPage .rban{flex:1;min-width:220px;font:700 12px var(--f-mono);letter-spacing:.08em;color:#fff;background:#ff1f59;padding:8px 10px;border-radius:6px}#realPage h2{font:700 13px var(--f-disp);letter-spacing:.12em;color:#ff7a9a;margin:22px 0 8px}#realPage .tiles{display:flex;gap:10px;flex-wrap:wrap}#realPage .tile{border:1px solid #5a1530;border-radius:8px;padding:10px 14px;min-width:130px}#realPage .tile b{display:block;font-size:20px;color:#ffb3c4}#realPage ul{margin:0;padding-left:20px;line-height:1.6}#realPage li.done{color:#7dffb0}#realPage table{width:100%;border-collapse:collapse}#realPage th,#realPage td{text-align:left;padding:6px 8px;border-bottom:1px solid #3a0d20}
 </style>
 
 <!--WEB-->
 <div id="app" data-mode="idle">
   <div id="modeBar" role="status" aria-live="polite">VIEW ONLY · NO TRADING IS RUNNING</div>
+  <div id="realPage" hidden role="region" aria-label="Real money page">
+    <div class="rbar"><div class="seg" id="acctSwitch2" role="group" aria-label="Account" style="display:flex"><button type="button" data-a="paper" style="font:700 11px var(--f-mono);padding:6px 12px;min-height:32px;border:1px solid var(--cyan);background:transparent;color:var(--cyan);border-radius:6px 0 0 6px">PAPER</button><button type="button" data-a="real" style="font:700 11px var(--f-mono);padding:6px 12px;min-height:32px;border:1px solid #ff1f59;background:#ff1f59;color:#fff;border-radius:0 6px 6px 0">REAL</button></div><div class="rban" id="realBan">REAL MONEY PAGE · NOT CONNECTED · NO ORDERS CAN BE PLACED</div></div>
+    <h2>CONNECTION</h2><div id="realWhy"></div>
+    <h2>ACCOUNT</h2><div class="tiles"><div class="tile">Equity<b id="rEq">&mdash;</b></div><div class="tile">Buying power<b id="rBp">&mdash;</b></div><div class="tile">Today<b id="rDay">&mdash;</b></div></div>
+    <h2>OPEN POSITIONS</h2><table><thead><tr><th>Contract</th><th>Book</th><th>P&amp;L</th></tr></thead><tbody id="rPos"><tr><td colspan="3">Not connected</td></tr></tbody></table>
+    <h2>TODAY'S TRADES</h2><table><thead><tr><th>Time</th><th>Contract</th><th>P&amp;L</th></tr></thead><tbody id="rTr"><tr><td colspan="3">Not connected</td></tr></tbody></table>
+    <h2>BEFORE THIS CAN GO LIVE (NOTHING BELOW IS DONE YET)</h2><ul id="rList"></ul>
+    <p style="margin-top:22px;color:#c98a9a">The paper page is unchanged. This page has no order or close buttons and this version contains no real-account code. See docs/REAL_TRADING_PLAN.md.</p>
+  </div>
   <canvas id="gl" aria-label="3D city of trading towers"></canvas>
   <div id="labels"></div>
 
   <header class="hud">
     <div class="row">
       <div class="brand">SCALP CITY</div>
+      <div id="acctSwitch" role="group" aria-label="Account" hidden><button type="button" data-a="paper" class="on">PAPER</button><button type="button" data-a="real">REAL</button></div>
       <button class="pill" id="status" type="button"><i></i><span id="statusTxt">STARTING</span></button>
       <div class="clock" id="clock"></div>
     </div>
@@ -2252,6 +2264,22 @@ $('srvKey').addEventListener('input',function(){try{localStorage.setItem('sc_srv
 
 /* ---------- web mode: city page served by the server itself ---------- */
 var WEB=!!window.__WEB__;
+/* Paper / Real page toggle (web page only). REAL is a separate page that shows readiness only: the server build has no real-account code, so nothing here can place an order. */
+var ACCT='paper';
+function realRender(d){
+  var w=$('realWhy');w.textContent='';var p=document.createElement('p');p.textContent=d?(d.connected?'Connected':'NOT CONNECTED. Reasons:'):'Loading…';w.appendChild(p);
+  if(d&&d.reasons){var u=document.createElement('ul');d.reasons.forEach(function(t){var li=document.createElement('li');li.textContent=t;u.appendChild(li)});w.appendChild(u)}
+  var l=$('rList');l.textContent='';((d&&d.checklist)||[]).forEach(function(c){var li=document.createElement('li');li.textContent=(c.done?'[x] ':'[ ] ')+c.text;if(c.done)li.className='done';l.appendChild(li)});
+}
+function realLoad(){if(ACCT!=='real')return;Web.api('/api/real').then(function(r){return r.json()}).then(realRender).catch(function(){realRender(null)})}
+function acctSet(a){
+  ACCT=a==='real'?'real':'paper';try{localStorage.setItem('sc_acct',ACCT)}catch(e){}
+  $('realPage').hidden=ACCT!=='real';
+  document.querySelectorAll('#acctSwitch button').forEach(function(b){b.className=b.dataset.a===ACCT?'on':''});
+  if(ACCT==='real')realLoad();
+}
+document.querySelectorAll('#acctSwitch button,#acctSwitch2 button').forEach(function(b){b.addEventListener('click',function(){acctSet(b.dataset.a)})});
+setInterval(realLoad,10000);
 var BOOKKEY={ORB:'orb',ORBN:'orbn',X9:'x9',FP:'fp',CDR:'cdr',CSK:'csk'};
 var Web={dayArm:0,timer:null,key:'',trades:[],armed:0,last:null,bArm:null,
   bArmed:function(bk,o){return !!(Web.bArm&&Web.bArm.id===bk+'|'+o.sym+'|'+o.t0&&Date.now()-Web.bArm.t<5000)},
@@ -2264,6 +2292,7 @@ var Web={dayArm:0,timer:null,key:'',trades:[],armed:0,last:null,bArm:null,
   },
   start:function(){
     Web.key=new URLSearchParams(location.search).get('key')||'';
+    $('acctSwitch').hidden=false;try{if(localStorage.getItem('sc_acct')==='real')acctSet('real')}catch(e){}
     $('app').classList.add('web');S.mode='live';liveOK=false;S.accounts=[];fillAccts();
     setStatus('','LOADING SERVER DATA');
     $('srvKeyBox').hidden=true;$('srvCtl').hidden=false;
