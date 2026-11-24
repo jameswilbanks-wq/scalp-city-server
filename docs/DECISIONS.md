@@ -175,3 +175,6 @@ Built (committed locally, NOT yet deployed; push after the close): a discretiona
 
 ## 2026-11-24 — On-demand order closes at market close, not 15:45 (James: "i do not want it to close at that time but rather at market close")
 The first two on-demand trades (SPY 717C -$45, SPY 716C +$21, 1 contract each) were closed by the forced flat at 15:45 ET (reason `time`), as I had programmed it as a default. Changed to **15:59 ET** (`MAN.flat`), the last minute before the 16:00 close, so the position rides to the close. Trade-off to know: options held to 15:59 carry the full late-day swing and expiry risk; the simulated exit is the 15:59 bid, not the 16:00 settlement. A stale quote does not block the 15:59 close. Committed locally; deploys after the close (CSK spreads were open when asked). Test updated (`ondemand.test.js`, 10).
+
+## 2026-11-24 — On-demand entries window widened to 9:35-15:55 ET (James: "change on demand entries from 9:35 - 15:55")
+`MAN.to` 930 -> 955 (last accepted entry 15:54:59 ET). Exit unchanged: manual Close any time, forced flat 15:59 ET. Note: an entry in the last minutes can be held only a few minutes, and late-day 0DTE spreads are wide; the existing premium cap, 3-open limit and correlation cap still apply. Test updated (`ondemand.test.js`, 10).
