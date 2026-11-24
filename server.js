@@ -1411,8 +1411,8 @@ async function manualClose() {
 }
 
 /* Manual close of ANY open server paper position (James 2026-11-24: "when there is a orb, or x9 or csk open order there isn't a way to manually close out the trade"). The position is flagged and the book's own manage function closes it on a fresh price, so the journal row, P&L fields and (for CSK) the real mirror exit use exactly the normal close path; reason is 'manual' / 'manual close'. Paper only. The main Sweep position keeps its own /api/close. */
-/* ON-DEMAND ORDER (MAN) -- James 2026-11-24: "create for me a on demand call or put order ... on demand 0DTE order creation. call/put? what symbol? and how many (1,2,3)?". A discretionary PAPER trade: James picks call or put, SPY or QQQ, and 1 to 3 contracts; the server buys the nearest-the-money SAME-DAY option at the ask (simulated fill, same contract picker as the ORB book, premium cap $400 per contract), journals it in its own list r.mank (separate from every strategy book and from the evidence for them), and manages it: manual Close at the bid any time, forced flat at 15:45 ET (before expiry), optional automatic stop only if MAN_STOP is set (default 0 = none; the loss is capped at the premium paid). No Alpaca order, no Robinhood order, paper only. Entries 9:35-15:30 ET, at most 3 open, still subject to the SPY/QQQ correlation cap (and the room reserved for CSK). Not a strategy: results are discretionary and are never mixed into backtest or forward evidence. */
-const MAN_ON = process.env.MAN_ON !== '0', MAN = { maxQty: 3, maxOpen: 3, maxPrem: +process.env.MAN_MAXPREM || 400, from: 575, to: 930, flat: 945, stop: +process.env.MAN_STOP || 0 };
+/* ON-DEMAND ORDER (MAN) -- James 2026-11-24: "create for me a on demand call or put order ... on demand 0DTE order creation. call/put? what symbol? and how many (1,2,3)?". A discretionary PAPER trade: James picks call or put, SPY or QQQ, and 1 to 3 contracts; the server buys the nearest-the-money SAME-DAY option at the ask (simulated fill, same contract picker as the ORB book, premium cap $400 per contract), journals it in its own list r.mank (separate from every strategy book and from the evidence for them), and manages it: manual Close at the bid any time, forced flat at 15:59 ET (the last minute before the 16:00 close; James 2026-11-24 asked for market close instead of 15:45), optional automatic stop only if MAN_STOP is set (default 0 = none; the loss is capped at the premium paid). No Alpaca order, no Robinhood order, paper only. Entries 9:35-15:30 ET, at most 3 open, still subject to the SPY/QQQ correlation cap (and the room reserved for CSK). Not a strategy: results are discretionary and are never mixed into backtest or forward evidence. */
+const MAN_ON = process.env.MAN_ON !== '0', MAN = { maxQty: 3, maxOpen: 3, maxPrem: +process.env.MAN_MAXPREM || 400, from: 575, to: 930, flat: 959, stop: +process.env.MAN_STOP || 0 };
 async function manualEnter(sym, side, qty) {
   const r = P.rec, now = Date.now();
   if (!MAN_ON) return { ok: false, error: 'on-demand orders are switched off (MAN_ON=0)' };
@@ -1450,7 +1450,7 @@ async function manageMan() {
     const e = nowET();
     for (const p of mk.open.slice()) {
       const q = by[p.inst]; if (!q) continue; const bid = +q.bid_price; if (!(bid >= 0)) continue;
-      const due = e.min >= p.flatMin; // a stale quote never blocks a manual close or the 15:45 flat
+      const due = e.min >= p.flatMin; // a stale quote never blocks a manual close or the 15:59 flat
       if (!p.manual && !due && q.updated_at && Date.now() - Date.parse(q.updated_at) > 180000) continue;
       p.peak = Math.max(p.peak || 0, bid); p.live = { bid, ask: +q.ask_price, t: Date.now(), age: q.updated_at ? Date.now() - Date.parse(q.updated_at) : null };
       const reason = p.manual ? 'manual' : due ? 'time' : (p.stopPct && bid <= p.entryAsk * (1 - p.stopPct / 100)) ? 'stop' : null;
