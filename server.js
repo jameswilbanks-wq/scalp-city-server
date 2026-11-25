@@ -1412,13 +1412,13 @@ async function manualClose() {
 
 /* Manual close of ANY open server paper position (James 2026-11-24: "when there is a orb, or x9 or csk open order there isn't a way to manually close out the trade"). The position is flagged and the book's own manage function closes it on a fresh price, so the journal row, P&L fields and (for CSK) the real mirror exit use exactly the normal close path; reason is 'manual' / 'manual close'. Paper only. The main Sweep position keeps its own /api/close. */
 /* ON-DEMAND ORDER (MAN) -- James 2026-11-24: "create for me a on demand call or put order ... on demand 0DTE order creation. call/put? what symbol? and how many (1,2,3)?". A discretionary PAPER trade: James picks call or put, SPY or QQQ, and 1 to 3 contracts; the server buys the nearest-the-money SAME-DAY option at the ask (simulated fill, same contract picker as the ORB book, premium cap $400 per contract), journals it in its own list r.mank (separate from every strategy book and from the evidence for them), and manages it: manual Close at the bid any time, forced flat at 15:59 ET (the last minute before the 16:00 close; James 2026-11-24 asked for market close instead of 15:45), optional automatic stop only if MAN_STOP is set (default 0 = none; the loss is capped at the premium paid). No Alpaca order, no Robinhood order, paper only. Entries 9:35-15:55 ET, at most 3 open, still subject to the SPY/QQQ correlation cap (and the room reserved for CSK). Not a strategy: results are discretionary and are never mixed into backtest or forward evidence. */
-const MAN_ON = process.env.MAN_ON !== '0', MAN = { maxQty: 3, maxOpen: 3, maxPrem: +process.env.MAN_MAXPREM || 400, from: 575, to: 955, flat: 959, stop: +process.env.MAN_STOP || 0 };
+const MAN_ON = process.env.MAN_ON !== '0', MAN = { syms: ['SPY', 'QQQ', 'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA', 'PLTR'], idx: ['SPY', 'QQQ'], maxCost: +process.env.MAN_MAXCOST || 1200, maxPremStk: +process.env.MAN_MAXPREM_STK || 800, maxQty: 3, maxOpen: 3, maxPrem: +process.env.MAN_MAXPREM || 400, from: 575, to: 955, flat: 959, stop: +process.env.MAN_STOP || 0 };
 async function manualEnter(sym, side, qty) {
   const r = P.rec, now = Date.now();
   if (!MAN_ON) return { ok: false, error: 'on-demand orders are switched off (MAN_ON=0)' };
   if (!r) return { ok: false, error: 'the journal is not loaded yet' };
   if (r.shut) return { ok: false, error: 'trading is stopped for today (' + r.shut + ')' };
-  if (!CFG.syms.includes(sym)) return { ok: false, error: 'symbol must be one of ' + CFG.syms.join(', ') };
+  if (!MAN.syms.includes(sym)) return { ok: false, error: 'symbol must be one of ' + MAN.syms.join(', ') };
   if (side !== 'call' && side !== 'put') return { ok: false, error: 'side must be call or put' };
   qty = +qty; if (!Number.isInteger(qty) || qty < 1 || qty > MAN.maxQty) return { ok: false, error: 'quantity must be 1 to ' + MAN.maxQty };
   if (!marketOpen(now)) return { ok: false, error: 'market is closed' };
@@ -1428,18 +1428,23 @@ async function manualEnter(sym, side, qty) {
   if (P.manBusy) return { ok: false, error: 'another on-demand order is being placed, try again in a moment' };
   P.manBusy = true;
   try {
-    const inf = P.info[sym], px = inf && inf.bar && inf.bar.c, dir = side === 'call' ? 1 : -1, sig = { dir, trig: 'manual' };
-    if (!(px > 0) || now - (inf.bar.t + 60000) > 300000) return { ok: false, error: 'no fresh ' + sym + ' price yet (older than 5 minutes)' };
-    let pk; try { pk = await pickContract(sym, dir, px, MAN.maxPrem, 0); } catch (err) { pk = { why: 'could not load option data (' + ((err && err.code) || 'error') + ')' }; }
+    let bar = P.info[sym] && P.info[sym].bar; // SPY/QQQ are tracked by the server; the other symbols get a one-off minute-bar price
+    if (!bar && !CFG.syms.includes(sym)) { try { const bs = await pBars(sym); bar = bs && bs[bs.length - 1]; } catch (err) { return { ok: false, error: 'could not load a ' + sym + ' price (' + ((err && (err.code || err.message)) || 'error') + ')' }; } }
+    const px = bar && bar.c, dir = side === 'call' ? 1 : -1, sig = { dir, trig: 'manual' };
+    if (!(px > 0) || now - (bar.t + 60000) > 300000) return { ok: false, error: 'no fresh ' + sym + ' price yet (older than 5 minutes)' };
+    const cap = MAN.idx.includes(sym) ? MAN.maxPrem : MAN.maxPremStk;
+    let pk; try { pk = await pickContract(sym, dir, px, cap, 0); } catch (err) { pk = { why: 'could not load option data (' + ((err && err.code) || 'error') + ')' }; }
     if (pk.why) { logSignal(sym, sig, px, 'skipped', 'on-demand ' + side + ': ' + pk.why); saveRec(); return { ok: false, error: pk.why }; }
     if (P.rec !== r || r.shut) return { ok: false, error: 'the trading day changed or stopped while the order was being placed' };
-    const cost = Math.round(pk.ask * 100 * qty * 100) / 100, corr = corrCapBlocks(r, sym, cost);
+    const cost = Math.round(pk.ask * 100 * qty * 100) / 100;
+    if (cost > MAN.maxCost) { const why = qty + 'x ' + sym + ' ' + pk.type + ' ' + pk.strike + ' costs $' + cost.toFixed(0) + ', over the $' + MAN.maxCost + ' per-order limit; try fewer contracts'; logSignal(sym, sig, px, 'skipped', 'on-demand ' + side + ': ' + why); saveRec(); return { ok: false, error: why }; }
+    const corr = corrCapBlocks(r, sym, cost);
     if (corr) { const why = 'would push ' + sym + '-group open risk to $' + corr.next.toFixed(0) + ', over the $' + CORR_CAP_USD + ' correlation cap'; logSignal(sym, sig, px, 'skipped', 'on-demand ' + side + ': ' + why); saveRec(); return { ok: false, error: why }; }
     const p = { book: 'man', sym, dir, type: pk.type, strike: pk.strike, exp: pk.exp, inst: pk.inst, t0: now, entryAsk: pk.ask, entryBid: pk.bid, entryU: px, qAge: pk.qAge, qty, peak: pk.bid, iv: pk.iv, delta: pk.delta, stopPct: MAN.stop, flatMin: MAN.flat };
     r.mank.open.push(p);
     logSignal(sym, sig, px, 'entered', 'on-demand ' + qty + 'x ' + pk.type + ' ' + pk.strike + ' exp ' + pk.exp + ' @ ask $' + pk.ask.toFixed(2) + ' (cost $' + cost.toFixed(0) + ')');
     saveRec();
-    return { ok: true, sym, type: pk.type, strike: pk.strike, exp: pk.exp, qty, ask: pk.ask, bid: pk.bid, cost, t0: now };
+    return { ok: true, sym, type: pk.type, strike: pk.strike, exp: pk.exp, sameDay: pk.exp === e.day, qty, ask: pk.ask, bid: pk.bid, cost, t0: now };
   } finally { P.manBusy = false; }
 }
 async function manageMan() {

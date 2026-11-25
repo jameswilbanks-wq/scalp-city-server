@@ -239,3 +239,6 @@ Entry, strikes, width, stop and slots are unchanged and still decided by the sim
 
 ## 2026-11-24 — MAN (on-demand order) is not a strategy
 Discretionary paper trades by James (call or put, SPY or QQQ, 1 to 3 contracts, same-day, buy at ask, sell at bid). No backtest, no edge claim, excluded from every strategy evaluation. Listed here so its trades are never mistaken for book results.
+
+## 2026-11-24 — PAUSED: X9, ORB, ORBN (James)
+No new entries (`X9_ON=0`, `ORB_ON=0`, `ORBN_ON=0` in Render env). Rules and journals unchanged; to be fixed or re-specified first. Resume only with James's yes.

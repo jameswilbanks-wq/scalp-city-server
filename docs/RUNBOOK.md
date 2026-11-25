@@ -178,3 +178,6 @@ On the web page, the PAPER | REAL switch is at the top next to SCALP CITY (it re
 
 ## 2026-11-24 — On-demand order book (`mank`)
 City page panel "ON-DEMAND 0DTE (PAPER)", `POST /api/ondemand?sym=&side=call|put&qty=1..3` (behind the key). Journal list `rec:YYYY-MM-DD` -> `mank` (`open`, `trades`, `pnl`); signals log as trig `manual`. Close via the Close button (`/api/closebook?book=man`) or automatically at 15:59 ET. Add `mank.open` to the open-position check before a market-hours deploy (the heartbeat open map now includes `mank`). Env: `MAN_ON` (0 = off), `MAN_MAXPREM` (default 400), `MAN_STOP` (default 0 = no stop).
+
+## 2026-11-24 — Pause / resume books, on-demand env
+Paused via Render env (restarts the server): `X9_ON=0`, `ORB_ON=0`, `ORBN_ON=0`. Resume: set to `1`. On-demand: `MAN_MAXPREM` (index, 400), `MAN_MAXPREM_STK` (stocks, 800), `MAN_MAXCOST` (per order, 1200), `MAN_STOP` (0 = none), `MAN_ON`.

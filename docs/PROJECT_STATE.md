@@ -184,3 +184,6 @@ Both 12:30 CSK spreads were skipped (cap); cap raised to $1,200 via Render env; 
 
 ## 2026-11-24 — On-demand 0DTE order built (local commit, deploys after the close)
 See DECISIONS 2026-11-24. Awaiting James: keep "no automatic stop" or set `MAN_STOP`, and confirm the $400 premium cap and 15:45 flat.
+
+## 2026-11-24 — X9, ORB, ORBN paused; on-demand adds Mag 7 + PLTR
+See DECISIONS 2026-11-24. Active strategy books now: CSK (sim + real-paper mirror), Sweep (main), CDR; FP retired. Open: confirm ORBN should be paused too; confirm $800 stock premium cap and $1,200 per-order limit.
