@@ -94,3 +94,6 @@ Paper only remains the rule. The REAL page and `GET /api/real` report readiness 
 
 ## 2026-11-24 — On-demand paper order limits
 Quantity 1 to 3, at most 3 open, premium cap $400 per contract (worst case $1,200 per order, the full premium; no stop by default), entries 9:35 to 15:55 ET, forced flat 15:59 ET, counted in the SPY/QQQ correlation cap (so it cannot take the room reserved for CSK). Paper only; deterministic code; no language model involved. Any change to these numbers needs James's yes.
+
+## 2026-11-25 — On-demand guardrails (pending push)
+With the switch ON: auto-sell at -25% or +100% versus price paid (see DECISIONS 2026-11-25); OFF: none; 15:59 ET close sell in both. Replaces "no automatic stop by default" in the 2026-11-24 on-demand limits. Paper only, deterministic code. Changing the percentages needs James's yes.

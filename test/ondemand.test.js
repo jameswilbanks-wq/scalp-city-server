@@ -5,7 +5,7 @@ const SRC = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8'), HT
 let pass = 0; const tests = []; const t = (n, f) => tests.push([n, f]);
 function fn(name) { let i = SRC.indexOf('async function ' + name + '('); if (i < 0) i = SRC.indexOf('function ' + name + '('); assert.ok(i >= 0, 'missing ' + name); let d = 0; for (let k = SRC.indexOf('{', i); k < SRC.length; k++) { if (SRC[k] === '{') d++; else if (SRC[k] === '}') { d--; if (d === 0) return SRC.slice(i, k + 1); } } throw new Error('unbalanced ' + name); }
 const line = start => { const i = SRC.indexOf(start); assert.ok(i >= 0, 'missing ' + start); return SRC.slice(i, SRC.indexOf('\n', i)); };
-const CODE = [line('const MAN_ON'), ...['corrGroupOpenRiskUSD', 'cskReservedUSD', 'corrCapBlocks', 'manualEnter', 'manageMan', 'manualCloseBook'].map(fn), "const MANUAL_BOOKS = { man: ['mank', manageMan] };"].join('\n');
+const CODE = [line('const MAN_ON'), ...['corrGroupOpenRiskUSD', 'cskReservedUSD', 'manGuardOn', 'corrCapBlocks', 'manualEnter', 'manageMan', 'manualCloseBook'].map(fn), "const MANUAL_BOOKS = { man: ['mank', manageMan] };"].join('\n');
 const NAMES = ['P', 'CFG', 'marketOpen', 'nowET', 'pickContract', 'logSignal', 'saveRec', 'rh', 'iso', 'CORR_GROUPS', 'CORR_CAP_USD', 'CSK_ON', 'CSK', 'CSK2', 'pBars'];
 function build(o) {
   o = o || {}; const calls = { pick: [], sig: [] }, env = { open: true, min: 700, noQuote: false, stale: false, bid: 2.0, ask: 2.1, pk: null, delay: 0 };
@@ -46,13 +46,23 @@ t('manual close: books at the bid, P&L = (bid - ask) x 100 x qty, reason manual,
   const w = build(); await w.manualEnter('SPY', 'call', 3); w.env.bid = 2.6; w.env.stale = true; const t0 = w.P.rec.mank.open[0].t0, r = await w.manualCloseBook('man', 'SPY', t0);
   assert.deepStrictEqual([r.ok, r.closed, r.pnl, r.reason], [true, true, 150, 'manual'], '(2.60 - 2.10) x 100 x 3'); assert.strictEqual(w.P.rec.mank.open.length, 0); assert.strictEqual(w.P.rec.mank.pnl, 150); assert.strictEqual(w.P.rec.mank.trades[0].qty, 3); assert.strictEqual(w.P.busy, false);
 });
-t('no automatic stop by default: a 60% loss stays open; the 15:59 ET flat closes it (stale quote allowed); a stale quote before 15:59 does not close it', async () => {
-  const w = build(); await w.manualEnter('SPY', 'put', 1); w.env.bid = 0.8; await w.manageMan(); assert.strictEqual(w.P.rec.mank.open.length, 1, 'no stop');
-  w.env.stale = true; w.env.min = 900; await w.manageMan(); assert.strictEqual(w.P.rec.mank.open.length, 1, 'stale before the flat time is ignored');
-  w.env.min = 959; await w.manageMan(); assert.strictEqual(w.P.rec.mank.open.length, 0); assert.deepStrictEqual([w.P.rec.mank.trades[0].reason, w.P.rec.mank.trades[0].pnl], ['time', -130]);
+t('guardrails ON (default): sold at the bid when down 25% or more (reason guard stop) or up 100% or more (guard target); 24% down and 99% up stay open; a stale quote does not trigger it', async () => {
+  const w = build(); await w.manualEnter('SPY', 'call', 1); const p = w.P.rec.mank.open[0]; assert.strictEqual(w.P.manGuard, undefined, 'default is ON'); // entry ask 2.10
+  w.env.bid = 1.60; await w.manageMan(); assert.strictEqual(w.P.rec.mank.open.length, 1, 'down 23.8%: stays'); w.env.bid = 4.15; await w.manageMan(); assert.strictEqual(w.P.rec.mank.open.length, 1, 'up 97.6%: stays');
+  w.env.stale = true; w.env.bid = 1.0; await w.manageMan(); assert.strictEqual(w.P.rec.mank.open.length, 1, 'stale quote ignored'); w.env.stale = false;
+  w.env.bid = 1.575; await w.manageMan(); assert.deepStrictEqual([w.P.rec.mank.open.length, w.P.rec.mank.trades[0].reason, w.P.rec.mank.trades[0].pnl], [0, 'guard stop', -52.5], 'exactly -25% sells');
+  const v = build(); await v.manualEnter('QQQ', 'put', 2); v.env.bid = 4.2; await v.manageMan(); assert.deepStrictEqual([v.P.rec.mank.open.length, v.P.rec.mank.trades[0].reason, v.P.rec.mank.trades[0].pnl], [0, 'guard target', 420], 'exactly +100% sells, P&L x qty');
 });
-t('automatic stop exists only if MAN_STOP is set: with MAN_STOP=50 a bid at half the entry ask closes it, reason stop', async () => {
-  process.env.MAN_STOP = '50'; let w; try { w = build(); } finally { delete process.env.MAN_STOP; } await w.manualEnter('SPY', 'call', 1); w.env.bid = 1.05; await w.manageMan(); assert.strictEqual(w.P.rec.mank.open.length, 0); assert.strictEqual(w.P.rec.mank.trades[0].reason, 'stop');
+t('guardrails OFF: no loss or gain auto-sell at all (a 90% loss and a 300% gain both stay open); manual Close still works; the 15:59 ET market-close sell still happens (even on a stale quote)', async () => {
+  const w = build(); await w.manualEnter('SPY', 'call', 1); w.P.manGuard = false; w.env.bid = 0.2; await w.manageMan(); assert.strictEqual(w.P.rec.mank.open.length, 1, '90% loss stays'); w.env.bid = 8.4; await w.manageMan(); assert.strictEqual(w.P.rec.mank.open.length, 1, '300% gain stays');
+  w.env.stale = true; w.env.min = 958; await w.manageMan(); assert.strictEqual(w.P.rec.mank.open.length, 1, 'not yet 15:59'); w.env.min = 959; await w.manageMan(); assert.deepStrictEqual([w.P.rec.mank.open.length, w.P.rec.mank.trades[0].reason], [0, 'time']);
+  const v = build(); await v.manualEnter('SPY', 'call', 1); v.P.manGuard = false; v.env.bid = 1.0; const r = await v.manualCloseBook('man', 'SPY', v.P.rec.mank.open[0].t0); assert.deepStrictEqual([r.closed, r.reason], [true, 'manual']);
+  const g = build(); await g.manualEnter('SPY', 'call', 1); g.P.manGuard = false; g.P.manGuard = true; g.env.bid = 1.0; await g.manageMan(); assert.strictEqual(g.P.rec.mank.trades[0].reason, 'guard stop', 'switching back ON applies to the open position at once');
+});
+t('guardrails switch: POST /api/manguard (behind the key, on=1 or 0 only) saves kv man_guard, boot loads it, the page data carries mg, and the page has the toggle button', () => {
+  const auth = SRC.indexOf('if (!authed(u, req))'), route = SRC.indexOf("u.pathname === '/api/manguard'"); assert.ok(auth > 0 && route > auth); assert.ok(/req\.method === 'POST' && u\.pathname === '\/api\/manguard'/.test(SRC)); const rt = SRC.slice(route, route + 700); assert.ok(/on !== '1' && on !== '0'/.test(rt) && /kset\('man_guard'/.test(rt));
+  assert.ok(/kget\('man_guard'\)/.test(SRC) && /P\.manGuard = g\.on/.test(SRC), 'boot restores the saved switch'); assert.ok(/mg: \{ on: manGuardOn\(\), loss: MAN\.gLoss, gain: MAN\.gGain \}/.test(SRC), 'page data');
+  assert.ok(/id="odGuard"/.test(HTML) && /\/api\/manguard\?on=/.test(HTML) && /Web\.odGuardPaint\(\)/.test(HTML), 'button, call and repaint'); assert.ok(/MAN_GUARD_LOSS \|\| 25/.test(SRC) && /MAN_GUARD_GAIN \|\| 100/.test(SRC));
 });
 t('source guard: paper only (no broker order call in the MAN block), POST route after the key check, panel needs two taps and the server route is not reachable by GET', () => {
   const a = SRC.indexOf('const MAN_ON'), b = SRC.indexOf('const MANUAL_BOOKS'), block = SRC.slice(a, b).replace(/\/\*[\s\S]*?\*\//g, ''); assert.ok(!/apTrade|place_option_order|place_equity_order|fetch\(|\/v2\/orders|https?:\/\//.test(block), 'no order or network call');

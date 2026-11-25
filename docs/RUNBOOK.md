@@ -184,3 +184,6 @@ Paused via Render env (restarts the server): `X9_ON=0`, `ORB_ON=0`, `ORBN_ON=0`.
 
 ## 2026-11-24 — Reading the 15:40 measurement
 In `rec:YYYY-MM-DD` -> `cskreal.list[]`: `pc` (taken once per spread at the 15:40 look), next to `state`, `exitReason`, `realPnl`, `verified`. `wouldClose: true` means the pre-close sent a buyback; `closeNat` is the natural buyback price at that moment.
+
+## 2026-11-25 — Guardrails switch (pending push)
+`POST /api/manguard?on=1|0` (behind the key; the page button calls it). State in kv key `man_guard` `{on, at}`; no key = ON. Page data field `mg` `{on, loss, gain}`. Env: `MAN_GUARD_LOSS` (25), `MAN_GUARD_GAIN` (100); `MAN_STOP` no longer exists. Trade reasons: `guard stop`, `guard target`, `manual`, `time`.
