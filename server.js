@@ -1553,7 +1553,8 @@ function scoreOf(scan) {
       .concat((x.value && x.value.x9k && x.value.x9k.trades) || [])
       .concat((x.value && x.value.fpk && x.value.fpk.trades) || [])
       .concat((x.value && x.value.cdrk && x.value.cdrk.trades) || [])
-      .forEach(t => { // includes the ORB, CSK (call spread), X9, FP, and CDR (condor) books
+      .concat((x.value && x.value.mank && x.value.mank.trades) || [])
+      .forEach(t => { // includes the ORB, CSK (call spread), X9, FP, CDR (condor) and on-demand (trig 'manual') books
       if (!(t.exitT || t.exitBid != null) || t.unmanaged) return;
       const trig = t.trig || 'ema', pnl = +t.pnl || 0, sym = t.sym || '?';
       add(sym + '|' + trig, pnl, day); add(sym + '|*', pnl, day); add('*|' + trig, pnl, day); add('*|*', pnl, day);
@@ -1580,6 +1581,7 @@ async function cityData(want) {
     .concat((x.value.x9k && x.value.x9k.trades) || [])
     .concat((x.value.fpk && x.value.fpk.trades) || [])
     .concat((x.value.cdrk && x.value.cdrk.trades) || [])
+    .concat((x.value.mank && x.value.mank.trades) || [])
     .filter(t => t.exitT || t.exitBid != null).map(t => ({ t: Date.parse(t.exitT || t.entryT), sym: t.sym, pnl: +t.pnl || 0, strat: t.trig + (t.run ? ' run' : '') })) }));
   return Object.assign(liveData(), { bars, days, watch: WATCH, score, health: { lastTick: P.lastTick, tickErr: P.tickErr, saveErr: P.saveErr, busyS: P.busySince ? Math.round((Date.now() - P.busySince) / 1000) : 0, books: bookDiag() } });
 }

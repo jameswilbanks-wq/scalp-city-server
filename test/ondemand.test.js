@@ -72,4 +72,11 @@ t('per-order cost limit $1,200: 3 x $5.00 stock contracts ($1,500) is refused wi
 t('panel lists the new symbols and is compact (single control row, small buttons)', () => {
   for (const s of ['SPY', 'QQQ', 'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA', 'PLTR']) assert.ok(HTML.includes('<option>' + s + '</option>'), s); assert.ok(/id="odBox"[\s\S]*class="odr"/.test(HTML) && /#odBox\{[^}]*max-width:250px/.test(HTML));
 });
+t('scoreboards: on-demand trades are counted by scoreOf (per symbol, per strategy "manual", in ALL), and the days list, summary line, closed rows and scorecard column include them', () => {
+  const scoreOf = new Function(fn('scoreOf') + '\nreturn scoreOf;')(), mt = (sym, pnl) => ({ sym, pnl, trig: 'manual', exitT: '2026-11-24T20:45:19Z', exitBid: 1, qty: 1 });
+  const out = scoreOf([{ key: 'rec:2026-11-24', value: { day: '2026-11-24', trades: [{ sym: 'SPY', pnl: 100, trig: 'sweep', exitT: 'x' }], mank: { trades: [mt('SPY', 21), mt('SPY', -45), mt('NVDA', 30)] } } }]);
+  assert.deepStrictEqual([out['*|manual'].n, out['*|manual'].pnl, out['SPY|manual'].pnl, out['NVDA|manual'].pnl], [3, 6, -24, 30]); assert.strictEqual(out['*|*'].pnl, 106, 'ALL includes the sweep trade and the three manual ones'); assert.strictEqual(out['*|sweep'].pnl, 100, 'sweep column untouched');
+  assert.ok(/x\.value\.mank && x\.value\.mank\.trades/.test(SRC) && /x\.value\.mank && x\.value\.mank\.trades/.test(SRC.slice(SRC.indexOf('async function cityData'))), 'days list');
+  assert.ok(/ST=\['orb5','sweep','cspread','x9','fp','condor','manual'\]/.test(HTML) && /manual:'ON-DEMAND'/.test(HTML) && /manual:'On-demand'/.test(HTML), 'scorecard column and label'); assert.ok(/bookBit\('On-demand',r\.od\)/.test(HTML) && /manRows/.test(HTML) && /concat\(manRows\)/.test(HTML), 'summary and closed rows');
+});
 (async () => { for (const [n, f] of tests) { try { await f(); pass++; console.log('ok   ' + n); } catch (e) { console.error('FAIL ' + n + '\n' + (e && e.stack || e)); process.exitCode = 1; } } console.log(pass + '/' + tests.length + ' passed'); })();
