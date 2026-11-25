@@ -853,6 +853,10 @@ async function cskRealTick() {
     if (R.state === 'open' && R.pendingStop) { CSKO.startExit(R, R.pendingStop.reason, R.pendingStop.costNat, ctx.now); R.pendingStop = null; changed = true; }
     if (R.state === 'open' && !R.preChecked && e.min >= 940 && e.min < 945) {
       const u = P.info[R.sym] && P.info[R.sym].bar ? P.info[R.sym].bar.c : null;
+      if (!R.pc && u !== null) { // MEASUREMENT ONLY (James yes 2026-11-24): what the 15:40 look saw for EVERY spread, closed or left to expire, so the cost of the pre-close can be studied later. Changes no decision.
+        let nat = null; try { const q0 = await cskQuotes([R.instS, R.instL]), a0 = q0[R.instS], b0 = q0[R.instL]; if (a0 && b0) nat = Math.round((+a0.ask_price - +b0.bid_price) * 100) / 100; } catch (err) {}
+        R.pc = { t: new Date(ctx.now).toISOString(), min: e.min, u, ks: R.ks, belowStrikePct: Math.round((R.ks - u) / R.ks * 100000) / 1000, closeNat: nat, wouldClose: CSKO.preCloseDecision(u, R.ks, 0.001) }; changed = true;
+      }
       if (CSKO.preCloseDecision(u, R.ks, 0.001)) { try { const q = await cskQuotes([R.instS, R.instL]), a = q[R.instS], b = q[R.instL]; if (a && b) { CSKO.startExit(R, 'pre-close D2 (short ' + R.ks + ', underlying ' + u + ')', Math.max(0.01, Math.round((+a.ask_price - +b.bid_price) * 100) / 100), ctx.now); R.preChecked = true; changed = true; } } catch (err) {} }
       else if (u !== null) { R.preChecked = true; changed = true; }
     }

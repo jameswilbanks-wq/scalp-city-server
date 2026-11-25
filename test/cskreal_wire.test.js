@@ -57,6 +57,12 @@ t('D2 at 15:40 ET: underlying within 0.10% of the short strike closes the real s
   const x = posts(w)[1][2]; assert.strictEqual(x.limit_price, '0.22'); assert.ok(/pre-close D2/.test(w.P.rec.cskreal.list[0].exitReason));
   const v = build({ CSK_REAL_ON: '1' }); await v.cskRealEnter(v.P.rec, spread()); await v.cskRealTick(); v.fill('o1', -0.57); await v.cskRealTick(); v.ctl.min = 941; v.P.info.SPY.bar.c = 705; await v.cskRealTick(); assert.strictEqual(posts(v).length, 1); assert.strictEqual(v.P.rec.cskreal.list[0].state, 'open');
 });
+t('15:40 measurement: every real spread gets a pc record (underlying, % below the short strike, buyback price, would-close flag) whether it is closed or left to expire, recorded once, no change to the decision', async () => {
+  const w = build({ CSK_REAL_ON: '1' }); await w.cskRealEnter(w.P.rec, spread()); await w.cskRealTick(); w.fill('o1', -0.57); await w.cskRealTick(); w.ctl.min = 941; w.P.info.SPY.bar.c = 705; await w.cskRealTick();
+  const pc = w.P.rec.cskreal.list[0].pc; assert.ok(pc && pc.min === 941 && pc.u === 705 && pc.wouldClose === false && pc.belowStrikePct > 0.5 && pc.belowStrikePct < 1, JSON.stringify(pc)); assert.strictEqual(posts(w).length, 1, 'far below: still no exit order'); assert.strictEqual(w.P.rec.cskreal.list[0].state, 'open');
+  w.P.info.SPY.bar.c = 712; w.ctl.min = 942; await w.cskRealTick(); assert.strictEqual(w.P.rec.cskreal.list[0].pc.u, 705, 'recorded once');
+  const v = build({ CSK_REAL_ON: '1' }); await v.cskRealEnter(v.P.rec, spread()); await v.cskRealTick(); v.fill('o1', -0.57); await v.cskRealTick(); v.ctl.min = 941; v.P.info.SPY.bar.c = 710.4; await v.cskRealTick(); assert.strictEqual(v.P.rec.cskreal.list[0].pc.wouldClose, true); assert.ok(/pre-close D2/.test(v.P.rec.cskreal.list[0].exitReason));
+});
 t('reconciliation: two consecutive mismatches halt new real orders; one clean read resets; an unrelated Sweep position is ignored', async () => {
   const w = build({ CSK_REAL_ON: '1' }); await w.cskRealEnter(w.P.rec, spread()); await w.cskRealTick(); w.fill('o1', -0.57); await w.cskRealTick(); const st = w.P.rec.cskreal;
   w.setPos([{ symbol: 'SPY261123C00711000', qty: '1', side: 'short' }, { symbol: 'SPY261123C00713000', qty: '1', side: 'long' }, { symbol: 'AAPL261120C00100000', qty: '5', side: 'long' }]); st.lastRecon = 0; await w.cskRealTick(); assert.strictEqual(st.reconMiss, 0); assert.ok(!st.halted);

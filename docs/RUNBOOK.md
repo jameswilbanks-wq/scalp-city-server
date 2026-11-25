@@ -181,3 +181,6 @@ City page panel "ON-DEMAND 0DTE (PAPER)", `POST /api/ondemand?sym=&side=call|put
 
 ## 2026-11-24 — Pause / resume books, on-demand env
 Paused via Render env (restarts the server): `X9_ON=0`, `ORB_ON=0`, `ORBN_ON=0`. Resume: set to `1`. On-demand: `MAN_MAXPREM` (index, 400), `MAN_MAXPREM_STK` (stocks, 800), `MAN_MAXCOST` (per order, 1200), `MAN_STOP` (0 = none), `MAN_ON`.
+
+## 2026-11-24 — Reading the 15:40 measurement
+In `rec:YYYY-MM-DD` -> `cskreal.list[]`: `pc` (taken once per spread at the 15:40 look), next to `state`, `exitReason`, `realPnl`, `verified`. `wouldClose: true` means the pre-close sent a buyback; `closeNat` is the natural buyback price at that moment.
