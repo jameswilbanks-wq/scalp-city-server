@@ -22,4 +22,9 @@ t('table: header has the % column after P&L, the empty row spans 6 columns, clos
 t('X9 and FP open-row P&L is in dollars like ORB (bid - ask) x 100, not per share', () => {
   for (const b of ['X9', 'FP']) { const i = HTML.indexOf("addOpenRow('" + b + "',"), line = HTML.slice(HTML.lastIndexOf(String.fromCharCode(10), i), i); assert.ok(/Math\.round\(\(o\.live\.bid-o\.entryAsk\)\*100\):null/.test(line), b + ' dollars'); assert.ok(!/\*100\)\/100/.test(line), b + ' no extra /100'); }
 });
+t('Today Goals total: sums the main book plus ORB, ORBN, CSK, X9, FP, condor and on-demand (not just the main book); missing books count as zero; wheel and shadow tests are not added; web and server-journal branches both use it', () => {
+  const g = HTML.match(/function allBooksPnl\(r\)\{[^\n]*\}/); assert.ok(g, 'allBooksPnl missing'); const f = new Function(g[0] + String.fromCharCode(10) + 'return allBooksPnl;')();
+  assert.strictEqual(f({ pnl: 100, orb: { pnl: -127 }, csk: { pnl: 38 }, od: { pnl: 140 }, x9: null, wheel: { pnl: 999 }, sh: 5000 }), 151); assert.strictEqual(f({ pnl: 0 }), 0); assert.strictEqual(f({}), 0); assert.strictEqual(f(null), null); assert.strictEqual(f({ pnl: 10, orbn: { pnl: 0.1 }, fp: { pnl: -3 }, cdr: { pnl: 2 } }), 9.1);
+  const gp = HTML.slice(HTML.indexOf('function goalsPnl'), HTML.indexOf('function dayRender')); assert.ok(/__WEB__\)return Web\.last&&Web\.last\.rec\?allBooksPnl\(Web\.last\.rec\)/.test(gp) && /SRV\.rec\)return allBooksPnl\(SRV\.rec\)/.test(gp));
+});
 (async () => { for (const [n, f] of tests) { try { await f(); pass++; console.log('ok   ' + n); } catch (e) { console.error('FAIL ' + n + '\n' + (e && e.stack || e)); process.exitCode = 1; } } console.log(pass + '/' + tests.length + ' passed'); })();

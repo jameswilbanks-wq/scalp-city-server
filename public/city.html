@@ -2005,10 +2005,12 @@ var FL=(function(){
   return{g:g,cone:cone,pool:pool,lamp:lamp,halos:halos,wg:wg,shells:shells,tw:null,parent:null,sym:null,col:new THREE.Color(0x34ff9a)};
 })();
 var GOALS=[25,50,100,200,400,800,1600],_gk='';
+/* James 2026-11-25: Today Goals count ALL of today's closed paper trades: the main Sweep book plus ORB, ORBN, CSK, X9, FP, condor and on-demand. (The wheel is a monthly cadence book kept in its own record, so it is not a daily trade.) Realized P&L only, simulated fills, no fees. */
+function allBooksPnl(r){if(!r)return null;var t=+r.pnl||0;['orb','orbn','csk','x9','fp','cdr','od'].forEach(function(k){if(r[k]&&r[k].pnl!=null)t+=+r[k].pnl||0});return Math.round(t*100)/100}
 function goalsPnl(){
-  if(window.__WEB__)return Web.last&&Web.last.rec?+Web.last.rec.pnl||0:null;
+  if(window.__WEB__)return Web.last&&Web.last.rec?allBooksPnl(Web.last.rec):null;
   if(P.running&&P.rec)return+P.rec.pnl||0;
-  if(SRV.rec)return+SRV.rec.pnl||0;
+  if(SRV.rec)return allBooksPnl(SRV.rec);
   return P.rec?+P.rec.pnl||0:null;
 }
 function dayRender(){
