@@ -189,3 +189,6 @@ Correction to what I told James: the 15:40 look does **not** buy back every spre
 
 ## 2026-11-25 — % gain/loss column on open trades (James: "when you open up the server to see the active trades can you add a % gain/loss column")
 Display only, no trading logic. Server panel table (`srvTbl`) gets a `%` column after P&L. Definition (my choice, for James to confirm): long options (ORB, ORBN, X9, FP, on-demand) = gain / price paid; credit books (CSK spreads, CDR condors) = gain / credit received, so a CSK stop at 3x credit reads about -200%. Unknown quote shows an ellipsis. Closed-trade rows leave the % cell blank (the closed-trade feed does not carry the entry price). Test: `test/open_pct.test.js` (4). Known, not changed: the X9 and FP open rows show P&L per share (diff x 1) while ORB, CSK and on-demand show dollars (diff x 100), so those two look 100x smaller; both books are paused/retired.
+
+## 2026-11-25 — X9/FP open-row P&L units fixed (James: "yes, fix and push")
+The X9 and FP open rows now show dollars ((bid - ask) x 100, one contract) like ORB, CSK and on-demand; before, they showed per-share amounts, 100x smaller. Display only. Test: `open_pct.test.js` (5). Pushed with the % column while one on-demand position was open (server restart about 30 s; the position persists in the journal).

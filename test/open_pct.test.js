@@ -19,4 +19,7 @@ t('table: header has the % column after P&L, the empty row spans 6 columns, clos
   assert.ok(/function addOpenRow\(label,o,contract,pnl,detail,pct\)/.test(HTML) && /pctTd\(tr,pct\)/.test(HTML));
   assert.ok(/'…'/.test(m2[0]) && /x>0\?'\+':''/.test(m2[0]), 'ellipsis when unknown, plus sign for gains');
 });
+t('X9 and FP open-row P&L is in dollars like ORB (bid - ask) x 100, not per share', () => {
+  for (const b of ['X9', 'FP']) { const i = HTML.indexOf("addOpenRow('" + b + "',"), line = HTML.slice(HTML.lastIndexOf(String.fromCharCode(10), i), i); assert.ok(/Math\.round\(\(o\.live\.bid-o\.entryAsk\)\*100\):null/.test(line), b + ' dollars'); assert.ok(!/\*100\)\/100/.test(line), b + ' no extra /100'); }
+});
 (async () => { for (const [n, f] of tests) { try { await f(); pass++; console.log('ok   ' + n); } catch (e) { console.error('FAIL ' + n + '\n' + (e && e.stack || e)); process.exitCode = 1; } } console.log(pass + '/' + tests.length + ' passed'); })();
