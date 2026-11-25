@@ -198,7 +198,7 @@ select:focus-visible,input:focus-visible,button:focus-visible{outline:2px solid 
     <div id="tradeCard" hidden role="status" aria-live="off"></div>
     <button id="tradeExit" type="button" hidden></button>
     <div id="cskBtns"></div>
-    <div id="odBox" hidden><div class="odr"><b>ON-DEMAND</b> <select id="odSym" aria-label="Symbol"><option>SPY</option><option>QQQ</option><option>AAPL</option><option>MSFT</option><option>GOOGL</option><option>AMZN</option><option>NVDA</option><option>META</option><option>TSLA</option><option>PLTR</option></select><select id="odQty" aria-label="Contracts"><option>1</option><option>2</option><option>3</option></select><button type="button" id="odCall" class="odb">CALL</button><button type="button" id="odPut" class="odb put">PUT</button></div><div class="odr"><button type="button" id="odGuard" class="odg" title="Guardrails: auto-sell a manual order at a 25% loss or a 100% gain. Off = no auto-sell (the 15:59 ET market-close sell still happens).">GUARDRAILS …</button></div><div id="odMsg" class="dim"></div></div>
+    <div id="odBox" hidden><div class="odr"><b>ON-DEMAND</b> <select id="odSym" aria-label="Symbol"><option>SPY</option><option>QQQ</option><option>AAPL</option><option>MSFT</option><option>GOOGL</option><option>AMZN</option><option>NVDA</option><option>META</option><option>TSLA</option><option>PLTR</option></select><select id="odQty" aria-label="Contracts"><option>1</option><option>2</option><option>3</option></select><button type="button" id="odCall" class="odb">CALL</button><button type="button" id="odPut" class="odb put">PUT</button></div><div class="odr"><button type="button" id="odGuard" class="odg" title="Guardrails: auto-sell a manual order at a 25% loss or a 100% gain. Off = no auto-sell (the 15:59 ET market-close sell still happens).">GUARDRAILS …</button></div><div class="odr"><button type="button" id="cskDay" class="odg" title="CSK call spreads for today: ON = the 11:00 and 12:30 entries fire as normal. OFF = no new CSK entries today (spreads already open are still managed). Resets to ON tomorrow.">CSK …</button></div><div id="odMsg" class="dim"></div></div>
     <button class="pill" id="srvFeed" type="button" hidden></button>
   </header>
 
@@ -2302,6 +2302,8 @@ var Web={dayArm:0,timer:null,key:'',trades:[],armed:0,last:null,bArm:null,
   odArm:null,
   /* guardrails switch for on-demand orders: ON = server auto-sells at -25% / +100%; OFF = no auto-sell except the 15:59 ET market-close sell. State lives on the server (saved, survives restarts); the button just shows it and flips it. */
   odGuardPaint:function(){var b=$('odGuard'),m=Web.last&&Web.last.rec&&Web.last.rec.mg;if(!b)return;if(!m){b.textContent='GUARDRAILS …';b.className='odg';return}b.className='odg'+(m.on?'':' off');b.textContent=m.on?'GUARDRAILS ON · sell at -'+m.loss+'% / +'+m.gain+'%':'GUARDRAILS OFF · no auto-sell'},
+  cskDayPaint:function(){var b=$('cskDay'),m=Web.last&&Web.last.rec&&Web.last.rec.cd;if(!b)return;if(!m){b.textContent='CSK …';b.className='odg';return}b.className='odg'+(m.on?'':' off');b.textContent=m.master===false?'CSK DISABLED (server setting)':m.on?'CSK ON · entries fire today':'CSK OFF today · no new entries'},
+  cskDayTap:async function(){var m=Web.last&&Web.last.rec&&Web.last.rec.cd;if(!m){$('odMsg').textContent='Waiting for the server…';return}var want=m.on?0:1;$('odMsg').textContent='Switching CSK '+(want?'ON':'OFF')+' for today…';try{var r=await (await Web.api('/api/cskday?on='+want,'POST')).json();$('odMsg').textContent=r.ok?('CSK '+(r.on?'ON: entries fire as normal':'OFF for today: no new entries (open spreads still managed)')+'.'):('Not changed: '+(r.error||'unknown'));await Web.load()}catch(e){$('odMsg').textContent='Could not reach the server.'}Web.cskDayPaint()},
   odGuardTap:async function(){var m=Web.last&&Web.last.rec&&Web.last.rec.mg;if(!m){$('odMsg').textContent='Waiting for the server…';return}var want=m.on?0:1;$('odMsg').textContent='Switching guardrails '+(want?'ON':'OFF')+'…';try{var r=await (await Web.api('/api/manguard?on='+want,'POST')).json();$('odMsg').textContent=r.ok?('Guardrails '+(r.on?'ON: auto-sell at -'+r.loss+'% / +'+r.gain+'%':'OFF: no auto-sell (15:59 ET close sell still applies)')+'.'):('Not changed: '+(r.error||'unknown'));await Web.load()}catch(e){$('odMsg').textContent='Could not reach the server.'}Web.odGuardPaint()},
   odGo:async function(side){
     var sym=$('odSym').value,qty=$('odQty').value,id=side+'|'+sym+'|'+qty;
@@ -2313,7 +2315,7 @@ var Web={dayArm:0,timer:null,key:'',trades:[],armed:0,last:null,bArm:null,
   odPaint:function(){var a=Web.odArm&&Date.now()-Web.odArm.t<5000;['call','put'].forEach(function(sd){var b=$(sd==='call'?'odCall':'odPut'),on=a&&Web.odArm.id.indexOf(sd+'|')===0;b.className='odb'+(sd==='put'?' put':'')+(on?' arm':'');b.textContent=on?'TAP AGAIN':sd.toUpperCase()})},
   start:function(){
     Web.key=new URLSearchParams(location.search).get('key')||'';
-    $('odBox').hidden=false;$('odGuard').addEventListener('click',function(){Web.odGuardTap()});$('odCall').addEventListener('click',function(){Web.odGo('call')});$('odPut').addEventListener('click',function(){Web.odGo('put')});['odSym','odQty'].forEach(function(i){$(i).addEventListener('change',function(){Web.odArm=null;Web.odPaint();$('odMsg').textContent=''})});
+    $('odBox').hidden=false;$('odGuard').addEventListener('click',function(){Web.odGuardTap()});$('cskDay').addEventListener('click',function(){Web.cskDayTap()});$('odCall').addEventListener('click',function(){Web.odGo('call')});$('odPut').addEventListener('click',function(){Web.odGo('put')});['odSym','odQty'].forEach(function(i){$(i).addEventListener('change',function(){Web.odArm=null;Web.odPaint();$('odMsg').textContent=''})});
     $('acctSwitch').hidden=false;try{if(localStorage.getItem('sc_acct')==='real')acctSet('real')}catch(e){}
     $('app').classList.add('web');S.mode='live';liveOK=false;S.accounts=[];fillAccts();
     setStatus('','LOADING SERVER DATA');
@@ -2347,7 +2349,7 @@ var Web={dayArm:0,timer:null,key:'',trades:[],armed:0,last:null,bArm:null,
   },
   apply:function(d){
     Web.syncWatch(d);
-    Web.last=d;SCORE=d.score||SCORE;if(S.board)renderScore();try{Web.odGuardPaint()}catch(e){}
+    Web.last=d;SCORE=d.score||SCORE;if(S.board)renderScore();try{Web.odGuardPaint();Web.cskDayPaint()}catch(e){}
     (function(){var h=d.health||{},ago=h.lastTick?Math.round((d.now-h.lastTick)/1000):null,bk=h.books||{},tip='';
       try{['orb','csk','x9','fp','cdr'].forEach(function(k){if(bk[k])tip+=k.toUpperCase()+': '+bk[k].state+' · open '+bk[k].open+' · closed '+bk[k].closed+'\n'});if(bk.lastSignal)tip+='Last signal: '+bk.lastSignal.sym+' '+bk.lastSignal.trig+' '+bk.lastSignal.action+' '+bk.lastSignal.why}catch(e){}
       if(h.tickErr)setStatus('bad','SERVER DATA ERROR · '+String(h.tickErr).slice(0,60));

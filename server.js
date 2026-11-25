@@ -383,7 +383,7 @@ function corrGroupOpenRiskUSD(rec) {
 }
 /* CSK PRIORITY (James 2026-11-24: "give csk priority"; background: on 2026-11-24 two X9 calls used the cap room and the 12:30 CSK slot was skipped). Every book except CSK sees the room still owed to CSK entries that have not been made yet: one spread's worst-case risk (width x 100 minus about $40 of credit, $160 for a $2 spread) for each CSK symbol in a slot whose window has not ended and whose done-flag is not set. Once a slot is entered, skipped or its window ends, the reserve disappears. CSK's own check passes prio=true and ignores the reserve. No other rule changes. */
 function cskReservedUSD(rec) {
-  if (!CSK_ON || !rec || rec.shut) return 0;
+  if (!CSK_ON || !rec || rec.shut || rec.cskOff) return 0;
   const e = nowET(), done = (rec.csk && rec.csk.done) || {}, slots = [{ tag: '', min: CSK.min }]; if (CSK2.on) slots.push({ tag: '@2', min: CSK2.min });
   let n = 0; for (const sl of slots) if (e.min < sl.min + 20) for (const sy of CSK.syms) if (CORR_GROUPS.includes(sy) && !done[sy + sl.tag]) n++;
   return n * Math.max(0, CSK.width * 100 - 40);
@@ -769,8 +769,8 @@ const CSK2 = { on: process.env.CSK2_ON !== '0', min: +process.env.CSK2_MIN || 75
 function cskSlot(min) { if (min >= CSK.min && min < CSK.min + 20) return { n: 1, tag: '' }; if (CSK2.on && min >= CSK2.min && min < CSK2.min + 20) return { n: 2, tag: '@2' }; return null; }
 async function cskQuotes(ids) { const qd = await rh('get_option_quotes', { instrument_ids: ids }), by = {}; (qd.results || []).forEach(z => { if (z.quote) by[z.quote.instrument_id] = z.quote; }); return by; }
 async function cskLook() {
-  const r = P.rec; if (!CSK_ON || !r || r.shut || !marketOpen(Date.now())) return;
-  r.csk = r.csk || { open: [], trades: [], pnl: 0, done: {} };
+  const r = P.rec; if (!CSK_ON || !r || r.shut || r.cskOff || !marketOpen(Date.now())) return; // r.cskOff = James's per-day CSK switch (2026-11-25): OFF stops new auto entries only, open spreads are still managed
+  r.csk = r.csk ||{ open: [], trades: [], pnl: 0, done: {} };
   const e = nowET(), slot = cskSlot(e.min); if (!slot) return;
   for (const s of CSK.syms) {
     const dk = s + slot.tag; if (r.csk.done[dk]) continue; const inf = P.info[s]; if (!inf || !inf.bar) continue;
@@ -1537,6 +1537,7 @@ function recOut() {
     orb: r.orbk ? { pnl: r.orbk.pnl, open: r.orbk.open.map(o => ({ sym: o.sym, strike: o.strike, type: o.type, exp: o.exp, entryAsk: o.entryAsk, t0: o.t0, man: !!o.manual, stopU: o.stopU, tgtU: o.tgtU, live: o.live })), trades: r.orbk.trades.map(t => ({ sym: t.sym, strike: t.strike, type: t.type, entryT: t.entryT, pnl: t.pnl, reason: t.reason })) } : null,
     orbn: r.orbnk ? { pnl: r.orbnk.pnl, open: r.orbnk.open.map(o => ({ sym: o.sym, strike: o.strike, type: o.type, exp: o.exp, entryAsk: o.entryAsk, t0: o.t0, man: !!o.manual, stopU: o.stopU, tgtU: o.tgtU, live: o.live })), trades: r.orbnk.trades.map(t => ({ sym: t.sym, strike: t.strike, type: t.type, entryT: t.entryT, pnl: t.pnl, reason: t.reason })) } : null,
     mg: { on: manGuardOn(), loss: MAN.gLoss, gain: MAN.gGain },
+    cd: { on: !r.cskOff, master: CSK_ON },
     od: r.mank ? { pnl: r.mank.pnl, open: r.mank.open.map(o => ({ sym: o.sym, strike: o.strike, type: o.type, exp: o.exp, qty: o.qty, entryAsk: o.entryAsk, t0: o.t0, man: !!o.manual, live: o.live })), trades: r.mank.trades.map(t => ({ sym: t.sym, strike: t.strike, type: t.type, qty: t.qty, entryT: t.entryT, pnl: t.pnl, reason: t.reason })) } : null,
     csk: r.csk ? { pnl: r.csk.pnl, on: CSK_ON, open: r.csk.open.map(o => ({ sym: o.sym, ks: o.ks, kl: o.kl, exp: o.exp, t0: o.t0, man: !!o.manual, creditNat: o.creditNat, live: o.live })), trades: r.csk.trades.map(t => ({ sym: t.sym, ks: t.strike, kl: t.kl, entryT: t.entryT, pnl: t.pnl, reason: t.reason })) } : null,
     x9: r.x9k ? { pnl: r.x9k.pnl, on: X9_ON, open: r.x9k.open.map(o => ({ sym: o.sym, strike: o.strike, type: o.type, exp: o.exp, entryAsk: o.entryAsk, t0: o.t0, man: !!o.manual, live: o.live })), trades: r.x9k.trades.map(t => ({ sym: t.sym, strike: t.strike, type: t.type, entryT: t.entryT, pnl: t.pnl, reason: t.reason })) } : null,
@@ -1967,6 +1968,7 @@ const server = http.createServer(async (req, res) => {
     if (u.pathname === '/api/real' && req.method === 'GET') return send(res, 200, realStatus());
     if (u.pathname.startsWith('/api/real')) return send(res, 403, { ok: false, error: 'real trading is not enabled in this build' });
     if (req.method === 'POST' && u.pathname === '/api/closebook') { const sy = (u.searchParams.get('sym') || '').toUpperCase(); if (!/^[A-Z.]{1,6}$/.test(sy)) return send(res, 400, { ok: false, error: 'bad symbol' }); return send(res, 200, await manualCloseBook(u.searchParams.get('book') || '', sy, u.searchParams.get('t0') || '')); }
+    if (req.method === 'POST' && u.pathname === '/api/cskday') { const on = u.searchParams.get('on'); if (on !== '1' && on !== '0') return send(res, 400, { ok: false, error: 'on must be 1 or 0' }); if (!P.rec) return send(res, 503, { ok: false, error: 'no record for today yet' }); P.rec.cskOff = on === '0'; try { saveRec(); } catch (e) { slog('csk_day_save_error', { e: String((e && e.message) || e).slice(0, 80) }); } slog('csk_day', { on: !P.rec.cskOff }); return send(res, 200, { ok: true, on: !P.rec.cskOff, master: CSK_ON }); }
     if (req.method === 'POST' && u.pathname === '/api/manguard') { const on = u.searchParams.get('on'); if (on !== '1' && on !== '0') return send(res, 400, { ok: false, error: 'on must be 1 or 0' }); P.manGuard = on === '1'; try { await kset('man_guard', { on: P.manGuard, at: new Date().toISOString() }); } catch (e) { slog('man_guard_save_error', { e: String((e && e.message) || e).slice(0, 80) }); } slog('man_guard', { on: P.manGuard }); return send(res, 200, { ok: true, on: P.manGuard, loss: MAN.gLoss, gain: MAN.gGain }); }
     if (req.method === 'POST' && u.pathname === '/api/ondemand') { const sy = (u.searchParams.get('sym') || '').toUpperCase(); if (!/^[A-Z.]{1,6}$/.test(sy)) return send(res, 400, { ok: false, error: 'bad symbol' }); return send(res, 200, await manualEnter(sy, (u.searchParams.get('side') || '').toLowerCase(), u.searchParams.get('qty'))); }
     return send(res, 404, 'Not found', 'text/plain');

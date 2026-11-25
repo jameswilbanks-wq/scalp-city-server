@@ -187,3 +187,6 @@ In `rec:YYYY-MM-DD` -> `cskreal.list[]`: `pc` (taken once per spread at the 15:4
 
 ## 2026-11-25 — Guardrails switch (pending push)
 `POST /api/manguard?on=1|0` (behind the key; the page button calls it). State in kv key `man_guard` `{on, at}`; no key = ON. Page data field `mg` `{on, loss, gain}`. Env: `MAN_GUARD_LOSS` (25), `MAN_GUARD_GAIN` (100); `MAN_STOP` no longer exists. Trade reasons: `guard stop`, `guard target`, `manual`, `time`.
+
+## 2026-11-25 — CSK per-day switch (pending push)
+`POST /api/cskday?on=1|0` (behind the key; the page button calls it) sets `rec.cskOff` on today's record (`on=0` -> OFF). Page data field `cd` `{on, master}` (`master` is the `CSK_ON` env). OFF stops new CSK auto entries today only (open spreads still managed); resets to ON tomorrow because the flag lives on the day's row. To check: the `csk_day` log line, or `value->'cskOff'` in `rec:YYYY-MM-DD`. To turn CSK off for good use the `CSK_ON=0` env var (restarts the server).
