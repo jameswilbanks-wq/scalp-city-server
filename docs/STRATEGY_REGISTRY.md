@@ -242,3 +242,6 @@ Discretionary paper trades by James (call or put, SPY or QQQ, 1 to 3 contracts, 
 
 ## 2026-11-24 — PAUSED: X9, ORB, ORBN (James)
 No new entries (`X9_ON=0`, `ORB_ON=0`, `ORBN_ON=0` in Render env). Rules and journals unchanged; to be fixed or re-specified first. Resume only with James's yes.
+
+## 2026-11-27 — RESEARCH (not a strategy): signal-board confluence (`bt38`) — Not supported
+Seven display signals (VWAP, 30-min ORB, RSI14 5-min, EMA 9/21, first-half-hour, MACD 12/26/9, Bollinger 20/2 5-min), light at 4 of 7. Tested as a mechanical entry on SPY/QQQ underlying moves 2016-2026: below cost and chance (`docs/signal-confluence-results.md`). Not traded, not proposed. Board is display only.
