@@ -8,7 +8,8 @@ function fn(name) { // text of a top-level function by brace matching
   let d = 0, j = SRC.indexOf('{', i); for (let k = j; k < SRC.length; k++) { if (SRC[k] === '{') d++; else if (SRC[k] === '}') { d--; if (d === 0) return SRC.slice(i, k + 1); } } throw new Error('unbalanced ' + name);
 }
 const MB = SRC.slice(SRC.indexOf('const MANUAL_BOOKS'), SRC.indexOf('\n', SRC.indexOf('const MANUAL_BOOKS')));
-const CODE = ['manageOrb', 'manageMan', 'manageOrbN', 'x9Manage', 'fpManage', 'cskManage', 'cskClose', 'cdrManage', 'cdrClose', 'manualCloseBook'].map(fn).join('\n');
+const ln = s => { const i = SRC.indexOf(s); return SRC.slice(i, SRC.indexOf('\n', i)); };
+const CODE = [ln('const MAN_ON'), ln('const MANCFG'), 'manGuardOn', 'cleanGuard', 'guardCfg', 'manageManB', 'manageSon', 'manageOrb', 'manageMan', 'manageOrbN', 'x9Manage', 'fpManage', 'cskManage', 'cskClose', 'cdrManage', 'cdrClose', 'manualCloseBook'].map(x => x.startsWith('const ') ? x : fn(x)).join('\n');
 const NAMES = ['P', 'rh', 'cskQuotes', 'exitReason', 'marketOpen', 'nowET', 'iso', 'saveRec', 'x9Bars', 'Engine', 'X9', 'CDR', 'CSK', 'AI_OVERLAY_ON', 'fiveMin', 'ensureBars', 'cskRealOnClose'];
 function build() {
   const old = new Date(Date.now() - 600000).toISOString(), fresh = () => new Date().toISOString(), realCalls = [];

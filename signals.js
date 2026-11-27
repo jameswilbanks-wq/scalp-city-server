@@ -82,4 +82,14 @@ function computeSignals(bars, opts) {
   const grp = grouped(sigs, stale);
   return { state, nBuy, nSell, nUse, grp, sigs, px: last.c, asOf: last.t, stale, why: stale ? 'quote older than 5 minutes' : '' };
 }
-module.exports = { computeSignals, grouped, TREND_NEED, rsiWilder, ema, macdCross, bollinger, NEED, N_SIG };
+/* Price LEVELS for the trade deck (James 2026-11-27: "an indicator in an open trade box that shows if that trade is nearing a resistance or support level"). DISPLAY ONLY, never feeds an order. Plain reference prices from bars the server already holds: PDH/PDL prior-day high/low and PDC prior close (only when the bar window holds the prior session), DH/DL today's high/low, ORH/ORL 9:30-10:00 range (known after 10:00), VWAP. Whether price reacts at these levels is NOT tested; they are lines on a chart, not a signal. */
+function levels(bars) {
+  if (!bars || bars.length < 2) return null;
+  const last = bars[bars.length - 1], today = bars.filter(b => b.day === last.day); if (!today.length) return null;
+  const prior = bars.filter(b => b.day < last.day), pd = prior.length ? prior[prior.length - 1].day : null, pb = pd ? prior.filter(b => b.day === pd) : [];
+  const hi = a => Math.max.apply(null, a.map(b => b.h)), lo = a => Math.min.apply(null, a.map(b => b.l)), r2 = x => Math.round(x * 100) / 100;
+  let pv = 0, vv = 0; today.forEach(b => { pv += (b.h + b.l + b.c) / 3 * b.v; vv += b.v; });
+  const or = today.filter(b => b.min < ORB_END), orDone = last.min >= ORB_END && or.length > 0;
+  return { px: r2(last.c), asOf: last.t, vwap: vv ? r2(pv / vv) : null, dh: r2(hi(today)), dl: r2(lo(today)), orh: orDone ? r2(hi(or)) : null, orl: orDone ? r2(lo(or)) : null, pdh: pb.length ? r2(hi(pb)) : null, pdl: pb.length ? r2(lo(pb)) : null, pdc: pb.length ? r2(pb[pb.length - 1].c) : null };
+}
+module.exports = { computeSignals, grouped, levels, TREND_NEED, rsiWilder, ema, macdCross, bollinger, NEED, N_SIG };

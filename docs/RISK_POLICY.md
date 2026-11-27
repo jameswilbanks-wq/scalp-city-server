@@ -97,3 +97,6 @@ Quantity 1 to 3, at most 3 open, premium cap $400 per contract (worst case $1,20
 
 ## 2026-11-25 — On-demand guardrails (pending push)
 With the switch ON (v2, James 2026-11-27, see DECISIONS 2026-11-27): auto-sell at -30% versus price paid; at +100% a 25% trailing stop is armed (sells 25% below the highest bid after that), no sell at +100% itself; OFF: none; 15:59 ET close sell in both. Replaces "no automatic stop by default" in the 2026-11-24 on-demand limits. Paper only, deterministic code. Changing the percentages needs James's yes.
+
+## 2026-11-27 — Son's manual book (`sonk`) and adjustable guardrails
+Simulated journal only, no broker order, outside James's correlation cap, same entry limits as the on-demand book (symbols, 1-3 contracts, 3 open, $1,200 per order, 9:30-16:00 ET entries, 15:59 flat). Guardrail percentages are bounded in server code (stop 5-90, gain 10-1000, trail 5-60); defaults 30 / 100 / 25 unchanged. Stops run only while the server process runs (no broker-resident stop). Changing the bounds or limits needs James's yes.

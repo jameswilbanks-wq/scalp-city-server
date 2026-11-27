@@ -5,7 +5,7 @@ const SRC = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8'), HT
 let pass = 0; const tests = []; const t = (n, f) => tests.push([n, f]);
 function fn(name) { let i = SRC.indexOf('async function ' + name + '('); if (i < 0) i = SRC.indexOf('function ' + name + '('); assert.ok(i >= 0, 'missing ' + name); let d = 0; for (let k = SRC.indexOf('{', i); k < SRC.length; k++) { if (SRC[k] === '{') d++; else if (SRC[k] === '}') { d--; if (d === 0) return SRC.slice(i, k + 1); } } throw new Error('unbalanced ' + name); }
 const line = start => { const i = SRC.indexOf(start); assert.ok(i >= 0, 'missing ' + start); return SRC.slice(i, SRC.indexOf('\n', i)); };
-const CODE = [line('const MAN_ON'), ...['corrGroupOpenRiskUSD', 'cskReservedUSD', 'manGuardOn', 'corrCapBlocks', 'manualEnter', 'manageMan', 'manualCloseBook'].map(fn), "const MANUAL_BOOKS = { man: ['mank', manageMan] };"].join('\n');
+const CODE = [line('const MAN_ON'), line('const MANCFG'), ...['corrGroupOpenRiskUSD', 'cskReservedUSD', 'manGuardOn', 'cleanGuard', 'guardCfg', 'corrCapBlocks', 'manualEnter', 'manualEnterB', 'manualEnterSon', 'manageMan', 'manageManB', 'manageSon', 'manualCloseBook'].map(fn), "const MANUAL_BOOKS = { man: ['mank', manageMan], son: ['sonk', manageSon] };"].join('\n');
 const NAMES = ['P', 'CFG', 'marketOpen', 'nowET', 'pickContract', 'logSignal', 'saveRec', 'rh', 'iso', 'CORR_GROUPS', 'CORR_CAP_USD', 'CSK_ON', 'CSK', 'CSK2', 'pBars'];
 function build(o) {
   o = o || {}; const calls = { pick: [], sig: [] }, env = { open: true, min: 700, noQuote: false, stale: false, bid: 2.0, ask: 2.1, pk: null, delay: 0 };
@@ -13,7 +13,7 @@ function build(o) {
   const pickContract = async (sym, dir, px, maxPrem, dte) => { calls.pick.push({ sym, dir, px, maxPrem, dte }); if (env.delay) await new Promise(r => setTimeout(r, env.delay)); return env.pk || { qAge: 1000, inst: 'opt', strike: 710, exp: '2026-11-24', type: dir > 0 ? 'call' : 'put', ask: env.ask, bid: env.bid, iv: 0.2, delta: dir * 0.5 }; };
   const rh = async (n, a) => { if (env.noQuote) return { results: [] }; return { results: a.instrument_ids.map(i => ({ quote: { instrument_id: i, bid_price: String(env.bid), ask_price: String(env.ask), updated_at: new Date(Date.now() - (env.stale ? 600000 : 1000)).toISOString() } })) }; };
   const stubs = [P, { syms: ['SPY', 'QQQ'] }, () => env.open, () => ({ min: env.min, day: '2026-11-24' }), pickContract, (...a) => { calls.sig.push(a); }, () => {}, rh, d => new Date(d).toISOString(), ['SPY', 'QQQ'], o.cap === undefined ? 1200 : o.cap, false, { syms: ['SPY', 'QQQ'], width: 2, min: 660 }, { on: true, min: 750 }, async sym => { calls.bars = (calls.bars || []).concat(sym); return env.noBars ? [] : [{ t: Date.now() - 30000, c: 200 }]; }];
-  const api = new Function(...NAMES, CODE + '\nreturn { manualEnter, manageMan, manualCloseBook, MAN };')(...stubs);
+  const api = new Function(...NAMES, CODE + '\nreturn { manualEnter, manualEnterSon, manageMan, manageSon, manualCloseBook, MAN };')(...stubs);
   return Object.assign({ P, env, calls }, api);
 }
 
@@ -77,7 +77,7 @@ t('guardrails OFF: no loss or gain auto-sell at all (a 90% loss and a 300% gain 
 t('guardrails switch: POST /api/manguard (behind the key, on=1 or 0 only) saves kv man_guard, boot loads it, the page data carries mg, and the page has the toggle button', () => {
   const auth = SRC.indexOf('if (!authed(u, req))'), route = SRC.indexOf("u.pathname === '/api/manguard'"); assert.ok(auth > 0 && route > auth); assert.ok(/req\.method === 'POST' && u\.pathname === '\/api\/manguard'/.test(SRC)); const rt = SRC.slice(route, route + 700); assert.ok(/on !== '1' && on !== '0'/.test(rt) && /kset\('man_guard'/.test(rt));
   assert.ok(/kget\('man_guard'\)/.test(SRC) && /P\.manGuard = g\.on/.test(SRC), 'boot restores the saved switch'); assert.ok(/mg: \{ on: manGuardOn\(\), loss: MAN\.gLoss, gain: MAN\.gGain, trail: MAN\.gTrail \}/.test(SRC), 'page data');
-  assert.ok(/id="odGuard"/.test(HTML) && /\/api\/manguard\?on=/.test(HTML) && /Web\.odGuardPaint\(\)/.test(HTML), 'button, call and repaint'); assert.ok(/MAN_GUARD_LOSS \|\| 30/.test(SRC) && /MAN_GUARD_GAIN \|\| 100/.test(SRC) && /MAN_GUARD_TRAIL \|\| 25/.test(SRC)); assert.ok(/trail: MAN\.gTrail/.test(SRC), 'page data carries the trail'); assert.ok(!/guard target/.test(SRC.slice(SRC.indexOf('async function manageMan('), SRC.indexOf('const MANUAL_BOOKS'))), 'no sell at +100%');
+  assert.ok(/id="odGuard"/.test(HTML) && /\/api\/manguard\?on=/.test(HTML) && /Web\.odGuardPaint\(\)/.test(HTML), 'button, call and repaint'); assert.ok(/MAN_GUARD_LOSS \|\| 30/.test(SRC) && /MAN_GUARD_GAIN \|\| 100/.test(SRC) && /MAN_GUARD_TRAIL \|\| 25/.test(SRC)); assert.ok(/trail: MAN\.gTrail/.test(SRC), 'page data carries the trail');
 });
 t('source guard: paper only (no broker order call in the MAN block), POST route after the key check, panel needs two taps and the server route is not reachable by GET', () => {
   const a = SRC.indexOf('const MAN_ON'), b = SRC.indexOf('const MANUAL_BOOKS'), block = SRC.slice(a, b).replace(/\/\*[\s\S]*?\*\//g, ''); assert.ok(!/apTrade|place_option_order|place_equity_order|fetch\(|\/v2\/orders|https?:\/\//.test(block), 'no order or network call');

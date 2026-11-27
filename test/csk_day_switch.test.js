@@ -35,6 +35,6 @@ t('route: POST /api/cskday behind the key, on=1 or 0 only, 503 without a record,
 });
 t('page: the CSK button, its tap (POST /api/cskday?on=) and repaint after every data load; wording says new entries only, resets tomorrow', () => {
   assert.ok(/id="cskDay"/.test(HTML) && /\/api\/cskday\?on=/.test(HTML) && /Web\.cskDayPaint\(\)/.test(HTML) && /\$\('cskDay'\)\.addEventListener\('click'/.test(HTML));
-  assert.ok(/CSK OFF today · no new entries/.test(HTML) && /Resets to ON tomorrow/.test(HTML));
+  assert.ok(/CSK OFF today · no new entries/.test(HTML) && /Every new trading day starts OFF/.test(HTML));
 });
 (async () => { for (const [n, f] of tests) { try { await f(); pass++; console.log('ok   ' + n); } catch (e) { console.error('FAIL ' + n + '\n' + (e && e.stack || e)); process.exitCode = 1; } } console.log(pass + '/' + tests.length + ' passed'); })();

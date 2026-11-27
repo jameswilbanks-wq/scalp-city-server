@@ -187,3 +187,6 @@ See DECISIONS 2026-11-24. Awaiting James: keep "no automatic stop" or set `MAN_S
 
 ## 2026-11-24 — X9, ORB, ORBN paused; on-demand adds Mag 7 + PLTR
 See DECISIONS 2026-11-24. Active strategy books now: CSK (sim + real-paper mirror), Sweep (main), CDR; FP retired. Open: confirm ORBN should be paused too; confirm $800 stock premium cap and $1,200 per-order limit.
+
+## 2026-11-27 — Trade Deck and son's page (built, tests pass, NOT PUSHED)
+New `public/deck.html` replaces the main page at `/`; old page at `/city`; son's page at `/son` (own book `sonk`, own key `SON_KEY`, paper-only simulated journal, stats separate). CSK now defaults OFF on every new day row (James's explicit yes). Guardrail %s, partial close and levels added. Details and limits: DECISIONS 2026-11-27, RUNBOOK 2026-11-27. Open items for James: set `SON_KEY` in Render before sharing the link; decide whether he wants CSK switched on each morning (Phase 1 evidence only accrues on days it is on); the 15:59 flat vs the 13:00 early close is still open.
