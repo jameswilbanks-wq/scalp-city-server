@@ -101,7 +101,7 @@ select:focus-visible,input:focus-visible,button:focus-visible{outline:2px solid 
 #labChart{width:100%;max-width:100%;height:auto;margin-top:8px;display:block}
 .warn{color:var(--amber)}
 #labBtn{position:absolute;left:16px;bottom:96px}
-#srvBtn{position:absolute;left:16px;bottom:138px;border-color:rgba(255,210,63,.6)}
+#srvBtn{position:absolute;right:16px;bottom:54px;border-color:rgba(255,210,63,.6)}
 #paperBtn{position:absolute;left:92px;bottom:96px;border-color:rgba(56,244,216,.7)}
 #liveBtn{position:absolute;left:176px;bottom:96px;border-color:rgba(255,61,110,.8);color:#ff8fa9}
 #modeBar{position:absolute;left:0;right:0;top:0;z-index:60;height:24px;display:flex;align-items:center;justify-content:center;padding:0 8px;font:700 10px var(--f-mono);letter-spacing:.1em;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:#1a1648;color:var(--dim);border-bottom:1px solid var(--edge)}
@@ -156,7 +156,7 @@ select:focus-visible,input:focus-visible,button:focus-visible{outline:2px solid 
 #tradeCard .tcp{font-family:var(--f-disp);font-weight:700;font-size:26px;line-height:1.15;font-variant-numeric:tabular-nums}#tradeCard .tcl{color:var(--dim)}#tradeCard .tcl b{color:var(--ink);font-weight:600}
 #srvFeed{align-self:flex-start}
 #app.web #labBtn,#app.web #paperBtn,#app.web #liveBtn,#app.web #acct{display:none}
-#app.web #srvBtn{left:16px;bottom:96px}
+#app.web #srvBtn{right:16px;left:auto;bottom:54px}
 #app.web[data-mode] #hint{padding:0 100px}
 @media (prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
 #acctSwitch{display:flex;gap:0;margin-left:8px}#acctSwitch button{font:700 11px var(--f-mono);letter-spacing:.1em;padding:6px 12px;min-height:32px;border:1px solid var(--cyan);background:transparent;color:var(--cyan);cursor:pointer}#acctSwitch button:first-child{border-radius:6px 0 0 6px}#acctSwitch button:last-child{border-radius:0 6px 6px 0;border-left:0}#acctSwitch button.on{background:var(--cyan);color:#041018}#acctSwitch button.on[data-a=real]{background:#ff1f59;border-color:#ff1f59;color:#fff}#acctSwitch button[data-a=real]{border-color:#ff1f59;color:#ff1f59}
