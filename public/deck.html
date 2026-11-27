@@ -227,6 +227,20 @@ a.btn{color:var(--ink);align-items:center;justify-content:center;min-height:44px
 .orow button{min-height:44px;padding:0 14px;border-radius:8px;border:1px solid var(--line);background:transparent;color:var(--ink);font:600 13px var(--f-body);cursor:pointer}
 .orow button.ask{border-color:var(--down);color:var(--down)}
 .note2{font-size:12px;color:var(--dim);margin:14px 0 0;line-height:1.5}
+.cal{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin-top:18px}
+.cal .ch2{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 18px;margin-bottom:10px}
+.cal .ch2 h2{margin:0;font:700 18px var(--f-disp);letter-spacing:.1em;text-transform:uppercase}
+.cal .mt{font:600 15px var(--f-mono)}.cal .ms{color:var(--dim);font-size:12px}
+.cg{display:grid;grid-template-columns:repeat(7,minmax(0,1fr)) minmax(64px,.9fr);gap:4px}
+.cg .dh{font:600 11px var(--f-body);letter-spacing:.08em;text-transform:uppercase;color:var(--dim);text-align:center;padding:2px 0}
+.cg .d{min-height:62px;border:1px solid var(--line);border-radius:8px;padding:4px 6px;display:flex;flex-direction:column;justify-content:space-between;font-size:11px;color:var(--dim)}
+.cg .d.off{opacity:.35}.cg .d.today{outline:2px solid var(--accent)}
+.cg .d b{font:600 13px var(--f-mono)}.cg .d .n{font-size:10px}
+.cg .d.up{background:var(--upBg)}.cg .d.dn{background:var(--downBg)}
+.cg .w{min-height:62px;border:1px dashed var(--line);border-radius:8px;padding:4px 6px;display:flex;flex-direction:column;justify-content:space-between;font-size:11px;color:var(--dim)}
+.cg .w b{font:600 13px var(--f-mono)}
+.up{color:var(--up)}.dn{color:var(--down)}
+@media (max-width:640px){.cg{gap:3px;grid-template-columns:repeat(7,minmax(0,1fr)) minmax(50px,1.1fr)}.cg .d,.cg .w{padding:3px 2px;min-height:50px;overflow:hidden}.cg .d b,.cg .w b{font-size:10px;letter-spacing:-.03em;white-space:nowrap}.cg .usd{display:none}.cg .d .n{display:none}.cg .dh{font-size:9px;letter-spacing:0}}
 .histline{font-size:12px;color:var(--dim);margin:6px 2px 0}
 @media (max-width:640px){.orow{grid-template-columns:44px 1fr auto}.orow .m{display:none}}
 </style>
@@ -288,6 +302,7 @@ a.btn{color:var(--ink);align-items:center;justify-content:center;min-height:44px
     <section class="closedWrap"><div class="hd"><h2>Closed today</h2><span id="closedCount"></span></div>
       <div class="tape" id="tape"></div></section>
   </div>
+  <section class="cal" id="cal" aria-label="Calendar"><div class="ch2"><h2 id="calT">Calendar</h2><span class="mt" id="calM"></span><span class="ms" id="calS"></span></div><div class="cg" id="calG"></div><div class="ms" style="margin-top:8px" id="calN"></div></section>
   <p class="note2">Paper trading only: simulated fills at the ask and the bid from Robinhood option quotes, no orders are sent to any broker. Prices refresh about every 20 seconds. Stops and guardrails run on the server only while it is running; there is no broker-held stop. Support and resistance lines are plain reference prices (prior-day, opening-range, VWAP, day high and low), not a tested edge.</p>
 </div>
 <div class="toast" id="toast" role="status"></div>
@@ -481,7 +496,7 @@ a.btn{color:var(--ink);align-items:center;justify-content:center;min-height:44px
     $('openCount').textContent=ps.length?ps.length+' open'+(lt?', prices as of '+tfs.format(new Date(lt))+' ET (refresh about every 20 s)':', waiting for the first price'):'';
     $('closedCount').textContent=cl.length?cl.length+' rows (a partial sell is its own row)':'';
     if(!ps.length&&!$('cards').querySelector('.empty')){$('cards').innerHTML='<div class="empty"><b>No open trades</b>'+(S&&S.shut?'Trading is stopped for today.':(S&&!S.market?'The market is closed.':'Pick a ticker on the right and tap CALL or PUT twice.'))+'</div>'}
-    $('tape').innerHTML=cl.map(function(c){return '<div class="tr"><span class="w">'+(c.exitT?hm(Date.parse(c.exitT)):'')+'</span><span><b>'+esc(c.sym)+'</b> '+esc(c.type).toUpperCase()+(c.qty>1?' x'+c.qty:'')+' <span class="r">&middot; '+esc(RS[c.reason]||c.reason)+'</span></span><span></span><span class="m '+cls(c.pnl)+'">'+money(c.pnl,true)+'</span></div>'}).join('')||'<div class="tr"><span class="r">Nothing closed yet today.</span></div>';
+    $('tape').innerHTML=cl.map(function(c){return '<div class="tr"><span class="w">'+(c.exitT?hm(Date.parse(c.exitT)):'')+'</span><span><b>'+esc(c.sym)+'</b> '+esc(c.type).toUpperCase()+(c.qty>1?' x'+c.qty:'')+' <span class="r">&middot; '+esc(RS[c.reason]||c.reason)+'</span></span><span></span><span class="m '+cls(c.pnl)+'">'+money(c.pnl,true)+'</span></div>'}).join('')||'<div class="tr"><span class="r" style="grid-column:1/-1">Nothing closed yet today.</span></div>';
     var oth=(S&&S.others)||[];$('othersWrap').style.display=oth.length?'block':'none';
     $('others').innerHTML=oth.map(function(x,i){var pl=x.entry&&x.bid!=null?(x.bid-x.entry)*100:null;return '<div class="orow"><span class="lb">'+esc(x.label)+'</span><span>'+esc(x.desc)+' <span class="r" style="color:var(--dim)">&middot; held '+held({t0:x.t0})+'</span></span><span class="m '+(pl==null?'flat':cls(pl))+'">'+(pl==null?'':money(pl,true))+'</span><button type="button" data-o="'+i+'">Close</button></div>'}).join('')}
   $('others').addEventListener('click',function(e){
@@ -528,8 +543,28 @@ a.btn{color:var(--ink);align-items:center;justify-content:center;min-height:44px
     stopLabel();if(!$('closeAll').dataset.ask)$('closeAll').textContent=closeAllLabel()}
   var polling=false;
   function poll(){if(polling)return;polling=true;
-    call(EP.state).then(function(d){polling=false;if(!d||d.error||!d.g){throw new Error(d&&d.error||'bad data')}S=d;netBad=0;$('neterr').style.display='none';apply()}).catch(function(e){polling=false;netBad++;if(netBad>=2)$('neterr').style.display='block'})}
-  function loadHist(){call(EP.hist).then(function(h){if(!h||h.error)return;H=h;$('hist').textContent=h.nDays?'This deck so far: '+h.nDays+' trading day'+(h.nDays===1?'':'s')+', total '+money(h.total,true)+', average '+money(h.avgPerDay,true)+' per trading day. '+h.note+'.':'No closed trades on earlier days yet.'}).catch(function(){})}
+    call(EP.state).then(function(d){polling=false;if(!d||d.error||!d.g){throw new Error(d&&d.error||'bad data')}S=d;netBad=0;$('neterr').style.display='none';apply();renderCal()}).catch(function(e){polling=false;netBad++;if(netBad>=2)$('neterr').style.display='block'})}
+  function loadHist(){call(EP.hist).then(function(h){if(!h||h.error)return;H=h;renderCal();$('hist').textContent=h.nDays?'This deck so far: '+h.nDays+' trading day'+(h.nDays===1?'':'s')+', total '+money(h.total,true)+', average '+money(h.avgPerDay,true)+' per trading day. '+h.note+'.':'No closed trades on earlier days yet.'}).catch(function(){})}
+  /* ---- month calendar: this deck's book only, realized P&L per day, weekly totals, month total ---- */
+  function renderCal(){
+    var day=(S&&S.day)||'';if(day.length!==10)return;
+    var y=+day.slice(0,4),mo=+day.slice(5,7),pre=day.slice(0,7),by={};
+    ((H&&H.days)||[]).forEach(function(d){by[d.day]={pnl:d.pnl,n:d.n}});
+    if(S.closed&&S.closed.length)by[day]={pnl:S.pnl,n:S.closed.length};
+    var first=new Date(Date.UTC(y,mo-1,1)),dim=new Date(Date.UTC(y,mo,0)).getUTCDate(),lead=first.getUTCDay(),tot=0,nd=0,wins=0,h='';
+    ['Sun','Mon','Tue','Wed','Thu','Fri','Sat','Week'].forEach(function(n){h+='<div class="dh">'+n+'</div>'});
+    var cells=lead+dim,rows=Math.ceil(cells/7),wk=0,wn=0;
+    for(var i=0;i<rows*7;i++){
+      var dn=i-lead+1,ok=dn>=1&&dn<=dim,key=ok?pre+'-'+('0'+dn).slice(-2):'',e=ok?by[key]:null;
+      if(!ok)h+='<div class="d off"></div>';
+      else{var p=e?e.pnl:null;if(e){tot+=p;nd++;wk+=p;wn++;if(p>0)wins++}
+        h+='<div class="d '+(p>0?'up':p<0?'dn':'')+(key===day?' today':'')+'"><span>'+dn+'</span>'+(e?'<b class="'+(p>0?'up':p<0?'dn':'')+'">'+money(p,true).replace('$','<i class="usd" style="font-style:normal">$</i>')+'</b><span class="n">'+e.n+' trade'+(e.n===1?'':'s')+'</span>':'<span></span>')+'</div>'}
+      if(i%7===6){h+='<div class="w"><span>'+(wn?wn+' day'+(wn===1?'':'s'):'')+'</span><b class="'+(wk>0?'up':wk<0?'dn':'')+'">'+(wn?money(wk,true).replace('$','<i class="usd" style="font-style:normal">$</i>'):'--')+'</b></div>';wk=0;wn=0}}
+    $('calG').innerHTML=h;
+    $('calT').textContent=new Intl.DateTimeFormat('en-US',{timeZone:'UTC',month:'long',year:'numeric'}).format(first);
+    var m=$('calM');m.textContent='Month '+money(tot,true);m.className='mt '+(tot>0?'up':tot<0?'dn':'');
+    $('calS').textContent=nd?nd+' trading day'+(nd===1?'':'s')+' with trades, '+wins+' up, average '+money(tot/nd,true)+' per trading day':'No closed trades this month yet';
+    $('calN').textContent=(SON?'Your book only.':'Manual book only (not Sweep, ORB, ORBN, X9, FP, CSK or CDR).')+' Realized paper P&L, simulated fills; a day counts when something closed that day.'}
   function clock(){$('clk').textContent=tfs.format(new Date()).replace(/^24/,'00');list().forEach(function(p){if(p.el)fld(p,'held').textContent='held '+held(p)})}
   try{if(localStorage.getItem('sgFold')==='1'){$('sbox').classList.add('fold')}}catch(e){}
   $('sgFold').addEventListener('click',function(){var on=$('sbox').classList.toggle('fold');$('sgFold').innerHTML=on?'&#9656;':'&#9662;';try{localStorage.setItem('sgFold',on?'1':'0')}catch(e){}});
