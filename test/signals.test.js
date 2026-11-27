@@ -1,7 +1,7 @@
 /* Signal board engine (signals.js) test. Behaviour under test: five display-only signals per ticker (VWAP, 30-minute ORB, RSI(14) on 5-minute closes, EMA 9/21, first-half-hour momentum for index ETFs), each +1 / -1 / 0 / null; the row lights buy or sell only when 3 or more signals agree; null signals never count; a stale last bar never lights; and the module can never touch a network, an order or the journal. Synthetic bars, no network. Run: node test/signals.test.js */
 'use strict';
 const assert = require('assert'), fs = require('fs'), path = require('path');
-const { computeSignals, rsiWilder, ema, macdCross, bollinger, NEED, N_SIG } = require('../signals.js');
+const { computeSignals, grouped, rsiWilder, ema, macdCross, bollinger, NEED, N_SIG } = require('../signals.js');
 let pass = 0; const tests = []; const t = (n, f) => tests.push([n, f]);
 const T0 = Date.parse('2026-11-27T14:30:00Z'); // 9:30 ET
 /* n one-minute bars from 9:30 ET on `day`; px(i) gives the close of bar i; high/low = close +/- 0.05 */
@@ -51,6 +51,17 @@ t('light rule (7 signals): buy needs 4 or more at +1, sell needs 4 or more at -1
   const four = sig(mk(D, 36, i => 100 + i * 0.1)); assert.deepStrictEqual([four.sigs.macd.v, four.nBuy, four.state], [1, 4, 'buy'], 'the 4th signal arrives: lights');
   const early = sig(mk(D, 28, i => 100 + i * 0.1)); assert.deepStrictEqual([early.sigs.vwap.v, early.sigs.ema.v, early.nBuy, early.state], [1, 1, 2, 'none'], 'only 2 signals are up and the rest are null: dark');
   assert.strictEqual(sig(mk(D, 120, () => 100)).state, 'none', 'flat day');
+});
+t('grouped read: TREND (vwap, orb, ema, macd; 3 of 4) qualified by STRETCH (rsi, bb): buy/sell clean, late when stretched the same way, watch when trend is split but stretched, none otherwise; stale is none', () => {
+  const sg = (vwap, orb, ema, macd, rsi, bb) => ({ vwap: { v: vwap }, orb: { v: orb }, ema: { v: ema }, macd: { v: macd }, rsi: { v: rsi }, bb: { v: bb } }), g = (a, stale) => grouped(sg(...a), stale);
+  assert.deepStrictEqual([g([1, 1, 1, 1, 0, 0]).status, g([1, 1, 1, 0, 0, 0]).status, g([1, 1, 1, 0, 0, 0]).n, g([1, 1, 0, 0, 0, 0]).status], ['buy', 'buy', 3, 'none'], '3 of 4 sets the trend, 2 of 4 does not');
+  assert.deepStrictEqual([g([-1, -1, -1, 0, 0, 0]).status, g([1, 1, 1, 1, -1, 0]).status, g([1, 1, 1, 1, 0, -1]).status, g([-1, -1, -1, -1, 1, 0]).status], ['sell', 'late', 'late', 'late'], 'stretched the same way as the trend = late');
+  assert.deepStrictEqual([g([1, 1, 1, 1, 1, 0]).status, g([-1, -1, -1, -1, -1, 0]).status], ['buy', 'sell'], 'stretched AGAINST the trend (oversold in an uptrend) is not late');
+  assert.deepStrictEqual([g([1, 0, -1, 0, -1, 0]).status, g([0, 0, 0, 0, 1, 0]).status, g([0, 0, 0, 0, 0, 0]).status, g([1, -1, 1, -1, 0, 0]).dir], ['watch', 'watch', 'none', 0], 'split trend + stretched = watch');
+  assert.strictEqual(g([1, 1, 1, 1, 0, 0], true).status, 'none', 'stale never lights'); assert.deepStrictEqual([g([1, 1, 1, 1, -1, 1]).ext, g([0, 0, 0, 0, -1, 0]).ext, g([0, 0, 0, 0, 1, 0]).ext, g([0, 0, 0, 0, 0, 0]).ext], ['both', 'up', 'down', 'none']);
+  assert.strictEqual(g([1, 1, null, 1, null, null]).status, 'buy', 'a null signal never counts against the trend, and a null stretch is not stretched');
+  const r = sig(mk(D, 36, i => 100 + i * 0.1)); assert.deepStrictEqual([r.grp.status, r.grp.dir, r.grp.n, r.grp.ext], ['buy', 1, 4, 'none'], 'wired into computeSignals: at 36 rising bars vwap, orb, ema and macd are all up; rsi and bb are not available yet');
+  assert.strictEqual(computeSignals([], {}).grp.status, 'none');
 });
 t('stale last bar (older than 5 minutes) never lights and is flagged; no bars or one bar is a dark flagged row', () => {
   const b = mk(D, 120, i => 100 + i * 0.1), s = computeSignals(b, { now: b[b.length - 1].t + 60000 + 6 * 60000 }); assert.deepStrictEqual([s.state, s.stale], ['none', true]);

@@ -1575,7 +1575,7 @@ async function ensureBars(list) {
   if (!S.connected || marketOpen(Date.now())) return;
   await Promise.all(list.map(async s => { const e = ENS[s] = ENS[s] || { at: 0 }; if (P.raw[s] && Date.now() - e.at < 60000) return; e.at = Date.now(); try { await pBars(s); } catch (x) { e.err = String((x && (x.code || x.message)) || x).slice(0, 80); } }));
 }
-/* SIGNAL BOARD (James 2026-11-27): display-only table of the 10 manual tickers, seven signals each (signals.js; MACD and Bollinger added 2026-11-27 on James's "add all 7"), a row lights buy/sell when 4 of 7 agree. It never places or influences an order, never touches another book, runs in its own try/catch every 60 s while the market is open, and journals every light change in r.sgk (capped at 400 per day) so a later read-only study can measure hit rate net of spread. Not a validated strategy: see docs/DECISIONS.md 2026-11-27. */
+/* SIGNAL BOARD (James 2026-11-27): display-only table of the 10 manual tickers, seven signals each (signals.js; MACD and Bollinger added 2026-11-27 on James's "add all 7"), each row shows a grouped read: TREND (VWAP, ORB, EMA, MACD; 3 of 4 sets a direction) qualified by STRETCH (RSI, Bollinger) as BUY/SELL (clean), LATE or WATCH (grouped design agreed with James 2026-11-27 from the bt38 contradiction finding). The journal r.sgk records every grouped-status change. It never places or influences an order, never touches another book, runs in its own try/catch every 60 s while the market is open, and journals every light change in r.sgk (capped at 400 per day) so a later read-only study can measure hit rate net of spread. Not a validated strategy: see docs/DECISIONS.md 2026-11-27. */
 const SigEng = require('./signals.js');
 async function sigTick() {
   if (P.sgBusy || !S.connected || !P.rec || !marketOpen(Date.now())) return;
@@ -1584,17 +1584,17 @@ async function sigTick() {
     let changed = false;
     for (const sym of MAN.syms) {
       try {
-        const r = SigEng.computeSignals(await pBars(sym), { index: MAN.idx.includes(sym) }), prev = P.sg[sym] && P.sg[sym].state; P.sg[sym] = r;
-        if (prev !== undefined && prev !== r.state && P.rec) {
-          const k = P.rec.sgk = P.rec.sgk || []; k.push({ t: Date.now(), sym, from: prev, to: r.state, nb: r.nBuy, ns: r.nSell, px: r.px, v: ['vwap', 'orb', 'rsi', 'ema', 'ihh', 'macd', 'bb'].map(n => r.sigs[n].v) });
+        const r = SigEng.computeSignals(await pBars(sym), { index: MAN.idx.includes(sym) }), prev = P.sg[sym] && P.sg[sym].grp && P.sg[sym].grp.status; P.sg[sym] = r;
+        if (prev !== undefined && prev !== r.grp.status && P.rec) {
+          const k = P.rec.sgk = P.rec.sgk || []; k.push({ t: Date.now(), sym, from: prev, to: r.grp.status, nb: r.nBuy, ns: r.nSell, tn: r.grp.n, ext: r.grp.ext, px: r.px, v: ['vwap', 'orb', 'rsi', 'ema', 'ihh', 'macd', 'bb'].map(n => r.sigs[n].v) });
           if (k.length > 400) k.splice(0, k.length - 400); changed = true;
         }
-      } catch (err) { P.sg[sym] = Object.assign({}, P.sg[sym] || { state: 'none', sigs: {} }, { stale: true, state: 'none', why: 'data error: ' + String((err && (err.code || err.message)) || err).slice(0, 60) }); }
+      } catch (err) { P.sg[sym] = Object.assign({}, P.sg[sym] || { state: 'none', sigs: {} }, { stale: true, state: 'none', grp: { dir: 0, n: 0, tb: 0, ts: 0, ext: 'none', status: 'none' }, why: 'data error: ' + String((err && (err.code || err.message)) || err).slice(0, 60) }); }
     }
     P.sgAt = Date.now(); if (changed) saveRec();
   } catch (err) { P.sgErr = String((err && err.message) || err).slice(0, 120); } finally { P.sgBusy = false; }
 }
-function sigOut() { return { at: P.sgAt || null, need: SigEng.NEED, syms: MAN.syms, idx: MAN.idx, rows: P.sg || {} }; }
+function sigOut() { return { at: P.sgAt || null, need: SigEng.NEED, trendNeed: SigEng.TREND_NEED, syms: MAN.syms, idx: MAN.idx, rows: P.sg || {} }; }
 async function cityData(want) {
   await ensureBars(CFG.syms);
   const bars = {}; CFG.syms.forEach(s => { bars[s] = bars5(s); });

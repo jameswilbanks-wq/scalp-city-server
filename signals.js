@@ -12,7 +12,7 @@
    7 bb    : Bollinger Bands (20, 2 standard deviations) on completed 5-minute closes: close below the lower band = +1 (oversold lean), above the upper band = -1, inside = 0; null until 20 five-minute closes. Mean-reversion by design, like RSI.
    Light: buy when 4 or more of the 7 signals are +1, sell when 4 or more are -1, else none (a signal that is null never counts). 4 of 7 is a majority; it replaces "3 of 5" for the 7-signal board (scaled by Claude, not tuned: James can change it). */
 'use strict';
-const NEED = 4, N_SIG = 7, RSI_N = 14, EMA_F = 9, EMA_S = 21, ORB_END = 600, STALE_MS = 5 * 60000, BB_N = 20, BB_K = 2, MACD_F = 12, MACD_S = 26, MACD_G = 9;
+const NEED = 4, N_SIG = 7, RSI_N = 14, EMA_F = 9, EMA_S = 21, ORB_END = 600, STALE_MS = 5 * 60000, TREND = ['vwap', 'orb', 'ema', 'macd'], TREND_NEED = 3, BB_N = 20, BB_K = 2, MACD_F = 12, MACD_S = 26, MACD_G = 9;
 function ema(vals, n) { const k = 2 / (n + 1); let e = null; for (let i = 0; i < vals.length; i++) e = e === null ? vals[i] : vals[i] * k + e * (1 - k); return e; }
 function rsiWilder(closes, n) {
   if (closes.length < n + 1) return null;
@@ -40,9 +40,16 @@ function fiveMin(bars, lastT) { // completed 5-minute closes (the bucket still f
   Object.keys(seen).map(Number).sort((a, b) => a - b).forEach(k => { if ((k + 1) * 300000 <= lastT + 60000) out.push(seen[k][seen[k].length - 1].c); });
   return out;
 }
+/* Grouped read (James 2026-11-27, display only): TREND = vwap, orb, ema, macd (3 or more of 4 agreeing sets a direction); STRETCH = rsi or bb (oversold/overbought) never votes, it only qualifies the trend. status: buy/sell = clean trend, late = trend agrees but price is already stretched the same way, watch = trend split but stretched, none otherwise; stale = none. */
+function grouped(sigs, stale) {
+  const tr = TREND.map(k => sigs[k].v), tb = tr.filter(v => v === 1).length, ts = tr.filter(v => v === -1).length, dir = tb >= TREND_NEED ? 1 : ts >= TREND_NEED ? -1 : 0;
+  const eu = sigs.rsi.v === -1 || sigs.bb.v === -1, ed = sigs.rsi.v === 1 || sigs.bb.v === 1, ext = eu && ed ? 'both' : eu ? 'up' : ed ? 'down' : 'none';
+  let status = 'none'; if (!stale) { if (dir === 1 && !eu) status = 'buy'; else if (dir === -1 && !ed) status = 'sell'; else if ((dir === 1 && eu) || (dir === -1 && ed)) status = 'late'; else if (dir === 0 && (eu || ed)) status = 'watch'; }
+  return { dir, n: dir === 1 ? tb : dir === -1 ? ts : Math.max(tb, ts), tb, ts, ext, status };
+}
 function computeSignals(bars, opts) {
   opts = opts || {}; const now = opts.now || Date.now(), isIndex = !!opts.index;
-  const blank = (why) => ({ state: 'none', nBuy: 0, nSell: 0, nUse: 0, sigs: { vwap: { v: null, why }, orb: { v: null, why }, rsi: { v: null, why }, ema: { v: null, why }, ihh: { v: null, why }, macd: { v: null, why }, bb: { v: null, why } }, px: null, asOf: null, stale: true, why });
+  const blank = (why) => ({ state: 'none', nBuy: 0, nSell: 0, nUse: 0, grp: { dir: 0, n: 0, tb: 0, ts: 0, ext: 'none', status: 'none' }, sigs: { vwap: { v: null, why }, orb: { v: null, why }, rsi: { v: null, why }, ema: { v: null, why }, ihh: { v: null, why }, macd: { v: null, why }, bb: { v: null, why } }, px: null, asOf: null, stale: true, why });
   if (!bars || bars.length < 2) return blank('no bars yet');
   const last = bars[bars.length - 1], today = bars.filter(b => b.day === last.day);
   if (!today.length) return blank('no bars today');
@@ -72,6 +79,7 @@ function computeSignals(bars, opts) {
   { const bb = bollinger(fm); sigs.bb = bb === null ? { v: null, why: 'needs ' + BB_N + ' five-minute bars' } : { v: bb.v, why: 'close ' + bb.c.toFixed(2) + ' vs bands ' + bb.lo.toFixed(2) + ' to ' + bb.hi.toFixed(2) }; }
   const vals = Object.keys(sigs).map(k => sigs[k].v), nBuy = vals.filter(v => v === 1).length, nSell = vals.filter(v => v === -1).length, nUse = vals.filter(v => v !== null).length;
   const state = stale ? 'none' : nBuy >= NEED ? 'buy' : nSell >= NEED ? 'sell' : 'none';
-  return { state, nBuy, nSell, nUse, sigs, px: last.c, asOf: last.t, stale, why: stale ? 'quote older than 5 minutes' : '' };
+  const grp = grouped(sigs, stale);
+  return { state, nBuy, nSell, nUse, grp, sigs, px: last.c, asOf: last.t, stale, why: stale ? 'quote older than 5 minutes' : '' };
 }
-module.exports = { computeSignals, rsiWilder, ema, macdCross, bollinger, NEED, N_SIG };
+module.exports = { computeSignals, grouped, TREND_NEED, rsiWilder, ema, macdCross, bollinger, NEED, N_SIG };
