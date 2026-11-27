@@ -228,3 +228,6 @@ Reason: bt38 showed the trend signals (VWAP, ORB, EMA, MACD) largely repeat each
 
 ## 2026-11-27 — SERVER button moved to the bottom right under BOARD (James: "can you push the 'server' button to the bottom right underneath the 'board' button...push this now. no need to ask me to push.")
 Layout only (`public/city.html`: `#srvBtn` and `#app.web #srvBtn` now `right:16px; bottom:54px`, BOARD stays at `bottom:96px`). No server logic changed. Pushed with positions open by James's explicit instruction.
+
+## 2026-11-27 — Fix: SERVER button unclickable (James: "now the server button isn't responding. it seems to be hidden behind the daily scoreboard numbers")
+Cause (verified by hit-test in a mock render): the full-width bottom strip (`.strip`, "daily realized P&L" tiles, `bottom:0`) comes after the buttons in the page, so it painted over and swallowed clicks on the lower part of the SERVER button now at `bottom:54px` (and all of it whenever the strip is taller). My earlier mock had an empty strip so I missed it. Fix: `#srvBtn{z-index:6}` and `.strip` right padding 130px so the tiles do not run under the button. Layout only.
