@@ -1,7 +1,7 @@
 /* Signal board engine (signals.js) test. Behaviour under test: five display-only signals per ticker (VWAP, 30-minute ORB, RSI(14) on 5-minute closes, EMA 9/21, first-half-hour momentum for index ETFs), each +1 / -1 / 0 / null; the row lights buy or sell only when 3 or more signals agree; null signals never count; a stale last bar never lights; and the module can never touch a network, an order or the journal. Synthetic bars, no network. Run: node test/signals.test.js */
 'use strict';
 const assert = require('assert'), fs = require('fs'), path = require('path');
-const { computeSignals, rsiWilder, ema, NEED } = require('../signals.js');
+const { computeSignals, rsiWilder, ema, macdCross, bollinger, NEED, N_SIG } = require('../signals.js');
 let pass = 0; const tests = []; const t = (n, f) => tests.push([n, f]);
 const T0 = Date.parse('2026-11-27T14:30:00Z'); // 9:30 ET
 /* n one-minute bars from 9:30 ET on `day`; px(i) gives the close of bar i; high/low = close +/- 0.05 */
@@ -33,11 +33,22 @@ t('first half hour (index ETFs only): prior close to the 10:00 price; null for a
   assert.strictEqual(sig(prev.concat(mk(D, 40, () => 99)), { index: true }).sigs.ihh.v, -1);
   assert.strictEqual(sig(prev.concat(mk(D, 20, () => 101)), { index: true }).sigs.ihh.v, null, 'before 10:00'); assert.strictEqual(sig(td, { index: true }).sigs.ihh.v, null, 'no prior day');
 });
-t('light rule: buy needs 3 or more signals at +1, sell needs 3 or more at -1; 2 of 5 stays dark; null signals never count', () => {
-  assert.strictEqual(NEED, 3);
-  const prev = mk('2026-11-26', 390, () => 100, { base: T0 - 86400000 });
-  const r = sig(prev.concat(mk(D, 120, i => 100 + i * 0.1)), { index: true }); assert.deepStrictEqual([r.sigs.vwap.v, r.sigs.orb.v, r.sigs.rsi.v, r.sigs.ema.v, r.sigs.ihh.v], [1, 1, -1, 1, 1]); assert.deepStrictEqual([r.nBuy, r.nSell, r.state], [4, 1, 'buy']);
-  const d = sig(prev.concat(mk(D, 120, i => 100 - i * 0.1)), { index: true }); assert.deepStrictEqual([d.sigs.vwap.v, d.sigs.orb.v, d.sigs.rsi.v, d.sigs.ema.v, d.sigs.ihh.v], [-1, -1, 1, -1, -1]); assert.deepStrictEqual([d.nBuy, d.nSell, d.state], [1, 4, 'sell']);
+t('MACD 12/26/9: rising = +1, falling = -1, null with fewer than 35 closes; a flat series has MACD equal to its signal = 0', () => {
+  assert.strictEqual(macdCross(Array.from({ length: 60 }, (_, i) => 100 + i * 0.1)).v, 1); assert.strictEqual(macdCross(Array.from({ length: 60 }, (_, i) => 100 - i * 0.1)).v, -1); assert.strictEqual(macdCross(Array(60).fill(100)).v, 0); assert.strictEqual(macdCross(Array(34).fill(100)), null);
+  assert.strictEqual(sig(mk(D, 34, i => 100 + i * 0.1)).sigs.macd.v, null); assert.strictEqual(sig(mk(D, 36, i => 100 + i * 0.1)).sigs.macd.v, 1);
+});
+t('Bollinger (20, 2 sd) on completed 5-minute closes: below the lower band = +1 (oversold), above the upper band = -1, inside = 0, null before 20 closes', () => {
+  const flat = Array(19).fill(100), a = bollinger(flat.concat([90])), b = bollinger(flat.concat([110])), c = bollinger(flat.concat([100.0])); assert.deepStrictEqual([a.v, b.v, c.v], [1, -1, 0]); assert.strictEqual(bollinger(Array(19).fill(100)), null);
+  assert.strictEqual(sig(mk(D, 60, () => 100)).sigs.bb.v, null, '12 five-minute closes'); assert.strictEqual(sig(mk(D, 130, i => 100 + (i % 10) * 0.01)).sigs.bb.v, 0, 'inside the bands'); assert.ok(/bands/.test(sig(mk(D, 130, i => 100 + (i % 10) * 0.01)).sigs.bb.why));
+  const crash = n => sig(mk(D, n, i => (i < 125 ? 100 + (i % 10) * 0.01 : 90))).sigs.bb.v; assert.strictEqual(crash(128), 0, 'the five-minute bucket still forming is not used: the crash is not in the bands yet'); assert.strictEqual(crash(130), 1, 'once that bucket completes the close is below the lower band');
+});
+t('light rule (7 signals): buy needs 4 or more at +1, sell needs 4 or more at -1; 3 of 7 stays dark; null signals never count', () => {
+  assert.deepStrictEqual([NEED, N_SIG], [4, 7]);
+  const prev = mk('2026-11-26', 390, () => 100, { base: T0 - 86400000 }), K = ['vwap', 'orb', 'rsi', 'ema', 'ihh', 'macd', 'bb'], vs = x => K.map(k => x.sigs[k].v);
+  const r = sig(prev.concat(mk(D, 120, i => 100 + i * 0.1)), { index: true }); assert.deepStrictEqual(vs(r), [1, 1, -1, 1, 1, 1, 0]); assert.deepStrictEqual([r.nBuy, r.nSell, r.nUse, r.state], [5, 1, 7, 'buy']);
+  const d = sig(prev.concat(mk(D, 120, i => 100 - i * 0.1)), { index: true }); assert.deepStrictEqual(vs(d), [-1, -1, 1, -1, -1, -1, 0]); assert.deepStrictEqual([d.nBuy, d.nSell, d.state], [1, 5, 'sell']);
+  const three = sig(mk(D, 34, i => 100 + i * 0.1)); assert.deepStrictEqual([three.sigs.vwap.v, three.sigs.orb.v, three.sigs.ema.v, three.sigs.macd.v, three.nBuy, three.state], [1, 1, 1, null, 3, 'none'], 'exactly 3 of 7: dark');
+  const four = sig(mk(D, 36, i => 100 + i * 0.1)); assert.deepStrictEqual([four.sigs.macd.v, four.nBuy, four.state], [1, 4, 'buy'], 'the 4th signal arrives: lights');
   const early = sig(mk(D, 28, i => 100 + i * 0.1)); assert.deepStrictEqual([early.sigs.vwap.v, early.sigs.ema.v, early.nBuy, early.state], [1, 1, 2, 'none'], 'only 2 signals are up and the rest are null: dark');
   assert.strictEqual(sig(mk(D, 120, () => 100)).state, 'none', 'flat day');
 });

@@ -45,15 +45,15 @@ function load(sym) {
 const f2 = x => (x === undefined || x === null || Number.isNaN(x)) ? '   n/a' : (x >= 0 ? '+' : '') + x.toFixed(2);
 const cell = e => !e || !e.n ? 'n=0' : 'n=' + e.n + ' mean ' + f2(e.mean) + 'bp hit ' + e.hit.toFixed(1) + '%' + (e.lo !== undefined ? ' CI[' + f2(e.lo) + ',' + f2(e.hi) + ']' : '') + ' net1.0 ' + f2(e.netOpt);
 function show(res) {
-  for (const sym of Object.keys(res.syms)) for (const per of ['dev', 'hold', 'full']) {
-    const a = res.syms[sym][per]; if (!a) continue; console.log('\n=== ' + sym + ' ' + per + ' (' + a.nSlots + ' decision points; unconditional mean at 30 min ' + f2(a.base['30']) + ' bp) ===');
-    for (const h of ['15', '30', '60', 'close']) console.log('H' + h.padEnd(5) + ' light: ' + cell(a.light[h]) + '\n       weak (k=1,2): ' + cell(a.weak[h]) + '\n       5 of 5 buy: ' + cell(a.five[h].buy) + ' | sell: ' + cell(a.five[h].sell));
-    console.log('Ladder at 30 min (exactly k signals agree):'); for (let k = 0; k <= 5; k++) console.log('  k=' + k + '  buy ' + cell(a.ladder.buy[k]['30']) + '\n       sell ' + cell(a.ladder.sell[k]['30']));
-    console.log('Single signals at 30 min:'); for (const n of study.NAMES) console.log('  ' + n.padEnd(5) + ' +1: ' + cell(a.single[n]['30'].buy) + ' | -1: ' + cell(a.single[n]['30'].sell));
-    console.log('Gradient (Spearman k vs mean excess, 30 min): buy ' + f2(a.gradient.buy['30'].rho) + ' sell ' + f2(a.gradient.sell['30'].rho) + ' | mean pairwise correlation ' + f2(a.corr.mean) + ', effective independent signals ' + (a.corr.neff === null ? 'n/a' : a.corr.neff.toFixed(2)) + ' of 5');
+  for (const sym of Object.keys(res.syms)) for (const sn of Object.keys(res.syms[sym])) for (const per of ['dev', 'hold', 'full']) {
+    const a = res.syms[sym][sn][per]; if (!a) continue; const n = a.set.n; console.log('\n=== ' + sym + ' ' + sn.toUpperCase() + ' (' + n + ' signals, light at ' + a.set.need + ') ' + per + ' (' + a.nSlots + ' decision points; unconditional mean at 30 min ' + f2(a.base['30']) + ' bp) ===');
+    for (const h of ['15', '30', '60', 'close']) console.log('H' + h.padEnd(5) + ' light: ' + cell(a.light[h]) + '\n       weak (1 to ' + (a.set.need - 1) + ' agree): ' + cell(a.weak[h]) + '\n       ' + n + ' of ' + n + ' buy: ' + cell(a.all[h].buy) + ' | sell: ' + cell(a.all[h].sell));
+    console.log('Ladder at 30 min (exactly k signals agree):'); for (let k = 0; k <= n; k++) console.log('  k=' + k + '  buy ' + cell(a.ladder.buy[k]['30']) + '\n       sell ' + cell(a.ladder.sell[k]['30']));
+    console.log('Single signals at 30 min:'); for (const nm of Object.keys(a.single)) console.log('  ' + nm.padEnd(5) + ' +1: ' + cell(a.single[nm]['30'].buy) + ' | -1: ' + cell(a.single[nm]['30'].sell));
+    console.log('Gradient (Spearman k vs mean excess, 30 min): buy ' + f2(a.gradient.buy['30'].rho) + ' sell ' + f2(a.gradient.sell['30'].rho) + ' | mean pairwise correlation ' + f2(a.corr.mean) + ', effective independent signals ' + (a.corr.neff === null ? 'n/a' : a.corr.neff.toFixed(2)) + ' of ' + n);
     if (a.null && a.null['30']) console.log('C1 shifted null for the light, 30 min: 2.5% ' + f2(a.null['30'].p025) + ' median ' + f2(a.null['30'].p50) + ' 97.5% ' + f2(a.null['30'].p975));
   }
-  if (res.verdict) { console.log('\nVERDICT: ' + res.verdict.label + (res.verdict.failed.length ? ' (failed criteria: ' + res.verdict.failed.join(', ') + ')' : '')); res.verdict.criteria.forEach(c => console.log('  ' + (c.ok ? 'PASS' : 'FAIL') + ' ' + c.id + '. ' + c.text)); }
+  for (const [k, title] of [['verdict', 'VERDICT (PRIMARY: SPY, all 7 signals, light at 4)'], ['verdict5', 'REPLICATION VERDICT (SPY, the original 5 signals, light at 3)']]) { const v = res[k]; if (!v) continue; console.log('\n' + title + ': ' + v.label + (v.failed.length ? ' (failed criteria: ' + v.failed.join(', ') + ')' : '')); v.criteria.forEach(c => console.log('  ' + (c.ok ? 'PASS' : 'FAIL') + ' ' + c.id + '. ' + c.text)); }
 }
 
 (async () => {

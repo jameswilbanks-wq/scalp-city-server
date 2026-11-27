@@ -1,11 +1,13 @@
-/* bt38 signal confluence study. RESEARCH ONLY: pure functions, no network, no env, no orders, no kv. Spec: docs/signal-confluence-spec.md (frozen before any data was fetched).
-   Question: does the forward SPY/QQQ move improve, in the signal's direction, as more of the five signal-board signals agree? It runs the PRODUCTION engine (signals.js computeSignals) on historical 1-minute bars.
+/* bt38 signal confluence study. RESEARCH ONLY: pure functions, no network, no env, no orders, no kv. Spec: docs/signal-confluence-spec.md (frozen before any data was fetched; amended 2026-11-27 BEFORE any result existed to cover the 7-signal board).
+   Question: does the forward SPY/QQQ move improve, in the signal's direction, as more of the signal-board signals agree? It runs the PRODUCTION engine (signals.js computeSignals) on historical 1-minute bars.
+   Two signal sets are analysed from the same decision points: S7 = all seven board signals, light at 4 or more agreeing (PRIMARY); S5 = the original first five signals, light at 3 or more (replication of the board that ran on 2026-11-27).
    Input per symbol: raw columns {t:[ms bar start], o:[], h:[], l:[], c:[], v:[]} (Alpaca SIP, adjustment=all). Outcome = underlying move in basis points; option P&L is NOT modelled (spec section 5). */
 'use strict';
 const { computeSignals } = require('./signals.js');
 
 const SPLIT = '2023-12-31', OPEN = 570, CLOSE = 960, WARM_DAYS = 5, WIN_DAYS = 3, SLOT_FROM = 600, SLOT_STEP = 5, TAIL = 30, MIN_N = 300;
-const HZ = ['15', '30', '60', 'close'], HMIN = { '15': 15, '30': 30, '60': 60 }, NAMES = ['vwap', 'orb', 'rsi', 'ema', 'ihh'];
+const HZ = ['15', '30', '60', 'close'], HMIN = { '15': 15, '30': 30, '60': 60 }, NAMES = ['vwap', 'orb', 'rsi', 'ema', 'ihh', 'macd', 'bb'];
+const SETS = { s7: { n: 7, need: 4, idx: [0, 1, 2, 3, 4, 5, 6] }, s5: { n: 5, need: 3, idx: [0, 1, 2, 3, 4] } };
 const COST_UND = 0.3, COST_OPT = 1.0, COST_OPT_STRESS = 2.0; // bp of price, round trip; stated assumptions (spec section 5)
 
 /* ---------- time: US Eastern from the DST rule ---------- */
@@ -35,7 +37,7 @@ function prep(raw, opts) {
   return { bars, days, closeMin, dq };
 }
 
-/* ---------- collect: one record per decision point ---------- */
+/* ---------- collect: one record per decision point (the 7-signal vector; set views are derived later) ---------- */
 function collect(P) {
   const { bars, days, closeMin } = P, recs = [];
   for (let di = Math.max(WARM_DAYS, WIN_DAYS); di < days.length; di++) {
@@ -45,10 +47,14 @@ function collect(P) {
       const j = byMin[m]; if (j === undefined || j + 1 > D.end) continue;
       const s = computeSignals(bars.slice(from, j + 1), { index: true, now: bars[j].t + 90000 }), entry = bars[j + 1].o, r = {};
       HZ.forEach(h => { const x = h === 'close' ? D.end : Math.min(j + HMIN[h], D.end); r[h] = (bars[x].c / entry - 1) * 1e4; });
-      recs.push({ di, day: D.day, m, v: NAMES.map(n => s.sigs[n].v), nb: s.nBuy, ns: s.nSell, st: s.state, r });
+      recs.push({ di, day: D.day, m, v: NAMES.map(n => s.sigs[n].v), r });
     }
   }
   return recs;
+}
+/* a set view: counts of +1 / -1 among the set's signals and the light state (null signals never count) */
+function view(recs, set) {
+  return recs.map(r => { let nb = 0, ns = 0; set.idx.forEach(i => { if (r.v[i] === 1) nb++; else if (r.v[i] === -1) ns++; }); return { di: r.di, day: r.day, m: r.m, v: set.idx.map(i => r.v[i]), r: r.r, nb, ns, st: nb >= set.need ? 'buy' : ns >= set.need ? 'sell' : 'none' }; });
 }
 
 /* ---------- statistics ---------- */
@@ -73,14 +79,14 @@ function spearman(xs, ys) {
   if (xs.length < 3) return null; const rk = a => { const o = a.map((v, i) => [v, i]).sort((p, q) => p[0] - q[0]), r = Array(a.length); o.forEach((p, k) => { r[p[1]] = k + 1; }); return r; };
   const a = rk(xs), b = rk(ys), ma = mean(a), mb = mean(b); let nu = 0, da = 0, db = 0; for (let i = 0; i < a.length; i++) { nu += (a[i] - ma) * (b[i] - mb); da += (a[i] - ma) ** 2; db += (b[i] - mb) ** 2; } return da && db ? nu / Math.sqrt(da * db) : null;
 }
-function corrMatrix(recs) {
-  const M = NAMES.map(() => NAMES.map(() => null)); let sum = 0, cnt = 0;
-  for (let a = 0; a < 5; a++) for (let b = a + 1; b < 5; b++) {
+function corrMatrix(recs, names) {
+  const n = names.length, M = names.map(() => names.map(() => null)); let sum = 0, cnt = 0;
+  for (let a = 0; a < n; a++) for (let b = a + 1; b < n; b++) {
     const xs = [], ys = []; recs.forEach(r => { if (r.v[a] !== null && r.v[b] !== null) { xs.push(r.v[a]); ys.push(r.v[b]); } });
     const ma = mean(xs), mb = mean(ys); let nu = 0, da = 0, db = 0; for (let i = 0; i < xs.length; i++) { nu += (xs[i] - ma) * (ys[i] - mb); da += (xs[i] - ma) ** 2; db += (ys[i] - mb) ** 2; }
     const c = da && db ? nu / Math.sqrt(da * db) : null; M[a][b] = M[b][a] = c; if (c !== null) { sum += c; cnt++; }
   }
-  const mc = cnt ? sum / cnt : null; return { names: NAMES, m: M, mean: mc, neff: mc === null ? null : 5 / (1 + 4 * Math.max(0, mc)) };
+  const mc = cnt ? sum / cnt : null; return { names, m: M, mean: mc, neff: mc === null ? null : n / (1 + (n - 1) * Math.max(0, mc)) };
 }
 /* C1: circularly shift whole sessions of the signal vectors against the outcomes; the null for the pooled "light" excess */
 function shiftNull(recs, h, base, draws, seed) {
@@ -94,18 +100,19 @@ function shiftNull(recs, h, base, draws, seed) {
   dist.sort((x, y) => x - y); return { draws, p975: pct(dist, 0.975), p50: pct(dist, 0.5), p025: pct(dist, 0.025) };
 }
 
-function analyse(recs, draws, seed) {
-  const out = { nSlots: recs.length, base: {}, ladder: { buy: {}, sell: {} }, light: {}, weak: {}, five: {}, single: {}, corr: corrMatrix(recs), gradient: {}, null: {} };
+/* analyse one set over one period; recs are set views (nb, ns, st, v of the set) */
+function analyse(recs, set, draws, seed) {
+  const out = { nSlots: recs.length, set: { n: set.n, need: set.need }, base: {}, ladder: { buy: {}, sell: {} }, light: {}, weak: {}, all: {}, single: {}, corr: corrMatrix(recs, set.idx.map(i => NAMES[i])), gradient: {}, null: {} };
   HZ.forEach(h => { out.base[h] = mean(recs.map(r => r.r[h])); });
-  const sub = f => recs.filter(f);
+  const sub = f => recs.filter(f), weakLo = 1, weakHi = set.need - 1;
   HZ.forEach(h => {
     const b = out.base[h], lightP = [], weakP = [];
-    recs.forEach(r => { if (r.st === 'buy') lightP.push([r, 1]); else if (r.st === 'sell') lightP.push([r, -1]); if (r.nb === 1 || r.nb === 2) weakP.push([r, 1]); if (r.ns === 1 || r.ns === 2) weakP.push([r, -1]); });
+    recs.forEach(r => { if (r.st === 'buy') lightP.push([r, 1]); else if (r.st === 'sell') lightP.push([r, -1]); if (r.nb >= weakLo && r.nb <= weakHi) weakP.push([r, 1]); if (r.ns >= weakLo && r.ns <= weakHi) weakP.push([r, -1]); });
     out.light[h] = excess(lightP, h, b, draws, seed + 1); out.weak[h] = excess(weakP, h, b, draws, seed + 2);
-    out.five[h] = { buy: excess(sub(r => r.nb === 5).map(r => [r, 1]), h, b, draws, seed + 3), sell: excess(sub(r => r.ns === 5).map(r => [r, -1]), h, b, draws, seed + 4) };
-    for (let k = 0; k <= 5; k++) { (out.ladder.buy[k] = out.ladder.buy[k] || {})[h] = excess(sub(r => r.nb === k).map(r => [r, 1]), h, b, draws, seed + 10 + k); (out.ladder.sell[k] = out.ladder.sell[k] || {})[h] = excess(sub(r => r.ns === k).map(r => [r, -1]), h, b, draws, seed + 20 + k); }
-    NAMES.forEach((nm, i) => { (out.single[nm] = out.single[nm] || {})[h] = { buy: excess(sub(r => r.v[i] === 1).map(r => [r, 1]), h, b, 0, 0), sell: excess(sub(r => r.v[i] === -1).map(r => [r, -1]), h, b, 0, 0) }; });
-    ['buy', 'sell'].forEach(side => { const ks = [], ms = []; for (let k = 1; k <= 5; k++) { const e = out.ladder[side][k][h]; if (e && e.n >= 30) { ks.push(k); ms.push(e.mean); } } (out.gradient[side] = out.gradient[side] || {})[h] = { rho: spearman(ks, ms), ks }; });
+    out.all[h] = { buy: excess(sub(r => r.nb === set.n).map(r => [r, 1]), h, b, draws, seed + 3), sell: excess(sub(r => r.ns === set.n).map(r => [r, -1]), h, b, draws, seed + 4) };
+    for (let k = 0; k <= set.n; k++) { (out.ladder.buy[k] = out.ladder.buy[k] || {})[h] = excess(sub(r => r.nb === k).map(r => [r, 1]), h, b, draws, seed + 10 + k); (out.ladder.sell[k] = out.ladder.sell[k] || {})[h] = excess(sub(r => r.ns === k).map(r => [r, -1]), h, b, draws, seed + 30 + k); }
+    set.idx.forEach((gi, i) => { const nm = NAMES[gi]; (out.single[nm] = out.single[nm] || {})[h] = { buy: excess(sub(r => r.v[i] === 1).map(r => [r, 1]), h, b, 0, 0), sell: excess(sub(r => r.v[i] === -1).map(r => [r, -1]), h, b, 0, 0) }; });
+    ['buy', 'sell'].forEach(side => { const ks = [], ms = []; for (let k = 1; k <= set.n; k++) { const e = out.ladder[side][k][h]; if (e && e.n >= 30) { ks.push(k); ms.push(e.mean); } } (out.gradient[side] = out.gradient[side] || {})[h] = { rho: spearman(ks, ms), ks }; });
   });
   return out;
 }
@@ -119,20 +126,28 @@ function verdict(spy) {
   c.push({ id: 3, text: 'dev bootstrap 95% lower bound > 0', ok: dev.lo > 0, lo: dev.lo, hi: dev.hi });
   c.push({ id: 4, text: 'mean excess minus ' + COST_OPT + ' bp option-equivalent cost > 0 in dev and holdout', ok: dev.netOpt > 0 && hold.netOpt > 0, dev: dev.netOpt, hold: hold.netOpt });
   c.push({ id: 5, text: 'dev excess above the C1 shifted-signal 97.5th percentile', ok: !!nul && dev.mean > nul.p975, dev: dev.mean, p975: nul ? nul.p975 : null });
-  c.push({ id: 6, text: 'light (k>=3) excess greater than weak (k=1 or 2) excess in dev and holdout', ok: W('dev').n > 0 && W('hold').n > 0 && dev.mean > W('dev').mean && hold.mean > W('hold').mean, devLight: dev.mean, devWeak: W('dev').mean, holdLight: hold.mean, holdWeak: W('hold').mean });
+  c.push({ id: 6, text: 'light excess greater than weak (1 to need-1 signals agree) excess in dev and holdout', ok: W('dev').n > 0 && W('hold').n > 0 && dev.mean > W('dev').mean && hold.mean > W('hold').mean, devLight: dev.mean, devWeak: W('dev').mean, holdLight: hold.mean, holdWeak: W('hold').mean });
   c.forEach(x => { if (!x.ok) fails.push(String(x.id)); });
   return { label: fails.length ? 'Not supported' : 'Supported (underlying move only)', criteria: c, failed: fails };
 }
 
-/* run: recsBySym = { SPY: [recs], QQQ: [recs] } (already collected); periods split by decision day; stage 'dev' touches no holdout record */
+/* run: recsBySym = { SPY: [recs], QQQ: [recs] } (collected 7-signal vectors); periods split by decision day; stage 'dev' touches no holdout record.
+   Result: res.syms[SYM][setName][period]; res.verdict = PRIMARY (SPY, S7); res.verdict5 = the original 5-signal board as replication. */
 function run(recsBySym, o) {
   o = o || {}; const draws = o.draws === undefined ? 2000 : o.draws, nullDraws = o.nullDraws === undefined ? 1000 : o.nullDraws, dev = o.stage === 'dev';
-  const res = { study: 'bt38', stage: o.stage || 'final', split: SPLIT, costs: { und: COST_UND, opt: COST_OPT, optStress: COST_OPT_STRESS }, draws, nullDraws, syms: {} };
+  const res = { study: 'bt38', stage: o.stage || 'final', split: SPLIT, costs: { und: COST_UND, opt: COST_OPT, optStress: COST_OPT_STRESS }, sets: SETS, draws, nullDraws, syms: {} };
   Object.keys(recsBySym).forEach(sym => {
-    const all = recsBySym[sym], d = all.filter(r => r.day <= SPLIT), h = all.filter(r => r.day > SPLIT), S = res.syms[sym] = { dev: analyse(d, draws, 1000), hold: dev ? null : analyse(h, draws, 2000), full: dev ? null : analyse(all, draws, 3000) };
-    S.dev.null['30'] = shiftNull(d, '30', S.dev.base['30'], nullDraws, 1099); if (S.hold) S.hold.null['30'] = shiftNull(h, '30', S.hold.base['30'], nullDraws, 2099);
+    const all = recsBySym[sym], parts = { dev: all.filter(r => r.day <= SPLIT), hold: all.filter(r => r.day > SPLIT), full: all }; res.syms[sym] = {};
+    Object.keys(SETS).forEach((sn, si) => {
+      const set = SETS[sn], B = res.syms[sym][sn] = {};
+      Object.keys(parts).forEach((p, pi) => {
+        if (dev && p !== 'dev') { B[p] = null; return; }
+        const rs = view(parts[p], set); B[p] = analyse(rs, set, draws, 1000 * (pi + 1) + 100 * si);
+        if (p !== 'full') B[p].null['30'] = shiftNull(rs, '30', B[p].base['30'], nullDraws, 1099 + 1000 * pi + 100 * si);
+      });
+    });
   });
-  if (!dev && res.syms.SPY) res.verdict = verdict(res.syms.SPY);
+  if (!dev && res.syms.SPY) { res.verdict = verdict(res.syms.SPY.s7); res.verdict5 = verdict(res.syms.SPY.s5); }
   return res;
 }
-module.exports = { prep, collect, analyse, excess, shiftNull, verdict, run, etParts, corrMatrix, spearman, rng, SPLIT, NAMES, HZ, COST_UND, COST_OPT, COST_OPT_STRESS, MIN_N };
+module.exports = { prep, collect, view, analyse, excess, shiftNull, verdict, run, etParts, corrMatrix, spearman, rng, SPLIT, NAMES, SETS, HZ, COST_UND, COST_OPT, COST_OPT_STRESS, MIN_N };

@@ -42,3 +42,11 @@ A "Supported" verdict does **not** make it a strategy: it would go to James as a
 
 ## 7. Deliverables
 `study_sig.js` (pure), `run_sig_local.js` (fetch / dev / final), `test/sig_study.test.js`, results in `docs/signal-confluence-results.md`, `bt38` compact result in `scalp.kv`, entries in EXPERIMENT_LOG and STRATEGY_REGISTRY (as a research item, not a strategy). Local branch `signal-study`; pushed only if James says so.
+
+## 9. Amendment A1 (2026-11-27, written BEFORE any data was analysed and before any result existed)
+James: "btw we could just add all 7. it looks like we have room." Two indicators from the TradingView-popular list were added to the board and the engine: **MACD(12,26,9) on 1-minute closes** (line above signal = +1, below = -1; needs 35 bars) and **Bollinger Bands (20, 2 sd) on completed 5-minute closes** (close below the lower band = +1 oversold lean, above the upper = -1; needs 20 five-minute closes). The board now lights at **4 of 7** (a simple majority; Claude's scaling of 3 of 5, not tuned).
+Effect on this study (nothing else changes: same data, split, decision points, horizons, costs, bootstrap, null, six criteria):
+- **PRIMARY** set S7 = all seven signals, light at 4 or more agreeing; ladder k = 0..7; "all agree" = 7 of 7; weak = 1 to 3 agree; criterion 6 compares the light against that weak band. The verdict (SPY, 30 minutes) is computed on S7.
+- **Replication** set S5 = the original five signals, light at 3 of 5, exactly as specified in sections 3-6 above (the board that ran live on 2026-11-27). Its verdict is reported alongside as `verdict5`; it is not the primary.
+- Pairwise-correlation and effective-N figures use each set's own signals (N = 7 or 5).
+- No signal parameter, threshold or horizon is tuned on any result; 4-of-7 was fixed before the fetch was analysed. Both sets are reported in full; no variant is dropped.

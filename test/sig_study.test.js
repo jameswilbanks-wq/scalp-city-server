@@ -70,18 +70,26 @@ t('verdict: all six criteria pass = Supported; each single failure is named; too
   const f = o => S.verdict(mk(o)).failed; assert.deepStrictEqual(f({ holdL: { mean: -0.1, netOpt: -1.1 } }), ['2', '4', '6']); assert.deepStrictEqual(f({ devL: { lo: -0.2 } }), ['3']); assert.deepStrictEqual(f({ devL: { mean: 1.2, netOpt: 0.2, lo: 0.1 } }), ['5'], 'only the null criterion fails');
   assert.deepStrictEqual(f({ devW: { mean: 3 } }), ['6']); assert.deepStrictEqual(f({ holdL: { mean: 1.5, netOpt: 0.5 } }), [], 'still passes'); assert.deepStrictEqual(f({ holdL: { mean: 0.8, netOpt: -0.2 } }), ['4'], 'beats weak but not the 1.0 bp cost');
 });
-t('stage dev never reads a holdout record: changing holdout records leaves the dev result identical; no holdout/full block or verdict in dev; final has all three and a verdict', () => {
-  const R = S.rng(3), mkr = (day, m) => ({ day, di: 9, m, v: [1, 1, 0, 1, 1], nb: 4, ns: 0, st: 'buy', r: { '15': R(), '30': R() - 0.5, '60': R(), close: R() } }), dev = [], hold1 = [], hold2 = [];
+t('stage dev never reads a holdout record: changing holdout records leaves the dev result identical; no holdout/full block or verdict in dev; final has all of them for both signal sets', () => {
+  const R = S.rng(3), mkr = (day, m) => ({ day, di: 9, m, v: [1, 1, 0, 1, 1, 1, 0], r: { '15': R(), '30': R() - 0.5, '60': R(), close: R() } }), dev = [], hold1 = [], hold2 = [];
   for (let d = 0; d < 28; d++) for (let m = 600; m <= 900; m += 60) { dev.push(mkr('2022-02-' + String(d + 1).padStart(2, '0'), m)); hold1.push(mkr('2025-05-' + String(d + 1).padStart(2, '0'), m)); }
   hold1.forEach(r => hold2.push(Object.assign({}, r, { r: { '15': 99, '30': 99, '60': 99, close: 99 } })));
   const a = S.run({ SPY: dev.concat(hold1) }, { stage: 'dev', draws: 50, nullDraws: 30 }), b = S.run({ SPY: dev.concat(hold2) }, { stage: 'dev', draws: 50, nullDraws: 30 });
-  assert.deepStrictEqual(a.syms.SPY.dev, b.syms.SPY.dev); assert.strictEqual(a.syms.SPY.hold, null); assert.strictEqual(a.syms.SPY.full, null); assert.strictEqual(a.verdict, undefined);
-  const f = S.run({ SPY: dev.concat(hold1) }, { stage: 'final', draws: 50, nullDraws: 30 }); assert.ok(f.syms.SPY.hold && f.syms.SPY.full && f.verdict && f.verdict.label);
+  for (const sn of ['s7', 's5']) { assert.deepStrictEqual(a.syms.SPY[sn].dev, b.syms.SPY[sn].dev, sn); assert.strictEqual(a.syms.SPY[sn].hold, null); assert.strictEqual(a.syms.SPY[sn].full, null); }
+  assert.strictEqual(a.verdict, undefined); assert.strictEqual(a.verdict5, undefined);
+  const f = S.run({ SPY: dev.concat(hold1) }, { stage: 'final', draws: 50, nullDraws: 30 }); for (const sn of ['s7', 's5']) assert.ok(f.syms.SPY[sn].hold && f.syms.SPY[sn].full, sn); assert.ok(f.verdict && f.verdict.label && f.verdict5 && f.verdict5.label);
 });
-t('ladder and light bookkeeping: buy k counts records with exactly k signals at +1; the light is the production state; independence stats are reported', () => {
-  const mkr = (day, m, nb, ns, st, r) => ({ day, di: 9, m, v: [1, 1, 1, 0, 0], nb, ns, st, r: { '15': r, '30': r, '60': r, close: r } }), recs = [mkr('2022-01-03', 600, 3, 0, 'buy', 4), mkr('2022-01-03', 605, 3, 1, 'buy', 2), mkr('2022-01-04', 600, 1, 3, 'sell', -6), mkr('2022-01-04', 605, 0, 0, 'none', 0), mkr('2022-01-05', 600, 5, 0, 'buy', 8)];
-  const a = S.analyse(recs, 0, 1); assert.deepStrictEqual([a.ladder.buy[3]['30'].n, a.ladder.buy[5]['30'].n, a.ladder.sell[3]['30'].n, a.ladder.buy[1]['30'].n], [2, 1, 1, 1]); assert.strictEqual(a.light['30'].n, 4, 'buy, buy, sell, buy'); assert.ok(Math.abs(a.base['30'] - 1.6) < 1e-12);
-  assert.strictEqual(a.five['30'].buy.n, 1); assert.ok('neff' in a.corr && 'mean' in a.corr && Array.isArray(a.corr.m)); assert.ok(Math.abs(S.spearman([1, 2, 3, 4], [1, 2, 3, 4]) - 1) < 1e-12 && S.spearman([1, 2], [1, 2]) === null);
+t('set views: S7 lights at 4 of 7, S5 (the original board) at 3 of 5 using only the first five signals; null never counts', () => {
+  const mk = v => ({ day: 'd', di: 9, m: 600, v, r: { '30': 0 } }), one = v => ({ s7: S.view([mk(v)], S.SETS.s7)[0], s5: S.view([mk(v)], S.SETS.s5)[0] });
+  let x = one([1, 1, 1, 0, 0, 0, 0]); assert.deepStrictEqual([x.s7.nb, x.s7.st, x.s5.nb, x.s5.st], [3, 'none', 3, 'buy'], '3 agree: dark on the 7-board, lit on the 5-board');
+  x = one([1, 1, 1, 1, 0, 0, 0]); assert.deepStrictEqual([x.s7.st, x.s5.st], ['buy', 'buy']); x = one([0, 0, 0, 0, 0, 1, 1]); assert.deepStrictEqual([x.s7.nb, x.s5.nb, x.s7.st], [2, 0, 'none'], 'MACD and Bollinger count only toward the 7-board');
+  x = one([-1, -1, null, -1, null, -1, 0]); assert.deepStrictEqual([x.s7.ns, x.s7.st, x.s5.ns, x.s5.st], [4, 'sell', 3, 'sell'], 'nulls never count'); assert.deepStrictEqual(S.NAMES, ['vwap', 'orb', 'rsi', 'ema', 'ihh', 'macd', 'bb']);
+});
+t('ladder and light bookkeeping: buy k counts records with exactly k signals at +1; the light is the set state; independence stats are reported', () => {
+  const mkr = (day, m, v, r) => ({ day, di: 9, m, v, r: { '15': r, '30': r, '60': r, close: r } }), S5 = S.SETS.s5;
+  const recs = S.view([mkr('2022-01-03', 600, [1, 1, 1, 0, 0, 0, 0], 4), mkr('2022-01-03', 605, [1, 1, 1, -1, 0, 0, 0], 2), mkr('2022-01-04', 600, [1, -1, -1, -1, 0, 0, 0], -6), mkr('2022-01-04', 605, [0, 0, 0, 0, 0, 0, 0], 0), mkr('2022-01-05', 600, [1, 1, 1, 1, 1, 0, 0], 8)], S5);
+  const a = S.analyse(recs, S5, 0, 1); assert.deepStrictEqual([a.ladder.buy[3]['30'].n, a.ladder.buy[5]['30'].n, a.ladder.sell[3]['30'].n, a.ladder.buy[1]['30'].n], [2, 1, 1, 1]); assert.strictEqual(a.light['30'].n, 4, 'buy, buy, sell, buy'); assert.ok(Math.abs(a.base['30'] - 1.6) < 1e-12);
+  assert.strictEqual(a.all['30'].buy.n, 1); assert.ok('neff' in a.corr && 'mean' in a.corr && Array.isArray(a.corr.m) && a.corr.names.length === 5); assert.ok(Math.abs(S.spearman([1, 2, 3, 4], [1, 2, 3, 4]) - 1) < 1e-12 && S.spearman([1, 2], [1, 2]) === null);
 });
 t('source guard: the study is pure (only requires signals.js; no network, env, file, order or broker call); the runner talks to the Alpaca DATA host with GET only and never prints a key', () => {
   const code = SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\s)\/\/.*$/gm, '$1'); assert.deepStrictEqual((code.match(/require\([^)]*\)/g) || []), ["require('./signals.js')"]);
