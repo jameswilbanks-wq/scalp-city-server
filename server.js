@@ -1575,6 +1575,26 @@ async function ensureBars(list) {
   if (!S.connected || marketOpen(Date.now())) return;
   await Promise.all(list.map(async s => { const e = ENS[s] = ENS[s] || { at: 0 }; if (P.raw[s] && Date.now() - e.at < 60000) return; e.at = Date.now(); try { await pBars(s); } catch (x) { e.err = String((x && (x.code || x.message)) || x).slice(0, 80); } }));
 }
+/* SIGNAL BOARD (James 2026-11-27): display-only table of the 10 manual tickers, five signals each (signals.js), a row lights buy/sell when 3 of 5 agree. It never places or influences an order, never touches another book, runs in its own try/catch every 60 s while the market is open, and journals every light change in r.sgk (capped at 400 per day) so a later read-only study can measure hit rate net of spread. Not a validated strategy: see docs/DECISIONS.md 2026-11-27. */
+const SigEng = require('./signals.js');
+async function sigTick() {
+  if (P.sgBusy || !S.connected || !P.rec || !marketOpen(Date.now())) return;
+  P.sgBusy = true; P.sg = P.sg || {};
+  try {
+    let changed = false;
+    for (const sym of MAN.syms) {
+      try {
+        const r = SigEng.computeSignals(await pBars(sym), { index: MAN.idx.includes(sym) }), prev = P.sg[sym] && P.sg[sym].state; P.sg[sym] = r;
+        if (prev !== undefined && prev !== r.state && P.rec) {
+          const k = P.rec.sgk = P.rec.sgk || []; k.push({ t: Date.now(), sym, from: prev, to: r.state, nb: r.nBuy, ns: r.nSell, px: r.px, v: ['vwap', 'orb', 'rsi', 'ema', 'ihh'].map(n => r.sigs[n].v) });
+          if (k.length > 400) k.splice(0, k.length - 400); changed = true;
+        }
+      } catch (err) { P.sg[sym] = Object.assign({}, P.sg[sym] || { state: 'none', sigs: {} }, { stale: true, state: 'none', why: 'data error: ' + String((err && (err.code || err.message)) || err).slice(0, 60) }); }
+    }
+    P.sgAt = Date.now(); if (changed) saveRec();
+  } catch (err) { P.sgErr = String((err && err.message) || err).slice(0, 120); } finally { P.sgBusy = false; }
+}
+function sigOut() { return { at: P.sgAt || null, need: SigEng.NEED, syms: MAN.syms, idx: MAN.idx, rows: P.sg || {} }; }
 async function cityData(want) {
   await ensureBars(CFG.syms);
   const bars = {}; CFG.syms.forEach(s => { bars[s] = bars5(s); });
@@ -1588,7 +1608,7 @@ async function cityData(want) {
     .concat((x.value.cdrk && x.value.cdrk.trades) || [])
     .concat((x.value.mank && x.value.mank.trades) || [])
     .filter(t => t.exitT || t.exitBid != null).map(t => ({ t: Date.parse(t.exitT || t.entryT), sym: t.sym, pnl: +t.pnl || 0, strat: t.trig + (t.run ? ' run' : '') })) }));
-  return Object.assign(liveData(), { bars, days, watch: WATCH, score, health: { lastTick: P.lastTick, tickErr: P.tickErr, saveErr: P.saveErr, busyS: P.busySince ? Math.round((Date.now() - P.busySince) / 1000) : 0, books: bookDiag() } });
+  return Object.assign(liveData(), { bars, days, watch: WATCH, score, sg: sigOut(), health: { lastTick: P.lastTick, tickErr: P.tickErr, saveErr: P.saveErr, busyS: P.busySince ? Math.round((Date.now() - P.busySince) / 1000) : 0, books: bookDiag() } });
 }
 
 /* ---------- web: dashboard + API ---------- */
@@ -2012,6 +2032,7 @@ function load(){api('/api/status').then(function(x){s=x;draw()}).catch(function(
   { const g = await kget('man_guard'); if (g && typeof g.on === 'boolean') P.manGuard = g.on; } // on-demand guardrails switch
   await connect();
   setInterval(() => { tick(); }, TICK_MS);
+  setInterval(() => { sigTick(); }, 60000); setTimeout(() => { sigTick(); }, 15000); // signal board: display only
   setInterval(heartbeat, 60000); setTimeout(heartbeat, 5000); setInterval(() => { quoteSample(); }, 60000);
   slog('boot', { alpacaData: USE_ALPACA, db: !!pool, tickMs: TICK_MS, running: !!P.ctl.running, node: process.version });
   setInterval(() => { fastPos(); }, FAST_MS);
