@@ -1,4 +1,4 @@
-/* On-demand 0DTE paper order (server.js: MAN constants, manualEnter, manageMan, the /api/ondemand route, the MAN row/panel in public/city.html) test. Behaviour under test: James picks call or put, SPY or QQQ, and 1 to 3 contracts; the server journals a simulated buy at the ask in its own book r.mank, refuses bad input / closed market / outside 9:35-15:55 ET / more than 3 open / over the correlation cap / no fresh price, closes at the bid on a manual close or at 15:59 ET even on a stale quote, applies an automatic stop only when MAN_STOP is set, and can never call a broker order function. Mock quotes and clock, no network, no orders, no keys. Related tests: manual_close.test.js (the shared manual-close path), csk_priority.test.js (the cap). Run: node test/ondemand.test.js */
+/* On-demand 0DTE paper order (server.js: MAN constants, manualEnter, manageMan, the /api/ondemand route, the MAN row/panel in public/city.html) test. Behaviour under test: James picks call or put, SPY or QQQ, and 1 to 3 contracts; the server journals a simulated buy at the ask in its own book r.mank, refuses bad input / closed market / outside 9:30-16:00 ET / more than 3 open / over the correlation cap / no fresh price, closes at the bid on a manual close or at 15:59 ET even on a stale quote, applies an automatic stop only when MAN_STOP is set, and can never call a broker order function. Mock quotes and clock, no network, no orders, no keys. Related tests: manual_close.test.js (the shared manual-close path), csk_priority.test.js (the cap). Run: node test/ondemand.test.js */
 'use strict';
 const assert = require('assert'), fs = require('fs'), path = require('path');
 const SRC = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8'), HTML = fs.readFileSync(path.join(__dirname, '..', 'public', 'city.html'), 'utf8');
@@ -26,9 +26,14 @@ t('put: QQQ put uses dir -1', async () => { const w = build(), r = await w.manua
 t('input checks: bad side, qty 0/4/1.5/abc, unknown symbol, market closed, outside 9:35-15:55 ET, journal missing, day stopped; nothing journaled and no option lookup', async () => {
   const w = build(); const bad = async (a, b, c, why) => { const r = await w.manualEnter(a, b, c); assert.strictEqual(r.ok, false, why); assert.ok(r.error, why); };
   await bad('SPY', 'buy', 1, 'side'); for (const q of [0, 4, 1.5, 'abc', undefined]) await bad('SPY', 'call', q, 'qty ' + q); await bad('ZZZ', 'call', 1, 'symbol');
-  w.env.open = false; await bad('SPY', 'call', 1, 'closed'); w.env.open = true; w.env.min = 570; await bad('SPY', 'call', 1, 'too early'); w.env.min = 955; await bad('SPY', 'call', 1, 'too late'); w.env.min = 700;
+  w.env.open = false; await bad('SPY', 'call', 1, 'closed'); w.env.open = true; w.env.min = 569; await bad('SPY', 'call', 1, 'too early'); w.env.min = 960; await bad('SPY', 'call', 1, 'too late'); w.env.min = 700;
   w.P.rec.shut = 'stopped by you'; await bad('SPY', 'call', 1, 'shut'); w.P.rec.shut = ''; assert.strictEqual(w.calls.pick.length, 0); assert.ok(!w.P.rec.mank || w.P.rec.mank.open.length === 0);
   const w2 = build(); w2.P.rec = null; assert.strictEqual((await w2.manualEnter('SPY', 'call', 1)).ok, false, 'no journal');
+});
+t('entry window is 9:30:00 to 15:59:59 ET (James 2026-11-27): minute 570 and minute 959 are accepted, 569 and 960 are not; the window equals the market hours check', async () => {
+  for (const min of [570, 571, 955, 958, 959]) { const w = build(); w.env.min = min; const r = await w.manualEnter('SPY', 'call', 1); assert.strictEqual(r.ok, true, 'minute ' + min + ' accepted'); assert.strictEqual(w.P.rec.mank.open.length, 1); }
+  for (const min of [0, 569, 960, 1000]) { const w = build(); w.env.min = min; const r = await w.manualEnter('SPY', 'call', 1); assert.strictEqual(r.ok, false, 'minute ' + min + ' refused'); assert.ok(/9:30 to 16:00/.test(r.error)); assert.strictEqual(w.calls.pick.length, 0); }
+  const w = build(); assert.deepStrictEqual([w.MAN.from, w.MAN.to, w.MAN.flat], [570, 960, 959]);
 });
 t('a stale underlying price (older than 5 minutes) and a failed contract pick are refused and logged as skipped, not journaled', async () => {
   const w = build(); w.P.info.SPY.bar.t = Date.now() - 400000; assert.strictEqual((await w.manualEnter('SPY', 'call', 1)).ok, false); w.P.info.SPY.bar.t = Date.now() - 30000;
