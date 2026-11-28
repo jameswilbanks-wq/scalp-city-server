@@ -183,11 +183,15 @@ button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 @keyframes pulse2{50%{opacity:.65}}
 .lvb.near2{color:var(--warn);border-color:var(--warn)}
 .lvb.clear{color:var(--up);border-color:color-mix(in srgb,var(--up) 45%,transparent)}
-.lvtrack{position:relative;height:6px;background:var(--line);border-radius:99px;margin:4px 3px}
-.lvtrack i{position:absolute;top:-4px;width:14px;height:14px;border-radius:50%;background:var(--ink);border:3px solid var(--panel2);transform:translateX(-50%);transition:left .5s}
-.lvtrack::before,.lvtrack::after{content:"";position:absolute;top:-3px;width:3px;height:12px;border-radius:2px;background:var(--dim)}
-.lvtrack::before{left:-1px}.lvtrack::after{right:-1px}
-.lvtrack[data-near=r]::after,.lvtrack[data-near=s]::before{background:var(--warn);box-shadow:0 0 0 3px color-mix(in srgb,var(--warn) 30%,transparent)}
+.lvtrack{position:relative;height:46px;margin:2px 3px}
+.lvtrack::before{content:"";position:absolute;left:0;right:0;top:50%;height:2px;margin-top:-1px;background:var(--line);border-radius:2px}
+.lvticks{position:absolute;inset:0}
+.lvtrack i{position:absolute;top:50%;width:14px;height:14px;border-radius:50%;background:var(--ink);border:3px solid var(--panel2);transform:translate(-50%,-50%);transition:left .5s;z-index:3}
+.tk{position:absolute;top:50%;width:var(--tw,2px);margin-left:-1px;transform:translateY(-50%);border-radius:2px;cursor:pointer;z-index:1}
+.tk::before{content:"";position:absolute;left:-7px;right:-7px;top:-6px;bottom:-6px}
+.tk.ab{background:var(--down)}.tk.bl{background:var(--up)}.tk.est{opacity:.55}
+.tk.hot{background:var(--warn);box-shadow:0 0 0 3px color-mix(in srgb,var(--warn) 30%,transparent);animation:pulse2 1.4s infinite;z-index:2}
+.lvtip{position:fixed;z-index:80;display:none;background:var(--ink);color:var(--panel);padding:7px 10px;border-radius:8px;font-size:12px;line-height:1.4;pointer-events:none;max-width:250px;box-shadow:0 4px 16px rgba(0,0,0,.25)}
 .lvl{display:flex;justify-content:space-between;gap:10px;font-size:11px;color:var(--dim)}
 .lvl span:last-child{text-align:right}
 .lvn{font-size:12px;color:var(--warn);font-weight:600}.lvn:empty{display:none}
@@ -350,26 +354,27 @@ a.btn{color:var(--ink);align-items:center;justify-content:center;min-height:44px
   function fld(p,k){return p.el.querySelector('[data-f='+k+']')}
   function list(){return Object.keys(byId).map(function(k){return byId[k]}).sort(function(a,b){return b.t0-a.t0})}
 
-  /* ---- levels (display only): reference lines, never a signal. Major lines drive Near/Approaching; the rest sit in the All levels list. Lines closer together than half the near distance are merged into one label. ---- */
+  /* ---- levels (display only): reference lines, never a signal. Every line is drawn as a tick on one horizontal line between the nearest major support and resistance; tick size = how widely watched that kind of level is (a convention, not a measured edge); lines that stack on one price grow one size. Major lines (weight 3 or more) drive Near/Approaching. ---- */
+  var LVH={5:34,4:28,3:22,2:14};
   function levels(sym){var L=S&&S.lv&&S.lv[sym],X=S&&S.lvx&&S.lvx[sym],H=X&&X.htf,a=[];if(!L)return null;
-    var add=function(n,v,major){if(v!=null&&isFinite(v))a.push({n:n,v:+v,major:!!major})};
-    add('Opening-range high',L.orh,1);add('Opening-range low',L.orl,1);add('VWAP',L.vwap,1);add('Day high',L.dh);add('Day low',L.dl);
-    if(H){add('Prior-day high',H.pdh,1);add('Prior-day low',H.pdl,1);add('Prior-week high',H.pwh,1);add('Prior-week low',H.pwl,1);add('Prior-month high',H.pmh,1);add('Prior-month low',H.pml,1)}
-    else{add('Prior-day high',L.pdh,1);add('Prior-day low',L.pdl,1)}
+    var add=function(n,v,w,est){if(v!=null&&isFinite(v))a.push({n:n,v:+v,w:w,major:w>=3,est:!!est})};
+    add('Opening-range high',L.orh,3);add('Opening-range low',L.orl,3);add('VWAP',L.vwap,3);add('Day high',L.dh,2);add('Day low',L.dl,2);
+    if(H){add('Prior-day high',H.pdh,3);add('Prior-day low',H.pdl,3);add('Prior-week high',H.pwh,4);add('Prior-week low',H.pwl,4);add('Prior-month high',H.pmh,5);add('Prior-month low',H.pml,5)}
+    else{add('Prior-day high',L.pdh,3);add('Prior-day low',L.pdl,3)}
     if(X){var F=X.fib,Q=X.h4,V=X.vp,O=X.oi,G=X.gex;
-      if(F){add('Fib 38.2 of prior day',F.f382);add('Fib 50 of prior day',F.f500);add('Fib 61.8 of prior day',F.f618)}
-      if(Q){add('Prior 4h high, morning',Q.amH);add('Prior 4h low, morning',Q.amL);add('Prior 4h high, afternoon',Q.pmH);add('Prior 4h low, afternoon',Q.pmL)}
-      if(V){add('Prior-day volume POC',V.poc,1);add('Prior value area high',V.vah);add('Prior value area low',V.val)}
-      if(O){add('OI call wall',O.callWall&&O.callWall.strike,1);add('OI put wall',O.putWall&&O.putWall.strike,1);add('OI max pin',O.max&&O.max.strike,1)}
-      if(G){add('GEX call wall (est.)',G.callWall);add('GEX put wall (est.)',G.putWall);add('Gamma flip (est.)',G.flip)}}
+      if(F){add('Fib 38.2 of prior day',F.f382,2);add('Fib 50 of prior day',F.f500,2);add('Fib 61.8 of prior day',F.f618,2)}
+      if(Q){add('Prior 4h high, morning',Q.amH,2);add('Prior 4h low, morning',Q.amL,2);add('Prior 4h high, afternoon',Q.pmH,2);add('Prior 4h low, afternoon',Q.pmL,2)}
+      if(V){add('Prior-day volume POC',V.poc,3);add('Prior value area high',V.vah,2);add('Prior value area low',V.val,2)}
+      if(O){add('OI call wall',O.callWall&&O.callWall.strike,4);add('OI put wall',O.putWall&&O.putWall.strike,4);add('OI max pin',O.max&&O.max.strike,3)}
+      if(G){add('GEX call wall (est.)',G.callWall,2,1);add('GEX put wall (est.)',G.putWall,2,1);add('Gamma flip (est.)',G.flip,2,1)}}
     return{px:L.px,list:a,oiDate:X&&X.oi&&X.oi.oiDate?String(X.oi.oiDate):''}}
   function lvCluster(list,tol){var s=list.slice().sort(function(x,y){return x.v-y.v}),out=[],g=null;
     s.forEach(function(l){if(g&&(l.v-g.lo)/g.lo<=tol)g.items.push(l);else{g={lo:l.v,items:[l]};out.push(g)}});
-    return out.map(function(g){var mj=g.items.filter(function(i){return i.major}),oth=g.items.filter(function(i){return!i.major}),all=mj.concat(oth),lead=all[0],nm=all.map(function(i){return i.n});
-      return{v:lead.v,major:mj.length>0,n:nm.slice(0,2).join(' + ')+(nm.length>2?' +'+(nm.length-2)+' more':'')}})}
+    return out.map(function(g){var mj=g.items.filter(function(i){return i.major}),oth=g.items.filter(function(i){return!i.major}),all=mj.concat(oth),lead=all[0],nm=all.map(function(i){return i.n}),mw=Math.max.apply(null,g.items.map(function(i){return i.w}));
+      return{v:lead.v,major:mj.length>0,w:Math.min(5,mw+(g.items.length>=3?1:0)),est:g.items.every(function(i){return i.est}),items:all,n:nm.slice(0,2).join(' + ')+(nm.length>2?' +'+(nm.length-2)+' more':'')}})}
   function lvPaint(p){
     var L=levels(p.sym),b=fld(p,'lvb'),thr=(p.sym==='SPY'||p.sym==='QQQ')?.0008:.0025,cl=L?lvCluster(L.list,thr*.5):[],mj=cl.filter(function(c){return c.major});
-    if(!L||!mj.length){b.className='lvb clear';b.textContent='Levels loading';fld(p,'lvt').textContent=p.sym;fld(p,'lvS').textContent='';fld(p,'lvR').textContent='';fld(p,'lvdot').style.left='50%';fld(p,'lvn').textContent='';fld(p,'lvtr').setAttribute('data-near','');return}
+    if(!L||!mj.length){b.className='lvb clear';b.textContent='Levels loading';fld(p,'lvt').textContent=p.sym;fld(p,'lvS').textContent='';fld(p,'lvR').textContent='';fld(p,'lvdot').style.left='50%';fld(p,'lvn').textContent='';fld(p,'lvtr').setAttribute('data-near','');if(p._tk){p._tk='';fld(p,'lvtk').innerHTML=''}return}
     var u=L.px,up=null,dn=null,call=p.type==='call';
     mj.forEach(function(l){if(l.v>u&&(!up||l.v<up.v))up=l;if(l.v<=u&&(!dn||l.v>dn.v))dn=l});
     var rel=call?up:dn,dist=rel?Math.abs(rel.v-u)/u:null,st=!rel?'clear':dist<=thr?'near':dist<=thr*2.5?'near2':'clear';
@@ -379,15 +384,32 @@ a.btn{color:var(--ink);align-items:center;justify-content:center;min-height:44px
     var d=function(l){return (Math.abs(l.v-u)/u*100).toFixed(2)+'% away'};
     fld(p,'lvS').innerHTML=dn?'Support '+dn.v.toFixed(2)+'<br>'+esc(dn.n)+', '+d(dn):'No support below';
     fld(p,'lvR').innerHTML=up?'Resistance '+up.v.toFixed(2)+'<br>'+esc(up.n)+', '+d(up):'No resistance above';
-    fld(p,'lvdot').style.left=(up&&dn?Math.min(100,Math.max(0,(u-dn.v)/(up.v-dn.v)*100)):50)+'%';
     fld(p,'lvtr').setAttribute('data-near',st==='near'?(call?'r':'s'):'');
     fld(p,'lvn').textContent=st==='near'?'Reference line only, not a tested signal. The stock is '+d(rel)+' from it.':'';
+    /* the horizontal line: from just below the nearest major support to just above the nearest major resistance (a fixed band around the price when one side has none) */
+    var w0=thr*10,lo=dn?dn.v:u*(1-w0),hi=up?up.v:u*(1+w0),pad=Math.max((hi-lo)*.08,u*thr*.5);lo-=pad;hi+=pad;
+    if(hi-lo<u*thr*6){var mid=(hi+lo)/2;lo=mid-u*thr*3;hi=mid+u*thr*3}
+    var pos=function(v){return Math.min(100,Math.max(0,(v-lo)/(hi-lo)*100))};
+    var tipFor=function(c){var dd=(c.v-u)/u*100,l=[c.v.toFixed(2)+'  ('+(dd>=0?'+':'')+dd.toFixed(2)+'% from price)'];c.items.forEach(function(i){l.push(i.n+(c.items.length>1?'  '+i.v.toFixed(2):''))});
+      if(c.items.some(function(i){return i.n.indexOf('OI ')===0})&&L.oiDate)l.push('Open interest as of '+L.oiDate);if(c.est)l.push('Estimate, not a fact');return l.join('|')};
+    var tk='';cl.forEach(function(c){if(c.v<lo||c.v>hi)return;var tip=tipFor(c);
+      tk+='<span class="tk '+(c.v>u?'ab':'bl')+(c.est?' est':'')+(c===rel&&st==='near'?' hot':'')+'" style="left:'+pos(c.v).toFixed(2)+'%;height:'+LVH[c.w]+'px;--tw:'+(c.w>=4?3:2)+'px" data-tip="'+esc(tip)+'" role="img" aria-label="'+esc(tip.split('|').join(', '))+'"></span>'});
+    if(p._tk!==tk){p._tk=tk;fld(p,'lvtk').innerHTML=tk}
+    var dot=fld(p,'lvdot');dot.style.left=pos(u)+'%';dot.setAttribute('data-tip','Stock price now|'+u.toFixed(2));
     var rows=cl.slice().sort(function(x,y){return y.v-x.v}),h='',put=false,pxr='<div class="lvr px"><span class="p">'+u.toFixed(2)+'</span><span class="n">Stock price now</span><span class="d"></span></div>';
     rows.forEach(function(c){if(!put&&c.v<=u){h+=pxr;put=true}var dd=(c.v-u)/u*100;h+='<div class="lvr'+(c.major?' maj':'')+'"><span class="p">'+c.v.toFixed(2)+'</span><span class="n">'+esc(c.n)+'</span><span class="d">'+(dd>=0?'+':'')+dd.toFixed(2)+'%</span></div>'});
     if(!put)h+=pxr;
-    h+='<div class="lvfn">Bold lines trigger Near and Approaching. GEX lines are model estimates, not facts: they assume customers are long calls and short puts. OI is open interest'+(L.oiDate?' as of '+esc(L.oiDate):'')+', so it leaves out positions opened today. Fib, 4-hour and value-area lines are reference only. No line here is a tested signal.</div>';
+    h+='<div class="lvfn">On the line: red lines are above the price, green below; a bigger line is a more widely watched kind of level (month, then week, then OI wall, then day; lines stacked on one price grow). Size is a convention, not a measured edge. Hover or tap a line to see what it is. In this list, bold lines trigger Near and Approaching. GEX lines are model estimates, not facts: they assume customers are long calls and short puts. OI is open interest'+(L.oiDate?' as of '+esc(L.oiDate):'')+', so it leaves out positions opened today. No line here is a tested signal.</div>';
     if(p._lvh!==h){p._lvh=h;fld(p,'lvxl').innerHTML=h}
     fld(p,'lvxs').textContent='All levels ('+cl.length+')'}
+  /* one floating tooltip for every line: hover on a computer, tap on a phone */
+  var tipEl=document.createElement('div');tipEl.className='lvtip';tipEl.id='lvtip';document.body.appendChild(tipEl);
+  function tipShow(el){var t=el.getAttribute('data-tip');if(!t)return;tipEl.innerHTML='';t.split('|').forEach(function(l,i){var d=document.createElement('div');if(i===0)d.style.fontWeight='700';d.textContent=l;tipEl.appendChild(d)});tipEl.style.display='block';
+    var r=el.getBoundingClientRect(),w=tipEl.offsetWidth,h=tipEl.offsetHeight,x=Math.min(Math.max(8,r.left+r.width/2-w/2),window.innerWidth-w-8),y=r.top-h-8;if(y<8)y=r.bottom+8;tipEl.style.left=x+'px';tipEl.style.top=y+'px'}
+  function tipHide(){tipEl.style.display='none'}
+  document.addEventListener('mouseover',function(e){var t=e.target.closest&&e.target.closest('[data-tip]');if(t)tipShow(t);else tipHide()});
+  document.addEventListener('click',function(e){var t=e.target.closest&&e.target.closest('[data-tip]');if(t)tipShow(t);else tipHide()});
+  window.addEventListener('scroll',tipHide,true);
 
   /* ---- cards ---- */
   function cardHTML(p){
@@ -397,7 +419,7 @@ a.btn{color:var(--ink);align-items:center;justify-content:center;min-height:44px
     +'<div><div class="meter"><span class="stop" data-f="stopmk"></span><span class="zero" data-f="zero"></span><span class="fill" data-f="fill"></span><span class="trail" data-f="trail"></span><span class="mk" data-f="mk"></span></div>'
     +'<div class="mlab"><span data-f="lblL"></span><span>breakeven</span><span data-f="lblR"></span></div></div>'
     +'<div class="facts"><div><small>Paid</small><b data-f="paid"></b></div><div><small>Now (sell price)</small><b data-f="bid"></b></div><div><small>Best so far</small><b data-f="peak"></b></div></div>'
-    +'<div class="lv"><div class="lvh"><span class="lvt" data-f="lvt"></span><span class="lvb" data-f="lvb"></span></div><div class="lvtrack" data-f="lvtr"><i data-f="lvdot"></i></div><div class="lvl"><span data-f="lvS"></span><span data-f="lvR"></span></div><div class="lvn" data-f="lvn"></div><details class="lvx"><summary data-f="lvxs">All levels</summary><div class="lvxl" data-f="lvxl"></div></details></div>'
+    +'<div class="lv"><div class="lvh"><span class="lvt" data-f="lvt"></span><span class="lvb" data-f="lvb"></span></div><div class="lvtrack" data-f="lvtr"><div class="lvticks" data-f="lvtk"></div><i data-f="lvdot"></i></div><div class="lvl"><span data-f="lvS"></span><span data-f="lvR"></span></div><div class="lvn" data-f="lvn"></div><details class="lvx"><summary data-f="lvxs">All levels</summary><div class="lvxl" data-f="lvxl"></div></details></div>'
     +'<div class="guard" data-f="guard"></div>'
     +'<div data-f="act"></div>'}
   function actHTML(p){

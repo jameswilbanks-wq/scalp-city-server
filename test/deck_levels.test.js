@@ -31,4 +31,10 @@ t('page text: GEX lines carry "(est.)", open interest says as-of, no untested "o
   assert.ok(!/often stalls/.test(HTML), 'no untested claim'); assert.ok(HTML.includes('Reference line only, not a tested signal'));
   assert.ok(!/fetch\(['"]\/api\/(lvx|levels)/.test(HTML), 'levels ride the existing state poll'); assert.ok(HTML.includes('S.lvx') || /S&&S\.lvx/.test(HTML));
 });
+t('line sizes follow the kind of level (month 5, week/OI wall 4, day/VWAP/OR/POC 3, minor 2); a stack of three or more grows one size, capped at 5; ticks carry a hover text and the page has one shared tooltip', () => {
+  const { levels, lvCluster } = run({ lv: { SPY: L0 }, lvx: { SPY: X0 } }), w = n => levels('SPY').list.filter(x => x.n === n)[0].w;
+  assert.deepStrictEqual([w('Prior-month high'), w('Prior-week low'), w('OI call wall'), w('Prior-day high'), w('VWAP'), w('Prior-day volume POC'), w('Fib 50 of prior day'), w('Gamma flip (est.)')], [5, 4, 4, 3, 3, 3, 2, 2]);
+  const c = lvCluster([{ n: 'a', v: 100, w: 3, major: true }, { n: 'b', v: 100.01, w: 2 }, { n: 'c', v: 100.02, w: 2 }], 0.001); assert.strictEqual(c[0].w, 4); assert.strictEqual(lvCluster([{ n: 'a', v: 1, w: 5, major: true }, { n: 'b', v: 1, w: 2 }, { n: 'c', v: 1, w: 2 }], 0.001)[0].w, 5);
+  assert.ok(HTML.includes('data-tip="') && HTML.includes("className='lvtip'") && HTML.includes('Hover or tap a line'), 'tooltip wiring'); assert.ok(HTML.includes('lvticks'), 'ticks on the horizontal line');
+});
 (async () => { for (const [n, f] of tests) { try { await f(); pass++; console.log('ok   ' + n); } catch (e) { console.log('FAIL ' + n + '\n' + (e && e.stack || e)); } } console.log(pass + '/' + tests.length + ' passed'); process.exit(pass === tests.length ? 0 : 1); })();
