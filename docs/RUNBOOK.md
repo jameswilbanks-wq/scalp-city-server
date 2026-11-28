@@ -188,10 +188,10 @@ In `rec:YYYY-MM-DD` -> `cskreal.list[]`: `pc` (taken once per spread at the 15:4
 ## 2026-11-25 — Guardrails switch (pending push)
 `POST /api/manguard?on=1|0` (behind the key; the page button calls it). State in kv key `man_guard` `{on, at}`; no key = ON. Page data field `mg` `{on, loss, gain}`. Env: `MAN_GUARD_LOSS` (25), `MAN_GUARD_GAIN` (100); `MAN_STOP` no longer exists. Trade reasons: `guard stop`, `guard target`, `manual`, `time`.
 
-## 2026-11-25 — CSK per-day switch (pending push)
+## 2026-11-25 — CSK per-day switch
 `POST /api/cskday?on=1|0` (behind the key; the page button calls it) sets `rec.cskOff` on today's record (`on=0` -> OFF). Page data field `cd` `{on, master}` (`master` is the `CSK_ON` env). OFF stops new CSK auto entries today only (open spreads still managed); every NEW trading day starts OFF (`newRec` sets `cskOff: true`, James 2026-11-27) and the flag lives on the day's row, so a restart the same day keeps your choice. To check: the `csk_day` log line, or `value->'cskOff'` in `rec:YYYY-MM-DD`. To turn CSK off for good use the `CSK_ON=0` env var (restarts the server).
 
-## 2026-11-27 — Trade Deck pages and the son's access (pending push)
+## 2026-11-27 — Trade Deck pages and the son's access (live)
 - `/?key=ADMIN_KEY` = Trade Deck for James. `/city?key=ADMIN_KEY` = the old 3D page. `/ops` = server dashboard. `/son?key=SON_KEY` = the son's deck (James's own key also opens it).
 - **To give the son access:** in Render, set env var `SON_KEY` to a different long random value (James does this; it restarts the server). Send him `https://<service>/son?key=<SON_KEY>`. To cut his access, change or remove `SON_KEY`. His key cannot open anything but `/son` and `/api/son/*`.
 - His data: `rec:YYYY-MM-DD` -> `sonk` (`open`, `trades`, `pnl`), `sonShut`; guardrails in kv `son_guard`. To check: `select value->'sonk' from scalp.kv where key='rec:YYYY-MM-DD'`. His trades are not in `mank` or any strategy book.
@@ -200,3 +200,11 @@ In `rec:YYYY-MM-DD` -> `cskreal.list[]`: `pc` (taken once per spread at the 15:4
 - Deploy check for these pages: `node test/son_book.test.js`, `node test/deck_page.test.js`, plus the older `ondemand`, `manual_close`, `signal_board`, `csk_day_switch` tests.
 - 2026-11-27: both decks end with a month calendar (manual book on `/`, his own book on `/son`). It is drawn from `/api/deck/history` and `/api/son/history`; nothing to configure. Test: `node test/deck_calendar.test.js`.
 - 2026-11-27: extended support/resistance levels. Server log line `levels_ext {"sym":...,"feed":"sip|iex","day":...,"pdh":...,"pwh":...,"pmh":...}` appears once per symbol per ET day when the bar levels load. Check it against an independent Alpaca read (daily/weekly/monthly bars). If a part fails, the payload `lvx.<SYM>.err` says which (`htfErr`, `oiErr`, `gexErr` text) and the deck falls back to the older lines. Needs `ALPACA_KEY_ID` / `ALPACA_SECRET` (already set for market data). Alpaca refused SIP for recent data on this plan, so IEX is the expected fallback for the 30-minute/1-minute pulls; previous-day bars end at least 16 minutes ago so SIP normally works for them. Test: `node test/levels_ext.test.js`, `node test/deck_levels.test.js`.
+
+## 2026-11-28 — The gf page (`/gf`, Spanish) (pending push)
+- **Setup (James):** after the code is pushed and live, create a long random value in a password manager (letters and numbers only, so it works inside a link; different from `ADMIN_KEY` and `SON_KEY`). In Render, service Environment, add `GF_KEY` with that value and save (this restarts the server; do it while the market is closed). The link is `https://scalp-city-server.onrender.com/gf?key=<GF_KEY>`. Do not paste the value into chat, docs or Supabase.
+- To cut access, change or remove `GF_KEY`. James's own key also opens `/gf`; anything tapped there writes to the gf book.
+- Data: `rec:YYYY-MM-DD` -> `gfk` (`open`, `trades`, `pnl`), `gfShut`; guardrails in kv `gf_guard`. Check: `select value->'gfk' from scalp.kv where key='rec:YYYY-MM-DD'`.
+- **Pre-push open-position check now includes `gfk.open`** as well as `sonk.open`. The heartbeat log line `open` carries both. CLAUDE.md's list is James's to change.
+- Tests: `node test/gf_page.test.js`, plus `son_access`, `son_book`, `deck_page`, `deck_levels`, `deck_calendar`, `manual_close`.
+- Any new on-screen text in `public/deck.html` must be written as `L('English','Español')`; a new server refusal message needs a line in the page's `SRV` list.

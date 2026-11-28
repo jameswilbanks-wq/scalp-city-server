@@ -6,21 +6,21 @@ let pass = 0; const tests = []; const t = (n, f) => tests.push([n, f]);
 function fn(name) { let i = SRC.indexOf('async function ' + name + '('); if (i < 0) i = SRC.indexOf('function ' + name + '('); assert.ok(i >= 0, 'missing ' + name); let d = 0; for (let k = SRC.indexOf('{', i); k < SRC.length; k++) { if (SRC[k] === '{') d++; else if (SRC[k] === '}') { d--; if (d === 0) return SRC.slice(i, k + 1); } } throw new Error('unbalanced ' + name); }
 const line = start => { const i = SRC.indexOf(start); assert.ok(i >= 0, 'missing ' + start); return SRC.slice(i, SRC.indexOf('\n', i)); };
 const h0 = SRC.indexOf('const server = http.createServer('), h1 = SRC.indexOf('\n});', h0) + 4; assert.ok(h0 > 0 && h1 > h0);
-const HANDLER = SRC.slice(h0, h1), SONROUTE = fn('sonRoute');
+const HANDLER = SRC.slice(h0, h1), GUEST = [fn('guestRoute'), fn('sonRoute'), fn('gfRoute')].join('\n');
 
-function build(ADMIN_KEY, SON_KEY) {
-  const touched = [], keys = new Function('ADMIN_KEY', 'SON_KEY', line('const authed') + '\n' + line('const sonAuthed') + '\nreturn { authed, sonAuthed };')(ADMIN_KEY, SON_KEY);
+function build(ADMIN_KEY, SON_KEY, GF_KEY = '') {
+  const touched = [], keys = new Function('ADMIN_KEY', 'SON_KEY', 'process', line('const authed') + '\n' + line('const sonAuthed') + '\n' + line('const GF_KEY') + '\n' + line('const gfAuthed') + '\nreturn { authed, sonAuthed, gfAuthed };')(ADMIN_KEY, SON_KEY, { env: { SON_KEY, GF_KEY } });
   const stub = name => (...a) => { touched.push(name); return Promise.resolve({ ok: true, stub: name }); };
   const base = {
-    http: { createServer: f => f }, ADMIN_KEY, SON_KEY, authed: keys.authed, sonAuthed: keys.sonAuthed,
+    http: { createServer: f => f }, ADMIN_KEY, SON_KEY, authed: keys.authed, sonAuthed: keys.sonAuthed, gfAuthed: keys.gfAuthed, GF: 'GFHTML', GF_GZ: 'GFGZ',
     send: (res, code, body, type) => { res.out = { code, body, type }; return res.out; },
     S: { authUrl: '', connected: true, transport: { finishAuth: stub('finishAuth') } }, P: { rec: { day: '2026-11-27', pos: null, sonk: { open: [] } }, ctl: {}, manGuard: undefined },
     CITY: 'CITYHTML', CITY_GZ: 'CITYGZ', DECK: 'DECKHTML', DECK_GZ: 'DECKGZ', SON: 'SONHTML', SON_GZ: 'SONGZ', DASH: 'DASHHTML', BT: { run: false, res: { ok: 1 } }, WATCH: null, CSK_ON: true, MAN: { gLoss: 30, gGain: 100 }, HIST: {},
-    SONCFG: { son: true }, MANCFG: { son: false }, setImmediate: () => {}
+    SONCFG: { key: 'sonk', book: 'son', who: 'son', shut: 'sonShut', guest: true }, GFCFG: { key: 'gfk', book: 'gf', who: 'gf', shut: 'gfShut', guest: true }, MANCFG: { guest: false }, setImmediate: () => {}
   };
   const scope = new Proxy(base, { has: (o, k) => typeof k === 'string' && !(k in globalThis) && k !== 'arguments', get: (o, k) => k === Symbol.unscopables ? undefined : (k in o ? o[k] : stub(String(k))) });
   const make = code => new Function('scope', 'with (scope) { ' + code + ' }')(scope);
-  base.sonRoute = make('return (' + SONROUTE + ');'); const handler = make(HANDLER + '\nreturn server;');
+  const routes = make(GUEST + '\nreturn { sonRoute, gfRoute };'); base.sonRoute = routes.sonRoute; base.gfRoute = routes.gfRoute; const handler = make(HANDLER + '\nreturn server;');
   return async (method, url, key, extra) => {
     const sep = url.indexOf('?') < 0 ? '?' : '&', res = { out: null, writeHead(c, h) { this.out = { code: c, headers: h }; }, end(b) { this.out = Object.assign(this.out || {}, { body: b }); } };
     touched.length = 0; await handler({ method, url: url + (key === undefined ? '' : sep + 'key=' + key), headers: Object.assign({}, extra) }, res);
@@ -33,7 +33,7 @@ const JAMES_POST = ['/api/ondemand?sym=SPY&side=call&qty=1', '/api/closebook?boo
 t('the son key: / redirects to /son, /son and /api/son/state work and reach only the son code', async () => {
   const go = build('A', 'S'); const a = await go('GET', '/', 'S'); assert.deepStrictEqual([a.code, a.headers.location], [302, '/son?key=S']); assert.deepStrictEqual(a.touched, []);
   const b = await go('GET', '/son', 'S'); assert.deepStrictEqual([b.code, b.body], [200, 'SONHTML']); const c = await go('GET', '/api/son/state', 'S'); assert.strictEqual(c.code, 200); assert.deepStrictEqual(c.touched, ['deckOut']);
-  const d = await go('POST', '/api/son/enter?sym=SPY&side=call&qty=1', 'S'); assert.strictEqual(d.code, 200); assert.deepStrictEqual(d.touched, ['manualEnterSon']); const e = await go('POST', '/api/son/close?sym=SPY&t0=1&n=1', 'S'); assert.deepStrictEqual(e.touched, ['manualCloseBook']);
+  const d = await go('POST', '/api/son/enter?sym=SPY&side=call&qty=1', 'S'); assert.strictEqual(d.code, 200); assert.deepStrictEqual(d.touched, ['manualEnterB']); const e = await go('POST', '/api/son/close?sym=SPY&t0=1&n=1', 'S'); assert.deepStrictEqual(e.touched, ['manualCloseBook']);
   const x = await go('GET', '/api/son/state', 'S', { 'x-key': undefined }); assert.strictEqual(x.code, 200);
 });
 t('the son key reaches NOTHING else: every James, admin, studies, CSK, stop-day, control and real-money route, GET or POST, answers non-200 and calls no stubbed function', async () => {

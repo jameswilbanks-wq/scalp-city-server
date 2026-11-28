@@ -14,7 +14,7 @@ function build(o) {
   const pickContract = async (sym, dir) => { calls.pick++; return { qAge: 1000, inst: 'opt-' + sym, strike: 710, exp: '2026-11-27', type: dir > 0 ? 'call' : 'put', ask: env.ask, bid: env.bid, iv: 0.2, delta: dir * 0.5 }; };
   const rh = async (n, a) => ({ results: a.instrument_ids.map(i => ({ quote: { instrument_id: i, bid_price: String(env.bid), ask_price: String(env.ask), updated_at: new Date(Date.now() - (env.stale ? 600000 : 1000)).toISOString() } })) });
   const stubs = [P, { syms: ['SPY', 'QQQ'] }, () => env.open, () => ({ min: env.min, day: '2026-11-27' }), pickContract, (...a) => { calls.sig.push(a); }, () => {}, rh, d => new Date(d).toISOString(), ['SPY', 'QQQ'], o.cap === undefined ? 1200 : o.cap, false, { syms: ['SPY', 'QQQ'], width: 2, min: 660 }, { on: true, min: 750 }, async () => [{ t: Date.now() - 30000, c: 200 }]];
-  const api = new Function(...NAMES, CODE + '\nreturn { manualEnter, manualEnterSon, manageMan, manageSon, manualCloseBook, guardCfg, cleanGuard, MAN };')(...stubs);
+  const api = new Function(...NAMES, CODE + '\nreturn { manualEnter, manualEnterSon, manageMan, manageSon, manualCloseBook, guardCfg, cleanGuard, MAN, MANCFG, SONCFG };')(...stubs);
   return Object.assign({ P, env, calls }, api);
 }
 
@@ -34,7 +34,7 @@ t('the son has the same entry rules (symbols, qty 1-3, 3 open) but his orders ar
   const cap = new Function('CORR_GROUPS', fn('corrGroupOpenRiskUSD') + '\nreturn corrGroupOpenRiskUSD;')(['SPY', 'QQQ']); assert.strictEqual(cap({ sonk: { open: [{ sym: 'SPY', entryAsk: 5, qty: 3 }] } }), 0, 'sonk is not in the cap sum');
 });
 t('guard settings are separate and bounded: defaults 30/100/25 trail; clean ranges loss 5-90, gain 10-1000, trail 5-60; bad values are dropped', () => {
-  const w = build(); assert.deepStrictEqual(w.guardCfg({ son: false }), { on: true, loss: 30, gain: 100, trail: 25, mode: 'trail' }); w.P.sonG = { loss: 20, mode: 'close' }; w.P.sonGuard = false; assert.deepStrictEqual(w.guardCfg({ son: true }), { on: false, loss: 20, gain: 100, trail: 25, mode: 'close' }); assert.strictEqual(w.guardCfg({ son: false }).loss, 30, 'James\'s unchanged');
+  const w = build(); assert.deepStrictEqual(w.guardCfg(w.MANCFG), { on: true, loss: 30, gain: 100, trail: 25, mode: 'trail' }); w.P.sonG = { loss: 20, mode: 'close' }; w.P.sonGuard = false; assert.deepStrictEqual(w.guardCfg(w.SONCFG), { on: false, loss: 20, gain: 100, trail: 25, mode: 'close' }); assert.strictEqual(w.guardCfg(w.MANCFG).loss, 30, 'James\'s unchanged');
   assert.deepStrictEqual(w.cleanGuard({ loss: '4', gain: '9', trail: '61' }), {}); assert.deepStrictEqual(w.cleanGuard({ loss: '5', gain: '1000', trail: '60', mode: 'close' }), { loss: 5, gain: 1000, trail: 60, mode: 'close' }); assert.deepStrictEqual(w.cleanGuard({ loss: 'abc', mode: 'x', gain: '' }), {}, 'non-numeric and unknown mode dropped');
 });
 t('the son\'s own guard: a custom -20% stop sells at the bid (reason guard stop); James\'s default is unaffected; OFF means no guard sell', async () => {
@@ -57,21 +57,21 @@ t('partial close: selling 1 of 3 books one row at the bid (reason manual partial
 t('partial close also works on James\'s book (book man) even on a stale quote; n of 0 or n >= qty means close all; only the two manual books support it', async () => {
   const w = build(); await w.manualEnter('SPY', 'call', 2); const t0 = w.P.rec.mank.open[0].t0; w.env.stale = true; w.env.bid = 2.6; const r = await w.manualCloseBook('man', 'SPY', t0, 1); assert.deepStrictEqual([r.partial, r.left, r.pnl], [true, 1, 50]);
   const x = build(); await x.manualEnter('SPY', 'call', 2); const r2 = await x.manualCloseBook('man', 'SPY', x.P.rec.mank.open[0].t0, 5); assert.strictEqual(r2.closed, true); const y = build(); await y.manualEnter('SPY', 'call', 2); const r3 = await y.manualCloseBook('man', 'SPY', y.P.rec.mank.open[0].t0, 0); assert.strictEqual(r3.closed, true);
-  assert.ok(/\(book === 'man' \|\| book === 'son'\) && n >= 1/.test(fn('manualCloseBook')), 'partial is for the two manual books only');
+  assert.ok(/\(book === 'man' \|\| book === 'son' \|\| book === 'gf'\) && n >= 1/.test(fn('manualCloseBook')), 'partial is for the two manual books only');
 });
 t('son access: the key is compared only, reaches only sonRoute, is ignored when equal to ADMIN_KEY, "/" sends him to /son, James-key routes sit after the admin check', () => {
   assert.ok(/const SON_KEY = process\.env\.SON_KEY \|\| ''/.test(SRC)); const sa = line('const sonAuthed'); assert.ok(/SON_KEY !== ADMIN_KEY/.test(sa) && /!!SON_KEY/.test(sa));
   const h = SRC.slice(SRC.indexOf('const server = http.createServer'), SRC.indexOf('const DASH = '));
   const iSon = h.indexOf('if (sonAuthed(u, req))'), iAdm = h.indexOf('if (!authed(u, req))'); assert.ok(iSon > 0 && iAdm > iSon); const sonLine = h.slice(iSon, h.indexOf('\n', iSon)); assert.ok(/return sonRoute\(u, req, res\)/.test(sonLine) && /location: '\/son\?key='/.test(sonLine));
   assert.ok(h.indexOf("u.pathname === '/api/deck'") > iAdm && h.indexOf("u.pathname.startsWith('/api/son/')") > iAdm, 'James key routes after the admin check');
-  const sr = fn('sonRoute'); assert.ok(!/closebook|\/api\/ondemand|manguard|cskday|\/api\/control|\/api\/real|\/api\/stopday|\/api\/close'/.test(sr), 'the son routes expose no James or real-money route');
+  const sr = fn('guestRoute'); assert.ok(/function sonRoute\(u, req, res\) \{ return guestRoute\(SONCFG, SON, SON_GZ, u, req, res\); \}/.test(SRC), 'the son router serves only the son book'); assert.ok(!/closebook|\/api\/ondemand|manguard|cskday|\/api\/control|\/api\/real|\/api\/stopday|\/api\/close'/.test(sr), 'the son routes expose no James or real-money route');
   assert.ok(!/console\.log\([^)]*SON_KEY|slog\([^)]*SON_KEY|send\([^)]*SON_KEY/.test(SRC), 'the key is never logged or returned');
-  for (const p of ['enter', 'close', 'closeall', 'guard', 'stopday', 'resume']) assert.ok(sr.includes("'/api/son/" + p + "'"), p); assert.ok(sr.indexOf('if (!post)') > 0 && sr.indexOf('if (!post)') < sr.indexOf("'/api/son/enter'"), 'every write is POST only');
+  for (const p of ['enter', 'close', 'closeall', 'guard', 'stopday', 'resume']) assert.ok(sr.includes("p === '" + p + "'"), p); assert.ok(sr.indexOf('if (!post)') > 0 && sr.indexOf('if (!post)') < sr.indexOf("p === 'enter'"), 'every write is POST only'); assert.ok(sr.includes("const base = '/api/' + cfg.who + '/'") && sr.includes('if (!u.pathname.startsWith(base)) return send(res, 404'), 'a guest router answers only its own prefix');
 });
 t('the son\'s numbers stay out of James\'s: scoreOf, the days list and recOut never read sonk; the manual-book core sends nothing to a broker', () => {
-  assert.ok(!/sonk/.test(fn('scoreOf')) && !/sonk/.test(fn('recOut')) && !/sonk/.test(SRC.slice(SRC.indexOf('async function cityData'), SRC.indexOf('const authed = '))), 'no sonk in scoreOf, recOut or cityData');
+  assert.ok(!/gfk/.test(fn('scoreOf')) && !/gfk/.test(fn('recOut')) && !/gfk/.test(SRC.slice(SRC.indexOf('async function cityData'), SRC.indexOf('const authed = '))), 'no gfk in scoreOf, recOut or cityData'); assert.ok(!/sonk/.test(fn('scoreOf')) && !/sonk/.test(fn('recOut')) && !/sonk/.test(SRC.slice(SRC.indexOf('async function cityData'), SRC.indexOf('const authed = '))), 'no sonk in scoreOf, recOut or cityData');
   const blk = SRC.slice(SRC.indexOf('async function manualEnterB('), SRC.indexOf('const MANUAL_BOOKS')).replace(/\/\*[\s\S]*?\*\//g, ''); assert.ok(!/apTrade|place_option_order|place_equity_order|fetch\(|\/v2\/orders|https?:\/\//.test(blk), 'no order or network call in the manual-book core');
-  const deck = fn('deckOut'); assert.ok(/cfg\.son/.test(deck) && /if \(!cfg\.son\)/.test(deck), 'son payload has no CSK switch and no other-books list');
+  const deck = fn('deckOut'); assert.ok(/cfg\.guest/.test(deck) && /if \(!cfg\.guest\)/.test(deck), 'son payload has no CSK switch and no other-books list');
 });
 t('histOut reads one book key only and averages over the days that book traded; the history never mixes books', async () => {
   const kscan = async () => [{ key: 'rec:2026-11-26', value: { day: '2026-11-26', mank: { trades: [{ exitT: 'x', pnl: 100 }] }, sonk: { trades: [{ exitT: 'x', pnl: -20 }, { exitT: 'x', pnl: 10 }] } } }, { key: 'rec:2026-11-27', value: { day: '2026-11-27', sonk: { trades: [{ exitT: 'x', pnl: 30 }] } } }];

@@ -100,3 +100,6 @@ With the switch ON (v2, James 2026-11-27, see DECISIONS 2026-11-27): auto-sell a
 
 ## 2026-11-27 — Son's manual book (`sonk`) and adjustable guardrails
 Simulated journal only, no broker order, outside James's correlation cap, same entry limits as the on-demand book (symbols, 1-3 contracts, 3 open, $1,200 per order, 9:30-16:00 ET entries, 15:59 flat). Guardrail percentages are bounded in server code (stop 5-90, gain 10-1000, trail 5-60); defaults 30 / 100 / 25 unchanged. Stops run only while the server process runs (no broker-resident stop). Changing the bounds or limits needs James's yes.
+
+## 2026-11-28 — gf manual book (`gfk`)
+Same standing and limits as the son's book above: simulated journal only, no broker order, outside James's correlation cap, same entry limits, same guardrail bounds and defaults, own settings and own stop flag, stops run only while the server process runs.

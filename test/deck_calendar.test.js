@@ -7,7 +7,7 @@ function cut(name) { const i = HTML.indexOf('function ' + name + '('); assert.ok
 const money = (n, sign) => (n < 0 ? '-' : sign && n > 0 ? '+' : '') + '$' + Math.abs(Math.round(n)).toLocaleString('en-US');
 function run(S, H, SON) {
   const el = {}; const $ = id => el[id] || (el[id] = { id, textContent: '', innerHTML: '', className: '' });
-  new Function('S', 'H', 'SON', '$', 'money', cut('renderCal') + '\nrenderCal();')(S, H, SON, $, money);
+  new Function('S', 'H', 'SON', 'GUEST', 'L', '$', 'money', cut('renderCal') + '\nrenderCal();')(S, H, SON, SON, (en) => en, $, money);
   const cells = [...$('calG').innerHTML.matchAll(/<div class="(d|w)( [^"]*)?">(.*?)<\/div>/g)].map(m => ({ kind: m[1], cls: m[2]||"", html: m[3], text: m[3].replace(/<[^>]+>/g, '') }));
   return { el, cells, days: cells.filter(c => c.kind === 'd'), weeks: cells.filter(c => c.kind === 'w') };
 }

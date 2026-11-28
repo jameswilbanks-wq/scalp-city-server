@@ -27,7 +27,7 @@ t('lines closer than the merge distance become one label: major names first, two
 });
 t('page text: GEX lines carry "(est.)", open interest says as-of, no untested "often stalls" claim, nothing new asked of the server', () => {
   ['GEX call wall (est.)', 'GEX put wall (est.)', 'Gamma flip (est.)', 'Fib 38.2 of prior day', 'Prior-week high', 'Prior-month high', 'Prior 4h high, morning', 'Prior-day volume POC', 'OI call wall'].forEach(s => assert.ok(HTML.includes(s), s));
-  assert.ok(/OI is open interest'\+\(L\.oiDate\?' as of '/.test(HTML), 'OI date shown'); assert.ok(HTML.includes('GEX lines are model estimates, not facts'));
+  assert.ok(/OI is open interest'\+\(Lv\.oiDate\?' as of '/.test(HTML), 'OI date shown'); assert.ok(HTML.includes('GEX lines are model estimates, not facts'));
   assert.ok(!/often stalls/.test(HTML), 'no untested claim'); assert.ok(HTML.includes('Reference line only, not a tested signal'));
   assert.ok(!/fetch\(['"]\/api\/(lvx|levels)/.test(HTML), 'levels ride the existing state poll'); assert.ok(HTML.includes('S.lvx') || /S&&S\.lvx/.test(HTML));
 });

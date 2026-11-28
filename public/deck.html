@@ -321,7 +321,8 @@ a.btn{color:var(--ink);align-items:center;justify-content:center;min-height:44px
 <script>
 (function(){
   var $=function(id){return document.getElementById(id)};
-  var SON=window.__WHO__==='son';
+  var SON=window.__WHO__==='son', GF=window.__WHO__==='gf', GUEST=SON||GF; /* GUEST = not James. GF = the page in Latin American Spanish. */
+  function L(en,es){return GF?es:en}
   var KEY=new URLSearchParams(location.search).get('key')||'';
   function url(p){return p+(p.indexOf('?')<0?'?':'&')+'key='+encodeURIComponent(KEY)}
   function call(p,m){return fetch(url(p),{method:m||'GET',cache:'no-store'}).then(function(r){return r.json().catch(function(){return{ok:false,error:'Bad reply from the server ('+r.status+')'}})})}
@@ -338,6 +339,50 @@ a.btn{color:var(--ink);align-items:center;justify-content:center;min-height:44px
     close:function(p,n){return '/api/closebook?'+Q({book:'man',sym:p.sym,t0:p.t0,n:n})},
     guard:function(g){return '/api/manguard?'+Q(g)},stop:'/api/stopday',resume:'/api/resumeday'
   };
+  if(GF)EP={
+    state:'/api/gf/state',hist:'/api/gf/history',
+    enter:function(s,side,q){return '/api/gf/enter?'+Q({sym:s,side:side,qty:q})},
+    close:function(p,n){return '/api/gf/close?'+Q({sym:p.sym,t0:p.t0,n:n})},
+    guard:function(g){return '/api/gf/guard?'+Q(g)},stop:'/api/gf/stopday',resume:'/api/gf/resume'
+  };
+  /* Messages the SERVER writes (order refusals, queued notes) are English; on the Spanish page they are translated here. Anything not listed is shown in English rather than hidden. */
+  var SRV=[
+    [/^on-demand orders are switched off.*$/,'las órdenes manuales están apagadas'],
+    [/^the journal is not loaded yet$/,'el registro todavía no se ha cargado'],
+    [/^trading is stopped for today \((.*)\)$/,'las operaciones están detenidas por hoy'],
+    [/^symbol must be one of (.*)$/,'el símbolo debe ser uno de $1'],
+    [/^side must be call or put$/,'debe ser CALL o PUT'],
+    [/^quantity must be 1 to (\d+)$/,'la cantidad debe ser de 1 a $1'],
+    [/^market is closed$/,'el mercado está cerrado'],
+    [/^on-demand entries run 9:30 to 16:00 ET$/,'solo se puede comprar de 9:30 a 16:00, hora de Nueva York'],
+    [/^(\d+) on-demand positions are already open; close one first$/,'ya hay $1 operaciones abiertas; primero cierra una'],
+    [/^another on-demand order is being placed, try again in a moment$/,'se está colocando otra orden; intenta de nuevo en un momento'],
+    [/^could not load a (\S+) price .*$/,'no se pudo cargar el precio de $1'],
+    [/^no fresh (\S+) price yet .*$/,'todavía no hay un precio reciente de $1 (tiene más de 5 minutos)'],
+    [/^could not load option data.*$/,'no se pudieron cargar los datos de las opciones'],
+    [/^no expiry available$/,'no hay fecha de vencimiento disponible'],
+    [/^no strikes near the price$/,'no hay strikes cerca del precio'],
+    [/^option quotes are stale$/,'las cotizaciones de las opciones están atrasadas'],
+    [/^no live quotes$/,'no hay cotizaciones en vivo'],
+    [/^nothing near the money under \$(\d+) with a tight spread \(cheapest ask \$(\d+)\)$/,'no hay ningún contrato cercano al precio por menos de $$$1 con poca diferencia entre compra y venta (el más barato cuesta $$$2)'],
+    [/^the trading day changed or stopped while the order was being placed$/,'el día cambió o se detuvo mientras se colocaba la orden'],
+    [/^(\d+)x (\S+) (call|put) (\S+) costs \$(\d+), over the \$(\d+) per-order limit; try fewer contracts$/,'$1x $2 $3 $4 cuesta $$$5, más que el límite de $$$6 por orden; prueba con menos contratos'],
+    [/^bad symbol$/,'símbolo no válido'],
+    [/^that position is not open .*$/,'esa operación ya no está abierta (quizá se acaba de cerrar)'],
+    [/^unknown book$/,'registro desconocido'],
+    [/^Queued: the server is busy.*$/,'En espera: el servidor está ocupado; se vende con el próximo precio.'],
+    [/^Queued: no fresh price yet.*$/,'En espera: todavía no hay precio reciente; se vende con el próximo precio.'],
+    [/^no journal yet$/,'todavía no hay registro'],
+    [/^not stopped$/,'no está detenido'],
+    [/^out of range or invalid: .*$/,'valor fuera de rango (pérdida de 5 a 90, ganancia de 10 a 1000, stop móvil de 5 a 60)'],
+    [/^on must be 1 or 0$/,'valor no válido'],
+    [/^Bad reply from the server \((\d+)\)$/,'respuesta incorrecta del servidor ($1)']
+  ];
+  function srv(m){if(!GF||!m)return m;for(var i=0;i<SRV.length;i++)if(SRV[i][0].test(m))return String(m).replace(SRV[i][0],SRV[i][1]);return m}
+  /* level names stay English inside the logic and are translated only when drawn */
+  var LVES={'Opening-range high':'Máximo del rango de apertura','Opening-range low':'Mínimo del rango de apertura','VWAP':'VWAP','Day high':'Máximo de hoy','Day low':'Mínimo de hoy','Prior-day high':'Máximo del día anterior','Prior-day low':'Mínimo del día anterior','Prior-week high':'Máximo de la semana anterior','Prior-week low':'Mínimo de la semana anterior','Prior-month high':'Máximo del mes anterior','Prior-month low':'Mínimo del mes anterior','Fib 38.2 of prior day':'Fib 38.2 del día anterior','Fib 50 of prior day':'Fib 50 del día anterior','Fib 61.8 of prior day':'Fib 61.8 del día anterior','Prior 4h high, morning':'Máximo 4h anterior (mañana)','Prior 4h low, morning':'Mínimo 4h anterior (mañana)','Prior 4h high, afternoon':'Máximo 4h anterior (tarde)','Prior 4h low, afternoon':'Mínimo 4h anterior (tarde)','Prior-day volume POC':'POC de volumen del día anterior','Prior value area high':'Techo del área de valor anterior','Prior value area low':'Piso del área de valor anterior','OI call wall':'Muro de calls (OI)','OI put wall':'Muro de puts (OI)','OI max pin':'Punto de mayor OI','GEX call wall (est.)':'Muro de calls GEX (estim.)','GEX put wall (est.)':'Muro de puts GEX (estim.)','Gamma flip (est.)':'Cambio de gamma (estim.)'};
+  function lvName(n){return GF?(LVES[n]||n):n}
+  function clName(c){if(!GF)return c.n;var nm=c.items.map(function(i){return lvName(i.n)});return nm.slice(0,2).join(' + ')+(nm.length>2?' +'+(nm.length-2)+' más':'')}
   var S=null,H=null,byId={},qty=1,armed={key:'',until:0},netBad=0;
   var G={on:true,loss:30,gain:100,trail:25,mode:'trail'};
 
@@ -373,35 +418,35 @@ a.btn{color:var(--ink);align-items:center;justify-content:center;min-height:44px
     return out.map(function(g){var mj=g.items.filter(function(i){return i.major}),oth=g.items.filter(function(i){return!i.major}),all=mj.concat(oth),lead=all[0],nm=all.map(function(i){return i.n}),mw=Math.max.apply(null,g.items.map(function(i){return i.w}));
       return{v:lead.v,major:mj.length>0,w:Math.min(5,mw+(g.items.length>=3?1:0)),est:g.items.every(function(i){return i.est}),items:all,n:nm.slice(0,2).join(' + ')+(nm.length>2?' +'+(nm.length-2)+' more':'')}})}
   function lvPaint(p){
-    var L=levels(p.sym),b=fld(p,'lvb'),thr=(p.sym==='SPY'||p.sym==='QQQ')?.0008:.0025,cl=L?lvCluster(L.list,thr*.5):[],mj=cl.filter(function(c){return c.major});
-    if(!L||!mj.length){b.className='lvb clear';b.textContent='Levels loading';fld(p,'lvt').textContent=p.sym;fld(p,'lvS').textContent='';fld(p,'lvR').textContent='';fld(p,'lvdot').style.left='50%';fld(p,'lvn').textContent='';fld(p,'lvtr').setAttribute('data-near','');if(p._tk){p._tk='';fld(p,'lvtk').innerHTML=''}return}
-    var u=L.px,up=null,dn=null,call=p.type==='call';
+    var Lv=levels(p.sym),b=fld(p,'lvb'),thr=(p.sym==='SPY'||p.sym==='QQQ')?.0008:.0025,cl=Lv?lvCluster(Lv.list,thr*.5):[],mj=cl.filter(function(c){return c.major});
+    if(!Lv||!mj.length){b.className='lvb clear';b.textContent=L('Levels loading','Cargando niveles');fld(p,'lvt').textContent=p.sym;fld(p,'lvS').textContent='';fld(p,'lvR').textContent='';fld(p,'lvdot').style.left='50%';fld(p,'lvn').textContent='';fld(p,'lvtr').setAttribute('data-near','');if(p._tk){p._tk='';fld(p,'lvtk').innerHTML=''}return}
+    var u=Lv.px,up=null,dn=null,call=p.type==='call';
     mj.forEach(function(l){if(l.v>u&&(!up||l.v<up.v))up=l;if(l.v<=u&&(!dn||l.v>dn.v))dn=l});
     var rel=call?up:dn,dist=rel?Math.abs(rel.v-u)/u:null,st=!rel?'clear':dist<=thr?'near':dist<=thr*2.5?'near2':'clear';
     b.className='lvb '+st;
-    b.textContent=st==='near'?'Near '+(call?'resistance':'support'):st==='near2'?'Approaching '+(call?'resistance':'support'):!rel?'No level '+(call?'above':'below'):'Room '+(call?'above':'below');
-    fld(p,'lvt').textContent=p.sym+' stock '+u.toFixed(2);
-    var d=function(l){return (Math.abs(l.v-u)/u*100).toFixed(2)+'% away'};
-    fld(p,'lvS').innerHTML=dn?'Support '+dn.v.toFixed(2)+'<br>'+esc(dn.n)+', '+d(dn):'No support below';
-    fld(p,'lvR').innerHTML=up?'Resistance '+up.v.toFixed(2)+'<br>'+esc(up.n)+', '+d(up):'No resistance above';
+    b.textContent=st==='near'?L('Near '+(call?'resistance':'support'),'Cerca de '+(call?'resistencia':'soporte')):st==='near2'?L('Approaching '+(call?'resistance':'support'),'Acercándose a '+(call?'resistencia':'soporte')):!rel?L('No level '+(call?'above':'below'),'Sin nivel '+(call?'arriba':'abajo')):L('Room '+(call?'above':'below'),'Espacio '+(call?'arriba':'abajo'));
+    fld(p,'lvt').textContent=p.sym+L(' stock ',' acción ')+u.toFixed(2);
+    var d=function(l){var v=(Math.abs(l.v-u)/u*100).toFixed(2);return L(v+'% away','a '+v+'%')};
+    fld(p,'lvS').innerHTML=dn?L('Support ','Soporte ')+dn.v.toFixed(2)+'<br>'+esc(clName(dn))+', '+d(dn):L('No support below','Sin soporte abajo');
+    fld(p,'lvR').innerHTML=up?L('Resistance ','Resistencia ')+up.v.toFixed(2)+'<br>'+esc(clName(up))+', '+d(up):L('No resistance above','Sin resistencia arriba');
     fld(p,'lvtr').setAttribute('data-near',st==='near'?(call?'r':'s'):'');
-    fld(p,'lvn').textContent=st==='near'?'Reference line only, not a tested signal. The stock is '+d(rel)+' from it.':'';
+    fld(p,'lvn').textContent=st==='near'?L('Reference line only, not a tested signal. The stock is '+d(rel)+' from it.','Es solo una línea de referencia, no una señal comprobada. La acción está '+d(rel)+' de ella.'):'';
     /* the horizontal line: from just below the nearest major support to just above the nearest major resistance (a fixed band around the price when one side has none) */
     var w0=thr*10,lo=dn?dn.v:u*(1-w0),hi=up?up.v:u*(1+w0),pad=Math.max((hi-lo)*.08,u*thr*.5);lo-=pad;hi+=pad;
     if(hi-lo<u*thr*6){var mid=(hi+lo)/2;lo=mid-u*thr*3;hi=mid+u*thr*3}
     var pos=function(v){return Math.min(100,Math.max(0,(v-lo)/(hi-lo)*100))};
-    var tipFor=function(c){var dd=(c.v-u)/u*100,l=[c.v.toFixed(2)+'  ('+(dd>=0?'+':'')+dd.toFixed(2)+'% from price)'];c.items.forEach(function(i){l.push(i.n+(c.items.length>1?'  '+i.v.toFixed(2):''))});
-      if(c.items.some(function(i){return i.n.indexOf('OI ')===0})&&L.oiDate)l.push('Open interest as of '+L.oiDate);if(c.est)l.push('Estimate, not a fact');return l.join('|')};
+    var tipFor=function(c){var dd=(c.v-u)/u*100,l=[c.v.toFixed(2)+'  ('+(dd>=0?'+':'')+dd.toFixed(2)+L('% from price)','% desde el precio)')];c.items.forEach(function(i){l.push(lvName(i.n)+(c.items.length>1?'  '+i.v.toFixed(2):''))});
+      if(c.items.some(function(i){return i.n.indexOf('OI ')===0})&&Lv.oiDate)l.push(L('Open interest as of ','Interés abierto al ')+Lv.oiDate);if(c.est)l.push(L('Estimate, not a fact','Es una estimación, no un hecho'));return l.join('|')};
     var tk='';cl.forEach(function(c){if(c.v<lo||c.v>hi)return;var tip=tipFor(c);
       tk+='<span class="tk '+(c.v>u?'ab':'bl')+(c.est?' est':'')+(c===rel&&st==='near'?' hot':'')+'" style="left:'+pos(c.v).toFixed(2)+'%;height:'+LVH[c.w]+'px;--tw:'+(c.w>=4?3:2)+'px" data-tip="'+esc(tip)+'" role="img" aria-label="'+esc(tip.split('|').join(', '))+'"></span>'});
     if(p._tk!==tk){p._tk=tk;fld(p,'lvtk').innerHTML=tk}
-    var dot=fld(p,'lvdot');dot.style.left=pos(u)+'%';dot.setAttribute('data-tip','Stock price now|'+u.toFixed(2));
-    var rows=cl.slice().sort(function(x,y){return y.v-x.v}),h='',put=false,pxr='<div class="lvr px"><span class="p">'+u.toFixed(2)+'</span><span class="n">Stock price now</span><span class="d"></span></div>';
-    rows.forEach(function(c){if(!put&&c.v<=u){h+=pxr;put=true}var dd=(c.v-u)/u*100;h+='<div class="lvr'+(c.major?' maj':'')+'"><span class="p">'+c.v.toFixed(2)+'</span><span class="n">'+esc(c.n)+'</span><span class="d">'+(dd>=0?'+':'')+dd.toFixed(2)+'%</span></div>'});
+    var dot=fld(p,'lvdot');dot.style.left=pos(u)+'%';dot.setAttribute('data-tip',L('Stock price now','Precio actual de la acción')+'|'+u.toFixed(2));
+    var rows=cl.slice().sort(function(x,y){return y.v-x.v}),h='',put=false,pxr='<div class="lvr px"><span class="p">'+u.toFixed(2)+'</span><span class="n">'+L('Stock price now','Precio actual de la acción')+'</span><span class="d"></span></div>';
+    rows.forEach(function(c){if(!put&&c.v<=u){h+=pxr;put=true}var dd=(c.v-u)/u*100;h+='<div class="lvr'+(c.major?' maj':'')+'"><span class="p">'+c.v.toFixed(2)+'</span><span class="n">'+esc(clName(c))+'</span><span class="d">'+(dd>=0?'+':'')+dd.toFixed(2)+'%</span></div>'});
     if(!put)h+=pxr;
-    h+='<div class="lvfn">On the line: red lines are above the price, green below; a bigger line is a more widely watched kind of level (month, then week, then OI wall, then day; lines stacked on one price grow). Size is a convention, not a measured edge. Hover or tap a line to see what it is. In this list, bold lines trigger Near and Approaching. GEX lines are model estimates, not facts: they assume customers are long calls and short puts. OI is open interest'+(L.oiDate?' as of '+esc(L.oiDate):'')+', so it leaves out positions opened today. No line here is a tested signal.</div>';
+    h+='<div class="lvfn">'+L('On the line: red lines are above the price, green below; a bigger line is a more widely watched kind of level (month, then week, then OI wall, then day; lines stacked on one price grow). Size is a convention, not a measured edge. Hover or tap a line to see what it is. In this list, bold lines trigger Near and Approaching. GEX lines are model estimates, not facts: they assume customers are long calls and short puts. OI is open interest'+(Lv.oiDate?' as of '+esc(Lv.oiDate):'')+', so it leaves out positions opened today. No line here is a tested signal.','En la línea: las rayas rojas están arriba del precio y las verdes abajo. Una raya más grande es un tipo de nivel que más gente observa (primero el mes, luego la semana, luego los muros de OI, luego el día); las líneas amontonadas en un mismo precio crecen. El tamaño es una convención, no una ventaja comprobada. Pasa el cursor o toca una raya para ver qué es. En esta lista, las líneas en negrita son las que activan los avisos Cerca de y Acercándose. Las líneas GEX son estimaciones de un modelo, no hechos: suponen que los clientes compraron calls y vendieron puts. OI es el interés abierto'+(Lv.oiDate?' al '+esc(Lv.oiDate):'')+', así que no incluye las posiciones abiertas hoy. Ninguna línea aquí es una señal comprobada.')+'</div>';
     if(p._lvh!==h){p._lvh=h;fld(p,'lvxl').innerHTML=h}
-    fld(p,'lvxs').textContent='All levels ('+cl.length+')'}
+    fld(p,'lvxs').textContent=L('All levels (','Todos los niveles (')+cl.length+')'}
   /* one floating tooltip for every line: hover on a computer, tap on a phone */
   var tipEl=document.createElement('div');tipEl.className='lvtip';tipEl.id='lvtip';document.body.appendChild(tipEl);
   function tipShow(el){var t=el.getAttribute('data-tip');if(!t)return;tipEl.innerHTML='';t.split('|').forEach(function(l,i){var d=document.createElement('div');if(i===0)d.style.fontWeight='700';d.textContent=l;tipEl.appendChild(d)});tipEl.style.display='block';
@@ -417,19 +462,19 @@ a.btn{color:var(--ink);align-items:center;justify-content:center;min-height:44px
     +'<div class="sub" data-f="sub"></div>'
     +'<div class="pl"><span class="amt" data-f="amt"></span><span class="pc" data-f="pc"></span><svg class="spark" viewBox="0 0 96 38" preserveAspectRatio="none" aria-hidden="true"><path data-f="sp" fill="none" stroke-width="2" stroke-linejoin="round"/></svg></div>'
     +'<div><div class="meter"><span class="stop" data-f="stopmk"></span><span class="zero" data-f="zero"></span><span class="fill" data-f="fill"></span><span class="trail" data-f="trail"></span><span class="mk" data-f="mk"></span></div>'
-    +'<div class="mlab"><span data-f="lblL"></span><span>breakeven</span><span data-f="lblR"></span></div></div>'
-    +'<div class="facts"><div><small>Paid</small><b data-f="paid"></b></div><div><small>Now (sell price)</small><b data-f="bid"></b></div><div><small>Best so far</small><b data-f="peak"></b></div></div>'
-    +'<div class="lv"><div class="lvh"><span class="lvt" data-f="lvt"></span><span class="lvb" data-f="lvb"></span></div><div class="lvtrack" data-f="lvtr"><div class="lvticks" data-f="lvtk"></div><i data-f="lvdot"></i></div><div class="lvl"><span data-f="lvS"></span><span data-f="lvR"></span></div><div class="lvn" data-f="lvn"></div><details class="lvx"><summary data-f="lvxs">All levels</summary><div class="lvxl" data-f="lvxl"></div></details></div>'
+    +'<div class="mlab"><span data-f="lblL"></span><span>'+L('breakeven','ni ganas ni pierdes')+'</span><span data-f="lblR"></span></div></div>'
+    +'<div class="facts"><div><small>'+L('Paid','Pagaste')+'</small><b data-f="paid"></b></div><div><small>'+L('Now (sell price)','Ahora (precio de venta)')+'</small><b data-f="bid"></b></div><div><small>'+L('Best so far','Mejor precio')+'</small><b data-f="peak"></b></div></div>'
+    +'<div class="lv"><div class="lvh"><span class="lvt" data-f="lvt"></span><span class="lvb" data-f="lvb"></span></div><div class="lvtrack" data-f="lvtr"><div class="lvticks" data-f="lvtk"></div><i data-f="lvdot"></i></div><div class="lvl"><span data-f="lvS"></span><span data-f="lvR"></span></div><div class="lvn" data-f="lvn"></div><details class="lvx"><summary data-f="lvxs">'+L('All levels','Todos los niveles')+'</summary><div class="lvxl" data-f="lvxl"></div></details></div>'
     +'<div class="guard" data-f="guard"></div>'
     +'<div data-f="act"></div>'}
   function actHTML(p){
     var id=esc(p.id);
-    if(p.busy)return '<div class="confirm"><button class="no" type="button" disabled>Selling...</button></div>';
-    if(p.confirm){var part=p.pick<p.qty;return '<div class="confirm"><button class="go" data-a="yes" data-id="'+id+'" type="button">Yes, sell '+p.pick+(part?' of '+p.qty:'')+' now</button><button class="no" data-a="no" data-id="'+id+'" type="button">Cancel</button></div>'}
-    if(p.qty===1)return '<button class="close" data-a="pick" data-n="1" data-id="'+id+'" type="button">Close position</button>';
-    var h='<div class="pick"><span class="lab">Sell how many of '+p.qty+'?</span><div class="row">';
+    if(p.busy)return '<div class="confirm"><button class="no" type="button" disabled>'+L('Selling...','Vendiendo...')+'</button></div>';
+    if(p.confirm){var part=p.pick<p.qty;return '<div class="confirm"><button class="go" data-a="yes" data-id="'+id+'" type="button">'+L('Yes, sell ','Sí, vender ')+p.pick+(part?L(' of ',' de ')+p.qty:'')+L(' now',' ahora')+'</button><button class="no" data-a="no" data-id="'+id+'" type="button">'+L('Cancel','Cancelar')+'</button></div>'}
+    if(p.qty===1)return '<button class="close" data-a="pick" data-n="1" data-id="'+id+'" type="button">'+L('Close position','Cerrar operación')+'</button>';
+    var h='<div class="pick"><span class="lab">'+L('Sell how many of '+p.qty+'?','¿Cuántos de '+p.qty+' quieres vender?')+'</span><div class="row">';
     for(var i=1;i<p.qty;i++)h+='<button data-a="pick" data-n="'+i+'" data-id="'+id+'" type="button">'+i+'</button>';
-    return h+'<button class="all" data-a="pick" data-n="'+p.qty+'" data-id="'+id+'" type="button">All '+p.qty+'</button></div></div>'}
+    return h+'<button class="all" data-a="pick" data-n="'+p.qty+'" data-id="'+id+'" type="button">'+L('All ','Los ')+p.qty+'</button></div></div>'}
   function addCard(p){
     var d=document.createElement('article');d.className='card';d.innerHTML=cardHTML(p);
     var em=$('cards').querySelector('.empty');if(em)em.parentNode.removeChild(em);
@@ -437,23 +482,23 @@ a.btn{color:var(--ink);align-items:center;justify-content:center;min-height:44px
   function paint(p){
     var v=pnl(p),c=pct(p),k=p.has?cls(v):'flat',lo=G.loss/100,hi=G.gain/100,span=lo+hi,zero=lo/span*100;
     p.el.classList.toggle('pos',k==='up');p.el.classList.toggle('neg',k==='dn');
-    fld(p,'held').textContent='held '+held(p);lvPaint(p);
-    fld(p,'sub').innerHTML=esc(p.strike)+' strike &middot; expires '+esc(p.exp===(S&&S.day)?'today':p.exp)+' &middot; '+p.qty+' contract'+(p.qty>1?'s':'');
+    fld(p,'held').textContent=L('held ','abierta hace ')+held(p);lvPaint(p);
+    fld(p,'sub').innerHTML=L(esc(p.strike)+' strike','strike '+esc(p.strike))+' &middot; '+L('expires ','vence ')+esc(p.exp===(S&&S.day)?L('today','hoy'):p.exp)+' &middot; '+p.qty+L(' contract',' contrato')+(p.qty>1?'s':'');
     var a=fld(p,'amt');a.textContent=p.has?money(v,true):'--';a.className='amt num '+k;
-    var pc=fld(p,'pc');pc.textContent=p.has?(c>=0?'+':'')+(c*100).toFixed(1)+'%':'waiting for a price';pc.className='pc '+k;
+    var pc=fld(p,'pc');pc.textContent=p.has?(c>=0?'+':'')+(c*100).toFixed(1)+'%':L('waiting for a price','esperando precio');pc.className='pc '+k;
     fld(p,'paid').textContent=m2(p.entry);fld(p,'bid').textContent=p.has?m2(p.bid):'--';fld(p,'peak').textContent=m2(p.peak);
     var pos=Math.min(1,Math.max(0,(c+lo)/span))*100,fl=fld(p,'fill');
     fld(p,'zero').style.left=zero+'%';
     fl.style.left=Math.min(pos,zero)+'%';fl.style.width=Math.abs(pos-zero)+'%';fl.style.background=c>=0?'var(--up)':'var(--down)';
     fld(p,'mk').style.left=pos+'%';
     fld(p,'stopmk').style.opacity=G.on?1:.25;
-    fld(p,'lblL').textContent=G.on?'-'+G.loss+'% stop':'stop is off';
-    fld(p,'lblR').textContent='+'+G.gain+(G.mode==='trail'?'% arms trail':'% sells all');
+    fld(p,'lblL').textContent=G.on?L('-'+G.loss+'% stop','stop -'+G.loss+'%'):L('stop is off','stop apagado');
+    fld(p,'lblR').textContent='+'+G.gain+(G.mode==='trail'?L('% arms trail','% activa stop móvil'):L('% sells all','% vende todo'));
     var g=fld(p,'guard'),tr=fld(p,'trail'),armedT=G.on&&G.mode==='trail'&&(p.trailOn||p.peak/p.entry-1>=hi);
-    if(!G.on){tr.style.display='none';g.className='guard off';g.textContent='Guardrails are OFF. Nothing sells for you on this trade, so a loss can keep growing. Everything still closes at 3:59 PM ET.'}
+    if(!G.on){tr.style.display='none';g.className='guard off';g.textContent=L('Guardrails are OFF. Nothing sells for you on this trade, so a loss can keep growing. Everything still closes at 3:59 PM ET.','Las protecciones están APAGADAS. Nada se vende solo en esta operación, así que la pérdida puede seguir creciendo. De todos modos todo se cierra a las 3:59 PM, hora de Nueva York.')}
     else if(armedT){var tp=p.peak*(1-G.trail/100),tc=tp/p.entry-1;tr.style.display='block';tr.style.left=Math.min(100,Math.max(0,(tc+lo)/span*100))+'%';
-      g.className='guard armed';g.textContent='Trailing stop is on. It sells if the price drops to '+m2(tp)+' ('+(tc>=0?'+':'')+(tc*100).toFixed(0)+'%).'}
-    else{tr.style.display='none';g.className='guard';g.textContent='Safety stop sells at -'+G.loss+'% ('+m2(p.entry*(1-G.loss/100))+'). '+(G.mode==='trail'?'Trailing stop turns on at +'+G.gain+'%.':'Everything sells at +'+G.gain+'% ('+m2(p.entry*(1+hi))+').')}
+      g.className='guard armed';g.textContent=L('Trailing stop is on. It sells if the price drops to ','El stop móvil está activo. Vende si el precio baja a ')+m2(tp)+' ('+(tc>=0?'+':'')+(tc*100).toFixed(0)+'%).'}
+    else{tr.style.display='none';g.className='guard';g.textContent=L('Safety stop sells at -','El stop de seguridad vende en -')+G.loss+'% ('+m2(p.entry*(1-G.loss/100))+'). '+(G.mode==='trail'?L('Trailing stop turns on at +','El stop móvil se activa en +')+G.gain+'%.':L('Everything sells at +','Se vende todo en +')+G.gain+'% ('+m2(p.entry*(1+hi))+').')}
     var h=p.hist.length>1?p.hist:[p.entry,p.entry],mn=Math.min.apply(null,h.concat([p.entry])),mx=Math.max.apply(null,h.concat([p.entry])),r=(mx-mn)||1,d='';
     h.forEach(function(x,i){d+=(i?'L':'M')+(i/(h.length-1)*96).toFixed(1)+' '+(36-(x-mn)/r*34).toFixed(1)});
     var sp=fld(p,'sp');sp.setAttribute('d',d);sp.setAttribute('stroke',k==='dn'?'var(--down)':'var(--up)');
@@ -463,11 +508,11 @@ a.btn{color:var(--ink);align-items:center;justify-content:center;min-height:44px
     if(p.busy)return;p.busy=true;p.confirm=false;paint(p);
     call(EP.close(p,n>=p.qty?0:n),'POST').then(function(r){
       p.busy=false;
-      if(!r||!r.ok)toast((r&&r.error)||'Could not sell');
-      else if(r.partial)toast('Sold '+r.sold+' '+p.sym+' '+p.type.toUpperCase()+': '+money(r.pnl,true)+', '+r.left+' left');
-      else if(r.closed)toast('Closed '+p.sym+' '+p.type.toUpperCase()+': '+money(r.pnl,true));
-      else toast(r.note||'Sell queued; it fills on the next price');
-      poll()}).catch(function(){p.busy=false;toast('Cannot reach the server; the sell was not confirmed');poll()})}
+      if(!r||!r.ok)toast(srv(r&&r.error)||L('Could not sell','No se pudo vender'));
+      else if(r.partial)toast(L('Sold ','Vendiste ')+r.sold+' '+p.sym+' '+p.type.toUpperCase()+': '+money(r.pnl,true)+L(', '+r.left+' left',', quedan '+r.left));
+      else if(r.closed)toast(L('Closed ','Cerraste ')+p.sym+' '+p.type.toUpperCase()+': '+money(r.pnl,true));
+      else toast(srv(r.note)||L('Sell queued; it fills on the next price','Venta en espera; se hace con el próximo precio'));
+      poll()}).catch(function(){p.busy=false;toast(L('Cannot reach the server; the sell was not confirmed','No hay conexión con el servidor; la venta no se confirmó'));poll()})}
   $('cards').addEventListener('click',function(e){
     var b=e.target.closest('button[data-a]');if(!b)return;
     var p=byId[b.getAttribute('data-id')];if(!p)return;
@@ -476,75 +521,75 @@ a.btn{color:var(--ink);align-items:center;justify-content:center;min-height:44px
     if(a==='no'){p.confirm=false;paint(p)}
     if(a==='yes'){doClose(p,p.pick)}});
   var caT;$('closeAll').addEventListener('click',function(){
-    var b=$('closeAll'),ps=list();if(!ps.length){toast('No open trades to close');return}
+    var b=$('closeAll'),ps=list();if(!ps.length){toast(L('No open trades to close','No hay operaciones abiertas para cerrar'));return}
     if(b.dataset.ask){clearTimeout(caT);delete b.dataset.ask;b.textContent=closeAllLabel();ps.forEach(function(p){doClose(p,p.qty)});return}
-    b.dataset.ask='1';b.textContent='Tap again: sell all '+ps.length;caT=setTimeout(function(){delete b.dataset.ask;b.textContent=closeAllLabel()},4000)});
-  function closeAllLabel(){return SON?'Close all':'Close all manual'}
+    b.dataset.ask='1';b.textContent=L('Tap again: sell all ','Toca otra vez: vender todo, ')+ps.length;caT=setTimeout(function(){delete b.dataset.ask;b.textContent=closeAllLabel()},4000)});
+  function closeAllLabel(){return GUEST?L('Close all','Cerrar todo'):'Close all manual'}
   var spT;$('stopDay').addEventListener('click',function(){
     var b=$('stopDay');if(!S)return;
-    if(S.shut==='stopped by you'){call(EP.resume,'POST').then(function(r){toast(r&&r.ok?'Trading resumed':(r&&r.error)||'Could not resume');poll()});return}
+    if(S.shut==='stopped by you'){call(EP.resume,'POST').then(function(r){toast(r&&r.ok?L('Trading resumed','Ya puedes operar de nuevo'):srv(r&&r.error)||L('Could not resume','No se pudo reanudar'));poll()});return}
     if(S.shut)return;
-    if(b.dataset.ask){clearTimeout(spT);delete b.dataset.ask;call(EP.stop,'POST').then(function(r){toast(r&&r.ok?'Stopped for the day':(r&&r.error)||'Could not stop');poll()});return}
-    b.dataset.ask='1';b.textContent='Tap again to stop';spT=setTimeout(function(){delete b.dataset.ask;stopLabel()},4000)});
-  function stopLabel(){var b=$('stopDay');if(!S||b.dataset.ask)return;b.textContent=S.shut==='stopped by you'?'Resume trading':S.shut?'Stopped':'Stop for the day';b.classList.toggle('on',!!S.shut);b.disabled=!!S.shut&&S.shut!=='stopped by you';
-    b.title=SON?'Closes your open trades and blocks new ones until you resume.':'Stops ALL books for today and closes the Sweep position, like the old page. Manual trades keep being watched.'}
+    if(b.dataset.ask){clearTimeout(spT);delete b.dataset.ask;call(EP.stop,'POST').then(function(r){toast(r&&r.ok?L('Stopped for the day','Paraste por hoy'):srv(r&&r.error)||L('Could not stop','No se pudo parar'));poll()});return}
+    b.dataset.ask='1';b.textContent=L('Tap again to stop','Toca otra vez para parar');spT=setTimeout(function(){delete b.dataset.ask;stopLabel()},4000)});
+  function stopLabel(){var b=$('stopDay');if(!S||b.dataset.ask)return;b.textContent=S.shut==='stopped by you'?L('Resume trading','Volver a operar'):S.shut?L('Stopped','Detenido'):L('Stop for the day','Parar por hoy');b.classList.toggle('on',!!S.shut);b.disabled=!!S.shut&&S.shut!=='stopped by you';
+    b.title=GUEST?L('Closes your open trades and blocks new ones until you resume.','Cierra tus operaciones abiertas y no deja abrir nuevas hasta que vuelvas a operar.'):'Stops ALL books for today and closes the Sweep position, like the old page. Manual trades keep being watched.'}
 
   /* ---- signals ---- */
-  var STATUS={buy:'BUY',sell:'SELL',late:'LATE',watch:'WATCH','':'-'};
-  var WORD={'1':'up','-1':'down','0':'flat','null':'not enough data yet'};
+  var STATUS={buy:L('BUY','COMPRA'),sell:L('SELL','VENTA'),late:L('LATE','TARDE'),watch:L('WATCH','OJO'),'':'-'};
+  var WORD={'1':L('up','sube'),'-1':L('down','baja'),'0':L('flat','plano'),'null':L('not enough data yet','todavía faltan datos')};
   function sv(x,k){var s=x.sigs&&x.sigs[k];return s&&s.v!==undefined?s.v:null}
   function pip(v){return '<span class="pip '+(v===1?'p1':v===-1?'pm1':v===null?'pn':'')+'"></span>'}
-  var WHY={buy:'Clean buy: trend is up and price is not stretched.',sell:'Clean sell: trend is down and price is not stretched.',late:'Late: the trend agrees but price is already stretched the same way.',watch:'Watch: trend is split but price is stretched.','':'Nothing lines up right now.'};
+  var WHY={buy:L('Clean buy: trend is up and price is not stretched.','Compra clara: la tendencia sube y el precio no está estirado.'),sell:L('Clean sell: trend is down and price is not stretched.','Venta clara: la tendencia baja y el precio no está estirado.'),late:L('Late: the trend agrees but price is already stretched the same way.','Tarde: la tendencia coincide, pero el precio ya se estiró en esa dirección.'),watch:L('Watch: trend is split but price is stretched.','Ojo: la tendencia está dividida, pero el precio está estirado.'),'':L('Nothing lines up right now.','Por ahora nada coincide.')};
   function sigRow(s,idx,dis){
     var x=(S.sg&&S.sg.rows&&S.sg.rows[s])||{sigs:{}},g=x.grp||{dir:0,n:0,ext:'none',status:'none'},stale=!!x.stale||!Object.keys(x.sigs||{}).length,st=stale?'':(g.status&&g.status!=='none'?g.status:'');
     var v={vwap:sv(x,'vwap'),orb:sv(x,'orb'),ema:sv(x,'ema'),macd:sv(x,'macd'),rsi:sv(x,'rsi'),bb:sv(x,'bb'),ihh:sv(x,'ihh')};
-    var tt=stale?'No fresh data for this ticker.':'Momentum '+(g.dir===1?'up':g.dir===-1?'down':'neutral or mixed')+': '+g.n+' of 4 trend signals agree. VWAP '+WORD[v.vwap]+', ORB '+WORD[v.orb]+', EMA '+WORD[v.ema]+', MACD '+WORD[v.macd]+'.';
+    var tt=stale?L('No fresh data for this ticker.','No hay datos recientes de esta acción.'):L('Momentum ','Impulso ')+(g.dir===1?L('up','al alza'):g.dir===-1?L('down','a la baja'):L('neutral or mixed','neutral o mezclado'))+': '+g.n+L(' of 4 trend signals agree. VWAP ',' de 4 señales de tendencia coinciden. VWAP ')+WORD[v.vwap]+', ORB '+WORD[v.orb]+', EMA '+WORD[v.ema]+', MACD '+WORD[v.macd]+'.';
     var ar=stale?'<i class="arw flat">/</i>':g.dir===1?'<i class="arw up">&#9650;</i>':g.dir===-1?'<i class="arw dn">&#9660;</i>':'<i class="arw flat">/</i>';
-    var h=idx?(v.ihh===1?'<span class="h2 up" title="First half hour closed up">&#9650;</span>':v.ihh===-1?'<span class="h2 dn" title="First half hour closed down">&#9660;</span>':'<span class="h2 flat">&middot;</span>'):'<span class="h2 flat">&middot;</span>';
+    var h=idx?(v.ihh===1?'<span class="h2 up" title="'+L('First half hour closed up','La primera media hora cerró al alza')+'">&#9650;</span>':v.ihh===-1?'<span class="h2 dn" title="'+L('First half hour closed down','La primera media hora cerró a la baja')+'">&#9660;</span>':'<span class="h2 flat">&middot;</span>'):'<span class="h2 flat">&middot;</span>';
     var fl=stale?'':g.ext==='up'?'&#9873;&#9650;':g.ext==='down'?'&#9873;&#9660;':g.ext==='both'?'&#9873;':'';
-    var ft=fl?'Stretched: '+(v.rsi===-1?'RSI(14) overbought. ':v.rsi===1?'RSI(14) oversold. ':'')+(v.bb===-1?'Price above the upper Bollinger band.':v.bb===1?'Price below the lower Bollinger band.':''):'';
+    var ft=fl?L('Stretched: ','Estirado: ')+(v.rsi===-1?L('RSI(14) overbought. ','RSI(14) sobrecomprado. '):v.rsi===1?L('RSI(14) oversold. ','RSI(14) sobrevendido. '):'')+(v.bb===-1?L('Price above the upper Bollinger band.','Precio arriba de la banda superior de Bollinger.'):v.bb===1?L('Price below the lower Bollinger band.','Precio debajo de la banda inferior de Bollinger.'):''):'';
     var ds=dis?' disabled style="opacity:.35;cursor:not-allowed"':'';
-    function bt(side,l,c){var on=armed.key===s+side&&Date.now()<armed.until;return '<button class="'+c+(on?' armed':'')+'" data-e="'+side+'" data-s="'+esc(s)+'" type="button"'+ds+'>'+(on?'Buy '+qty+'?':l)+'</button>'}
+    function bt(side,l,c){var on=armed.key===s+side&&Date.now()<armed.until;return '<button class="'+c+(on?' armed':'')+'" data-e="'+side+'" data-s="'+esc(s)+'" type="button"'+ds+'>'+(on?L('Buy ','¿Comprar ')+qty+'?':l)+'</button>'}
     return '<div class="sr g-'+(st||'none')+(stale?' stale':'')+'" data-row="'+esc(s)+'"><span class="sn"><b>'+esc(s)+'</b><i class="px">'+(x.px?(+x.px).toFixed(2):'--')+'</i></span>'
       +'<span class="tr4" title="'+esc(tt)+'">'+pip(v.vwap)+pip(v.orb)+pip(v.ema)+pip(v.macd)+ar+'</span><span class="meta">'+h+'<span class="fl" title="'+esc(ft)+'">'+fl+'</span>'
-      +'<span class="sw '+st+'" title="'+esc(WHY[st])+'">'+(stale?'stale':st?STATUS[st]:'&ndash;')+'</span></span>'
+      +'<span class="sw '+st+'" title="'+esc(WHY[st])+'">'+(stale?L('stale','sin datos'):st?STATUS[st]:'&ndash;')+'</span></span>'
       +'<span class="b">'+bt('call','CALL','c')+bt('put','PUT','p')+'</span></div>'}
   function renderTickers(){
     if(!S)return;var idx=S.idx||[],dis=!!S.shut||!S.market;
     $('tickers').innerHTML=(S.syms||[]).map(function(s){return sigRow(s,idx.indexOf(s)>=0,dis)}).join('');
     var c={buy:0,sell:0,late:0,watch:0};(S.syms||[]).forEach(function(s){var x=S.sg&&S.sg.rows&&S.sg.rows[s],g=x&&!x.stale&&x.grp;if(g&&c[g.status]!==undefined)c[g.status]++});
-    $('sgSum').innerHTML='<span class="g">'+(c.buy+c.sell)+' clean</span> &middot; <span class="a">'+c.late+' late</span> &middot; <span class="w">'+c.watch+' watch</span>'}
+    $('sgSum').innerHTML='<span class="g">'+(c.buy+c.sell)+L(' clean',' claras')+'</span> &middot; <span class="a">'+c.late+L(' late',' tarde')+'</span> &middot; <span class="w">'+c.watch+L(' watch',' ojo')+'</span>'}
   $('tickers').addEventListener('click',function(e){
     var b=e.target.closest('button[data-e]');if(!b||!S||S.shut||!S.market)return;
     var s=b.getAttribute('data-s'),side=b.getAttribute('data-e'),key=s+side;
     if(armed.key===key&&Date.now()<armed.until){armed={key:'',until:0};renderTickers();
       call(EP.enter(s,side,qty),'POST').then(function(r){
-        toast(r&&r.ok?'Bought '+r.qty+' '+s+' '+side.toUpperCase()+' '+r.strike+' at '+m2(r.ask)+' (paper)':(r&&r.error)||'Order refused');poll()}).catch(function(){toast('Cannot reach the server; the order was not confirmed');poll()});return}
+        toast(r&&r.ok?L('Bought ','Compraste ')+r.qty+' '+s+' '+side.toUpperCase()+' '+r.strike+L(' at ',' a ')+m2(r.ask)+L(' (paper)',' (práctica)'):srv(r&&r.error)||L('Order refused','Orden rechazada'));poll()}).catch(function(){toast(L('Cannot reach the server; the order was not confirmed','No hay conexión con el servidor; la orden no se confirmó'));poll()});return}
     armed={key:key,until:Date.now()+5000};renderTickers();setTimeout(renderTickers,5100)});
   $('qm').onclick=function(){qty=Math.max(1,qty-1);$('qv').textContent=qty;renderTickers()};
   $('qp').onclick=function(){qty=Math.min((S&&S.maxQty)||3,qty+1);$('qv').textContent=qty;renderTickers()};
 
   /* ---- score, tape, others ---- */
   var GOALS=[25,50,100,200,400,800,1600];
-  var RS={'manual':'Closed by you','manual partial':'Sold part by you','guard stop':'Guard stop','trail stop':'Trail stop','guard target':'Gain target','time':'Closed at the 3:59 PM end-of-day sell'};
+  var RS={'manual':L('Closed by you','La cerraste tú'),'manual partial':L('Sold part by you','Vendiste una parte'),'guard stop':L('Guard stop','Stop de seguridad'),'trail stop':L('Trail stop','Stop móvil'),'guard target':L('Gain target','Meta de ganancia'),'time':L('Closed at the 3:59 PM end-of-day sell','Venta de fin del día a las 3:59 PM')};
   function renderAll(){
     var ps=list(),cl=(S&&S.closed||[]).slice().reverse();
     var o=ps.reduce(function(s,p){return s+pnl(p)},0),r=cl.reduce(function(s,c){return s+(+c.pnl||0)},0),t=o+r;
     function set(id,n){var e=$(id);e.textContent=money(n,true);e.className='v num '+cls(n)}
     set('tTotal',t);set('tOpen',o);set('tReal',r);
-    $('tOpenS').textContent=ps.length+' position'+(ps.length===1?'':'s');
-    $('tRealS').textContent=cl.length+' trade'+(cl.length===1?'':'s');
+    $('tOpenS').textContent=ps.length+L(' position'+(ps.length===1?'':'s'),ps.length===1?' operación':' operaciones');
+    $('tRealS').textContent=cl.length+L(' trade'+(cl.length===1?'':'s'),cl.length===1?' operación':' operaciones');
     var w=cl.filter(function(c){return c.pnl>0}).length;$('tWin').textContent=cl.length?Math.round(w/cl.length*100)+'%':'--';
-    $('tWinS').textContent=w+' won, '+(cl.length-w)+' lost';
+    $('tWinS').textContent=L(w+' won, '+(cl.length-w)+' lost','ganadas: '+w+', perdidas: '+(cl.length-w));
     var nx=GOALS.filter(function(g){return t<g})[0],prev=GOALS.filter(function(g){return t>=g}).pop()||0;
     $('ladder').innerHTML=GOALS.map(function(g){return '<span class="chip '+(t>=g?'hit':g===nx?'next':'')+'">$'+g+'</span>'}).join('');
-    if(nx){$('gfill').style.width=Math.max(0,Math.min(100,(t-prev)/(nx-prev)*100))+'%';$('gtxt').textContent=money(nx-t)+' to $'+nx}
-    else{$('gfill').style.width='100%';$('gtxt').textContent='Top goal reached'}
+    if(nx){$('gfill').style.width=Math.max(0,Math.min(100,(t-prev)/(nx-prev)*100))+'%';$('gtxt').textContent=L(money(nx-t)+' to $'+nx,'faltan '+money(nx-t)+' para $'+nx)}
+    else{$('gfill').style.width='100%';$('gtxt').textContent=L('Top goal reached','Llegaste a la meta más alta')}
     var lt=ps.reduce(function(m,p){return Math.max(m,p.lt||0)},0);
-    $('openCount').textContent=ps.length?ps.length+' open'+(lt?', prices as of '+tfs.format(new Date(lt))+' ET (refresh about every 20 s)':', waiting for the first price'):'';
-    $('closedCount').textContent=cl.length?cl.length+' rows (a partial sell is its own row)':'';
-    if(!ps.length&&!$('cards').querySelector('.empty')){$('cards').innerHTML='<div class="empty"><b>No open trades</b>'+(S&&S.shut?'Trading is stopped for today.':(S&&!S.market?'The market is closed.':'Pick a ticker on the right and tap CALL or PUT twice.'))+'</div>'}
-    $('tape').innerHTML=cl.map(function(c){return '<div class="tr"><span class="w">'+(c.exitT?hm(Date.parse(c.exitT)):'')+'</span><span><b>'+esc(c.sym)+'</b> '+esc(c.type).toUpperCase()+(c.qty>1?' x'+c.qty:'')+' <span class="r">&middot; '+esc(RS[c.reason]||c.reason)+'</span></span><span></span><span class="m '+cls(c.pnl)+'">'+money(c.pnl,true)+'</span></div>'}).join('')||'<div class="tr"><span class="r" style="grid-column:1/-1">Nothing closed yet today.</span></div>';
+    $('openCount').textContent=ps.length?ps.length+L(' open',ps.length===1?' abierta':' abiertas')+(lt?L(', prices as of ',', precios de las ')+tfs.format(new Date(lt))+L(' ET (refresh about every 20 s)',' hora de Nueva York (se actualizan cada 20 s aprox.)'):L(', waiting for the first price',', esperando el primer precio')):'';
+    $('closedCount').textContent=cl.length?cl.length+L(' rows (a partial sell is its own row)',' filas (una venta parcial tiene su propia fila)'):'';
+    if(!ps.length&&!$('cards').querySelector('.empty')){$('cards').innerHTML='<div class="empty"><b>'+L('No open trades','Sin operaciones abiertas')+'</b>'+(S&&S.shut?L('Trading is stopped for today.','Las operaciones están detenidas por hoy.'):(S&&!S.market?L('The market is closed.','El mercado está cerrado.'):L('Pick a ticker on the right and tap CALL or PUT twice.','Elige una acción en la lista de señales y toca CALL o PUT dos veces.')))+'</div>'}
+    $('tape').innerHTML=cl.map(function(c){return '<div class="tr"><span class="w">'+(c.exitT?hm(Date.parse(c.exitT)):'')+'</span><span><b>'+esc(c.sym)+'</b> '+esc(c.type).toUpperCase()+(c.qty>1?' x'+c.qty:'')+' <span class="r">&middot; '+esc(RS[c.reason]||c.reason)+'</span></span><span></span><span class="m '+cls(c.pnl)+'">'+money(c.pnl,true)+'</span></div>'}).join('')||'<div class="tr"><span class="r" style="grid-column:1/-1">'+L('Nothing closed yet today.','Todavía no cerraste nada hoy.')+'</span></div>';
     var oth=(S&&S.others)||[];$('othersWrap').style.display=oth.length?'block':'none';
     $('others').innerHTML=oth.map(function(x,i){var pl=x.entry&&x.bid!=null?(x.bid-x.entry)*100:null;return '<div class="orow"><span class="lb">'+esc(x.label)+'</span><span>'+esc(x.desc)+' <span class="r" style="color:var(--dim)">&middot; held '+held({t0:x.t0})+'</span></span><span class="m '+(pl==null?'flat':cls(pl))+'">'+(pl==null?'':money(pl,true))+'</span><button type="button" data-o="'+i+'">Close</button></div>'}).join('')}
   $('others').addEventListener('click',function(e){
@@ -555,13 +600,13 @@ a.btn{color:var(--ink);align-items:center;justify-content:center;min-height:44px
 
   /* ---- guardrails ---- */
   function clampN(id,lo,hi,def){var e=$(id),n=Math.round(+e.value);if(!(n>=lo))n=def;if(n>hi)n=hi;e.value=n;return n}
-  function syncGR(){$('gr').classList.toggle('off',!G.on);$('grOn').setAttribute('aria-checked',G.on?'true':'false');$('grState').textContent=G.on?'Guardrails on':'Guardrails OFF';
+  function syncGR(){$('gr').classList.toggle('off',!G.on);$('grOn').setAttribute('aria-checked',G.on?'true':'false');$('grState').textContent=G.on?L('Guardrails on','Protecciones activas'):L('Guardrails OFF','Protecciones APAGADAS');
     ['grStop','grTarget','grTrail'].forEach(function(i){$(i).disabled=!G.on});
     document.querySelectorAll('.seg button').forEach(function(b){b.classList.toggle('on',b.getAttribute('data-m')===G.mode);b.disabled=!G.on});
-    $('grAtL').textContent=G.mode==='trail'?'once up':'sell everything once up';$('grTrailL').style.display=G.mode==='trail'?'flex':'none';
+    $('grAtL').textContent=G.mode==='trail'?L('once up','cuando suba'):L('sell everything once up','vender todo cuando suba');$('grTrailL').style.display=G.mode==='trail'?'flex':'none';
     list().forEach(paint)}
   function fillInputs(){if(document.activeElement&&/^(INPUT)$/.test(document.activeElement.tagName))return;$('grStop').value=G.loss;$('grTarget').value=G.gain;$('grTrail').value=G.trail}
-  function sendGuard(){call(EP.guard({on:G.on?1:0,loss:G.loss,gain:G.gain,trail:G.trail,mode:G.mode}),'POST').then(function(r){if(!r||!r.ok){toast((r&&r.error)||'Could not save the guardrails')}else toast(G.on?'Guardrails saved for all open trades':'Guardrails OFF: nothing will sell automatically');poll()})}
+  function sendGuard(){call(EP.guard({on:G.on?1:0,loss:G.loss,gain:G.gain,trail:G.trail,mode:G.mode}),'POST').then(function(r){if(!r||!r.ok){toast(srv(r&&r.error)||L('Could not save the guardrails','No se pudieron guardar las protecciones'))}else toast(G.on?L('Guardrails saved for all open trades','Protecciones guardadas para todas las operaciones abiertas'):L('Guardrails OFF: nothing will sell automatically','Protecciones APAGADAS: nada se venderá solo'));poll()})}
   function readGR(){G.loss=clampN('grStop',5,90,30);G.gain=clampN('grTarget',10,1000,100);G.trail=clampN('grTrail',5,60,25);syncGR();sendGuard()}
   ['grStop','grTarget','grTrail'].forEach(function(i){$(i).addEventListener('change',readGR)});
   $('grOn').addEventListener('click',function(){G.on=!G.on;syncGR();sendGuard()});
@@ -581,18 +626,18 @@ a.btn{color:var(--ink);align-items:center;justify-content:center;min-height:44px
       seen[id]=1;if(isNew)addCard(p)});
     Object.keys(byId).forEach(function(id){if(!seen[id]){var p=byId[id];if(p.el&&p.el.parentNode)p.el.parentNode.removeChild(p.el);delete byId[id]}});
     list().forEach(paint);syncGR();fillInputs();renderTickers();renderAll();
-    var b=$('banner');b.className='banner'+(S.shut?' show':'');b.textContent=S.shut?(SON?'Your trading is stopped for today ('+S.shut+').':'Trading is stopped for today ('+S.shut+'). Open manual trades are still watched by their stops.'):'';
-    $('mkt').textContent=S.market?'Market open':'Market closed';
-    var lp=$('livePill'),fresh=S.tickAt&&Date.now()-S.tickAt<180000;lp.textContent=S.market?(fresh?'Server scanning':'Server quiet'):'Market closed';lp.style.opacity=S.market&&fresh?1:.6;
-    if(!SON){$('classic').style.display='flex';$('classic').href='/city?key='+encodeURIComponent(KEY);var c=$('cskOn'),cd=S.cd||{};c.style.display='';c.setAttribute('aria-checked',cd.on?'true':'false');$('cskState').textContent=cd.master===false?'CSK disabled':(cd.on?'CSK on':'CSK off');c.disabled=cd.master===false}
-    $('whoPill').textContent=SON?'Paper account, his own stats':'Paper account';
-    if(!SON){var KL={tTotal:'Manual book today',tOpen:'Manual open now',tReal:'Manual closed today'};Object.keys(KL).forEach(function(i){$(i).parentNode.querySelector('.k').textContent=KL[i]});document.querySelector('.goals .gl').textContent='Manual goal';$('allDay').textContent='All books today, realized: '+money(S.dayAll||0,true)+' (Sweep, ORB, ORBN, X9, FP, CSK, CDR and manual). The tiles above are the manual book only.'}
+    var b=$('banner');b.className='banner'+(S.shut?' show':'');b.textContent=S.shut?(GUEST?L('Your trading is stopped for today ('+S.shut+').','Tus operaciones están detenidas por hoy'+(S.shut==='stopped by you'?' (las detuviste tú).':'.')):'Trading is stopped for today ('+S.shut+'). Open manual trades are still watched by their stops.'):'';
+    $('mkt').textContent=S.market?L('Market open','Mercado abierto'):L('Market closed','Mercado cerrado');
+    var lp=$('livePill'),fresh=S.tickAt&&Date.now()-S.tickAt<180000;lp.textContent=S.market?(fresh?L('Server scanning','Servidor activo'):L('Server quiet','Servidor sin respuesta')):L('Market closed','Mercado cerrado');lp.style.opacity=S.market&&fresh?1:.6;
+    if(!GUEST){$('classic').style.display='flex';$('classic').href='/city?key='+encodeURIComponent(KEY);var c=$('cskOn'),cd=S.cd||{};c.style.display='';c.setAttribute('aria-checked',cd.on?'true':'false');$('cskState').textContent=cd.master===false?'CSK disabled':(cd.on?'CSK on':'CSK off');c.disabled=cd.master===false}
+    $('whoPill').textContent=SON?'Paper account, his own stats':L('Paper account','Cuenta de práctica, tus propios resultados');
+    if(!GUEST){var KL={tTotal:'Manual book today',tOpen:'Manual open now',tReal:'Manual closed today'};Object.keys(KL).forEach(function(i){$(i).parentNode.querySelector('.k').textContent=KL[i]});document.querySelector('.goals .gl').textContent='Manual goal';$('allDay').textContent='All books today, realized: '+money(S.dayAll||0,true)+' (Sweep, ORB, ORBN, X9, FP, CSK, CDR and manual). The tiles above are the manual book only.'}
     if(qty>(S.maxQty||3)){qty=S.maxQty||3;$('qv').textContent=qty}
     stopLabel();if(!$('closeAll').dataset.ask)$('closeAll').textContent=closeAllLabel()}
   var polling=false;
   function poll(){if(polling)return;polling=true;
     call(EP.state).then(function(d){polling=false;if(!d||d.error||!d.g){throw new Error(d&&d.error||'bad data')}S=d;netBad=0;$('neterr').style.display='none';apply();renderCal()}).catch(function(e){polling=false;netBad++;if(netBad>=2)$('neterr').style.display='block'})}
-  function loadHist(){call(EP.hist).then(function(h){if(!h||h.error)return;H=h;renderCal();$('hist').textContent=h.nDays?'This deck so far: '+h.nDays+' trading day'+(h.nDays===1?'':'s')+', total '+money(h.total,true)+', average '+money(h.avgPerDay,true)+' per trading day. '+h.note+'.':'No closed trades on earlier days yet.'}).catch(function(){})}
+  function loadHist(){call(EP.hist).then(function(h){if(!h||h.error)return;H=h;renderCal();$('hist').textContent=h.nDays?L('This deck so far: '+h.nDays+' trading day'+(h.nDays===1?'':'s')+', total '+money(h.total,true)+', average '+money(h.avgPerDay,true)+' per trading day. '+h.note+'.','Hasta ahora: '+h.nDays+(h.nDays===1?' día con operaciones':' días con operaciones')+', total '+money(h.total,true)+', promedio '+money(h.avgPerDay,true)+' por día con operaciones. Dinero de práctica con compras y ventas simuladas; el promedio cuenta solo los días en que operaste.'):L('No closed trades on earlier days yet.','Todavía no hay operaciones cerradas de días anteriores.')}).catch(function(){})}
   /* ---- month calendar: this deck's book only, realized P&L per day, weekly totals, month total ---- */
   function renderCal(){
     var day=(S&&S.day)||'';if(day.length!==10)return;
@@ -600,20 +645,46 @@ a.btn{color:var(--ink);align-items:center;justify-content:center;min-height:44px
     ((H&&H.days)||[]).forEach(function(d){by[d.day]={pnl:d.pnl,n:d.n}});
     if(S.closed&&S.closed.length)by[day]={pnl:S.pnl,n:S.closed.length};
     var first=new Date(Date.UTC(y,mo-1,1)),dim=new Date(Date.UTC(y,mo,0)).getUTCDate(),lead=first.getUTCDay(),tot=0,nd=0,wins=0,h='';
-    ['Sun','Mon','Tue','Wed','Thu','Fri','Sat','Week'].forEach(function(n){h+='<div class="dh">'+n+'</div>'});
+    L(['Sun','Mon','Tue','Wed','Thu','Fri','Sat','Week'],['Dom','Lun','Mar','Mié','Jue','Vie','Sáb','Sem']).forEach(function(n){h+='<div class="dh">'+n+'</div>'});
     var cells=lead+dim,rows=Math.ceil(cells/7),wk=0,wn=0;
     for(var i=0;i<rows*7;i++){
       var dn=i-lead+1,ok=dn>=1&&dn<=dim,key=ok?pre+'-'+('0'+dn).slice(-2):'',e=ok?by[key]:null;
       if(!ok)h+='<div class="d off"></div>';
       else{var p=e?e.pnl:null;if(e){tot+=p;nd++;wk+=p;wn++;if(p>0)wins++}
-        h+='<div class="d '+(p>0?'up':p<0?'dn':'')+(key===day?' today':'')+'"><span>'+dn+'</span>'+(e?'<b class="'+(p>0?'up':p<0?'dn':'')+'">'+money(p,true).replace('$','<i class="usd" style="font-style:normal">$</i>')+'</b><span class="n">'+e.n+' trade'+(e.n===1?'':'s')+'</span>':'<span></span>')+'</div>'}
-      if(i%7===6){h+='<div class="w"><span>'+(wn?wn+' day'+(wn===1?'':'s'):'')+'</span><b class="'+(wk>0?'up':wk<0?'dn':'')+'">'+(wn?money(wk,true).replace('$','<i class="usd" style="font-style:normal">$</i>'):'--')+'</b></div>';wk=0;wn=0}}
+        h+='<div class="d '+(p>0?'up':p<0?'dn':'')+(key===day?' today':'')+'"><span>'+dn+'</span>'+(e?'<b class="'+(p>0?'up':p<0?'dn':'')+'">'+money(p,true).replace('$','<i class="usd" style="font-style:normal">$</i>')+'</b><span class="n">'+e.n+L(' trade'+(e.n===1?'':'s'),' oper.')+'</span>':'<span></span>')+'</div>'}
+      if(i%7===6){h+='<div class="w"><span>'+(wn?wn+L(' day'+(wn===1?'':'s'),wn===1?' día':' días'):'')+'</span><b class="'+(wk>0?'up':wk<0?'dn':'')+'">'+(wn?money(wk,true).replace('$','<i class="usd" style="font-style:normal">$</i>'):'--')+'</b></div>';wk=0;wn=0}}
     $('calG').innerHTML=h;
-    $('calT').textContent=new Intl.DateTimeFormat('en-US',{timeZone:'UTC',month:'long',year:'numeric'}).format(first);
-    var m=$('calM');m.textContent='Month '+money(tot,true);m.className='mt '+(tot>0?'up':tot<0?'dn':'');
-    $('calS').textContent=nd?nd+' trading day'+(nd===1?'':'s')+' with trades, '+wins+' up, average '+money(tot/nd,true)+' per trading day':'No closed trades this month yet';
-    $('calN').textContent=(SON?'Your book only.':'Manual book only (not Sweep, ORB, ORBN, X9, FP, CSK or CDR).')+' Realized paper P&L, simulated fills; a day counts when something closed that day.'}
-  function clock(){$('clk').textContent=tfs.format(new Date()).replace(/^24/,'00');list().forEach(function(p){if(p.el)fld(p,'held').textContent='held '+held(p)})}
+    $('calT').textContent=new Intl.DateTimeFormat(L('en-US','es-419'),{timeZone:'UTC',month:'long',year:'numeric'}).format(first);
+    var m=$('calM');m.textContent=L('Month ','Mes ')+money(tot,true);m.className='mt '+(tot>0?'up':tot<0?'dn':'');
+    $('calS').textContent=nd?L(nd+' trading day'+(nd===1?'':'s')+' with trades, '+wins+' up, average '+money(tot/nd,true)+' per trading day',nd+(nd===1?' día con operaciones, ':' días con operaciones, ')+wins+' en ganancia, promedio '+money(tot/nd,true)+' por día'):L('No closed trades this month yet','Todavía no hay operaciones cerradas este mes');
+    $('calN').textContent=(GUEST?L('Your book only.','Solo tus operaciones.'):'Manual book only (not Sweep, ORB, ORBN, X9, FP, CSK or CDR).')+L(' Realized paper P&L, simulated fills; a day counts when something closed that day.',' Ganancia o pérdida ya cerrada, con dinero de práctica; un día cuenta cuando se cerró algo ese día.')}
+  function clock(){$('clk').textContent=tfs.format(new Date()).replace(/^24/,'00');list().forEach(function(p){if(p.el)fld(p,'held').textContent=L('held ','abierta hace ')+held(p)})}
+  function esStatic(){
+    var q=function(sel){return document.querySelector(sel)},all=function(sel){return Array.prototype.slice.call(document.querySelectorAll(sel))};
+    var tx=function(el,t){if(el)el.textContent=t},at=function(el,a,t){if(el)el.setAttribute(a,t)},node=function(n,t){if(n)n.nodeValue=t};
+    document.title='Panel de operaciones';
+    node(q('.brand').firstChild,'Panel de operaciones ');tx($('whoPill'),'Cuenta de práctica, tus propios resultados');tx($('livePill'),'Conectando');
+    tx($('stopDay'),'Parar por hoy');tx($('closeAll'),'Cerrar todo');
+    node($('clk').nextSibling,' hora de NY');tx($('mkt'),'Conectando');
+    tx($('neterr'),'No hay conexión con el servidor. Los números de abajo pueden ser viejos.');
+    at(q('.score'),'aria-label','Hoy');
+    var kt=['Total de hoy','Abierto ahora','Cerrado hoy','Aciertos'];all('.tile .k').forEach(function(e,i){tx(e,kt[i])});
+    tx($('tTotalS'),'cerrado + abierto');tx($('tOpenS'),'0 operaciones');tx($('tRealS'),'0 operaciones');tx($('tWinS'),'de las operaciones cerradas');
+    tx(q('.goals .gl'),'Meta del día');
+    var lab=all('#gr label');node(lab[0].firstChild,'Vender si la operación baja ');node(lab[2].firstChild,'y luego vender si cae ');node(lab[2].lastChild,' desde su mejor precio');
+    tx($('grState'),'Protecciones activas');at(q('.seg'),'aria-label','Qué pasa al llegar a la ganancia');
+    var sg=all('.seg button');tx(sg[0],'Stop móvil');tx(sg[1],'Vender al ganar');
+    tx($('grAtL'),'cuando suba');at($('grStop'),'aria-label','Porcentaje de pérdida');at($('grTarget'),'aria-label','Porcentaje de ganancia');at($('grTrail'),'aria-label','Porcentaje del stop móvil');
+    tx(q('.gr .hint'),'Los cambios se aplican de inmediato a todas las operaciones abiertas.');
+    tx(q('.hd h2'),'Operaciones abiertas');tx(q('.closedWrap h2'),'Cerradas hoy');
+    at($('sbox'),'aria-label','Señales y compra');tx(q('.sh b'),'Señales');at($('sgFold'),'aria-label','Ocultar la lista de señales');at($('sgFold'),'title','Ocultar o mostrar la lista');
+    node(q('.qty').firstChild,'Contratos ');at($('qm'),'aria-label','Menos');at($('qp'),'aria-label','Más');tx(q('.qty > span'),'toca CALL o PUT dos veces para comprar');
+    var hdr=all('.sr.hdr span');tx(hdr[0],'Acción');tx(hdr[1],'Tend.');at(hdr[1],'title','VWAP, rango de apertura, EMA y MACD. Si 3 de 4 apuntan igual, esa es la tendencia. La flecha muestra el impulso general: verde sube, roja baja, la raya es neutral o mezclado.');at(hdr[2],'title','Primera media hora (solo SPY y QQQ)');at(hdr[3],'title','Estirado: RSI o Bollinger dicen que el precio ya corrió demasiado');
+    tx(q('.rail .note'),'Cuadritos: V = VWAP, O = rango de apertura, E = EMA 9/21, M = MACD. Verde = sube, rojo = baja, gris = plano. \u2691 = estirado según RSI o Bollinger (\u25B2 corrió hacia arriba, \u25BC hacia abajo). TARDE = la tendencia coincide, pero el precio ya está estirado. OJO = tendencia dividida, pero precio estirado. Es solo información: no es un consejo ni una ventaja comprobada (en las pruebas, las filas encendidas no cubrieron los costos).');
+    at($('cal'),'aria-label','Calendario');tx($('calT'),'Calendario');
+    tx(q('.note2'),'Solo práctica: las compras y ventas son simuladas con cotizaciones reales de opciones (compras al precio más alto y vendes al precio más bajo). No se envía ninguna orden a ningún corredor. Los precios se actualizan cada 20 segundos aproximadamente. Los stops y las protecciones solo funcionan mientras el servidor está encendido; no hay un stop guardado en ningún corredor. Las líneas de soporte y resistencia son precios de referencia, no una ventaja comprobada.');
+  }
+  if(GF)esStatic();
   try{if(localStorage.getItem('sgFold')==='1'){$('sbox').classList.add('fold')}}catch(e){}
   $('sgFold').addEventListener('click',function(){var on=$('sbox').classList.toggle('fold');$('sgFold').innerHTML=on?'&#9656;':'&#9662;';try{localStorage.setItem('sgFold',on?'1':'0')}catch(e){}});
   document.addEventListener('visibilitychange',function(){if(!document.hidden)poll()});

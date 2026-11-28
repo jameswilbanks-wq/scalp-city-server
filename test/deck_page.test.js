@@ -19,13 +19,13 @@ t('the son endpoint set has only /api/son routes (no James, stop-day, CSK, contr
   assert.ok(!bad.test(sonEP.split('/api/son/').join('')), 'no James route in the son set');
 });
 t('the CSK switch and the classic link are shown only on James\'s deck; other-books close is only populated for James (server sends no others to the son)', () => {
-  assert.ok(HTML.includes("if(!SON){$('classic')"), 'CSK and classic gated by !SON'); assert.ok(HTML.includes('style="display:none"') && /id="cskOn"[^>]*style="display:none"/.test(HTML), 'hidden until James mode');
-  const deck = SRC.slice(SRC.indexOf('function deckOut('), SRC.indexOf('const HIST = ')); assert.ok(/if \(!cfg\.son\) \{ out\.cd = .*out\.others = deckOthers\(r\)/.test(deck));
+  assert.ok(HTML.includes("if(!GUEST){$('classic')"), 'CSK and classic gated by !GUEST'); assert.ok(HTML.includes('style="display:none"') && /id="cskOn"[^>]*style="display:none"/.test(HTML), 'hidden until James mode');
+  const deck = SRC.slice(SRC.indexOf('function deckOut('), SRC.indexOf('const HIST = ')); assert.ok(/if \(!cfg\.guest\) \{ out\.cd = .*out\.others = deckOthers\(r\)/.test(deck));
 });
 t('controls from the approved mock are present: guardrails on/off, loss, gain, trail, mode, close all (manual only), stop for the day, signals fold, tape, partial picker, two-tap buy, levels', () => {
   for (const id of ['grOn', 'grStop', 'grTarget', 'grTrail', 'closeAll', 'stopDay', 'cskOn', 'sgFold', 'tickers', 'tape', 'cards', 'hist', 'others', 'sgSum', 'ladder']) assert.ok(HTML.includes('id="' + id + '"'), id);
   assert.ok(HTML.includes('data-m="trail"') && HTML.includes('data-m="close"'), 'mode buttons'); assert.ok(/min="5" max="90"/.test(HTML) && /min="10" max="1000"/.test(HTML) && /min="5" max="60"/.test(HTML), 'input bounds match the server');
-  assert.ok(HTML.includes('data-a="pick"') && HTML.includes("Yes, sell '+p.pick") && HTML.includes('n>=p.qty?0:n'), 'partial close picker; choosing all closes the whole position');
+  assert.ok(HTML.includes('data-a="pick"') && HTML.includes("L('Yes, sell ','Sí, vender ')+p.pick") && HTML.includes('n>=p.qty?0:n'), 'partial close picker; choosing all closes the whole position');
   assert.ok(HTML.includes('armed.key===key&&Date.now()<armed.until'), 'two-tap buy'); assert.ok(HTML.includes('Close all manual'), 'James close all is labelled manual only');
   for (const w of ['Prior-day high', 'Opening-range high', 'Opening-range low', 'Prior-day low', 'VWAP', 'Near ', 'Approaching ']) assert.ok(HTML.includes(w), w);
   assert.ok(HTML.includes('class="arw up"') && HTML.includes('class="arw dn"') && HTML.includes('class="arw flat"'), 'momentum arrow (green up, red down, slash)');

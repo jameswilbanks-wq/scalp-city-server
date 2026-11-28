@@ -441,7 +441,7 @@ function heartbeat() {
       bookErr: { fp: P.fpErr || '', x9: P.x9Err || '', csk: P.cskErr || '', cdr: P.cdrErr || '', wheel2Csp: P.wheel2CspErr || '', orb: P.orbErr || '', orbn: P.orbnErr || '', vt: P.vtErr || '' },
       books: (typeof bookDiag === 'function') ? bookDiag() : null,
       scanBars, day: rec.day || null, trades: (rec.trades || []).length, shut: rec.shut || '',
-      open: { main: !!rec.pos, orbk: n('orbk'), orbnk: n('orbnk'), csk: n('csk'), x9k: n('x9k'), fpk: n('fpk'), cdrk: n('cdrk'), mank: n('mank'), sonk: n('sonk') } });
+      open: { main: !!rec.pos, orbk: n('orbk'), orbnk: n('orbnk'), csk: n('csk'), x9k: n('x9k'), fpk: n('fpk'), cdrk: n('cdrk'), mank: n('mank'), sonk: n('sonk'), gfk: n('gfk') } });
   } catch (e) { slog('heartbeat_error', { e: String((e && e.message) || e).slice(0, 100) }); }
 }
 
@@ -1363,6 +1363,7 @@ async function tick() {
     try { if (open) await orbnLook(); await manageOrbN(); } catch (e) { P.orbnErr = String(e && e.message || e).slice(0, 120); } // ORBN: own try/catch so it can never disturb ORB, Sweep or any other book
     try { await manageMan(); } catch (e) { P.manErr = String(e && e.message || e).slice(0, 120); } // on-demand book: own try/catch
     try { await manageSon(); } catch (e) { P.sonErr = String(e && e.message || e).slice(0, 120); } // the son's book: own try/catch
+    try { await manageGf(); } catch (e) { P.gfErr = String(e && e.message || e).slice(0, 120); } // the gf book: own try/catch
     if (open) { try { await vtTick(); } catch (e) { P.vtErr = String(e && e.message || e).slice(0, 120); } }
     P.stage = 'entry'; if (!P.rec.pos && !P.rec.shut) await lookForEntry();
     P.msg = P.rec.shut ? 'Done for the day (' + P.rec.shut + ').' : (ext ? 'Extended hours (' + ext.name + '-market): scanning ' + EXT_SYMS.join(', ') + '. Last check ' : 'Running. Last check ') + new Date().toISOString().slice(11, 19) + ' UTC.';
@@ -1428,17 +1429,19 @@ const MAN_ON = process.env.MAN_ON !== '0', MAN = { syms: ['SPY', 'QQQ', 'AAPL', 
 /* GUARDRAILS v2 (James 2026-11-27: "loss set for -30% and the gain set for 100% but instead of triggering a sell order, at 100% it triggers a trailing stop ... you set the trailing stop to what you think is best"). ON: sold at the bid at -30% or worse vs the price paid ('guard stop'). At +100% (bid at 2x the price paid) NOTHING is sold: a trailing stop is armed (p.trailAt) and the position is sold at the bid when it falls 25% (MAN.gTrail, env MAN_GUARD_TRAIL) below its highest bid so far ('trail stop'); so it can ride higher, and at arming the worst exit is about +50%. Once armed the -30% stop no longer applies (the trail is always far above it). Trail is simulated by the 20 s tick (no broker-resident order), so a fast drop can fill below the trail line; the 25% width is Claude's pick, not backtested. OFF: no guard sell and no arming. 15:59 flat in both modes. ORIGINAL v1 text follows. (James 2026-11-25: "auto sell at a loss of 25% or more and auto sell at a gain of 100% or more ... toggle switch ... if off, no auto sell at all"). ON (default): an open on-demand position is sold at the bid when it is down 25% or more, or up 100% or more, versus the price paid. OFF: no loss or gain auto-sell. The 15:59 ET market-close sell stays in BOTH modes (end-of-day bookkeeping, so nothing is left open past the close); that reading of "no auto sell at all" is flagged for James. The switch is saved in kv key man_guard, so it survives restarts. Checks run on the 20 s tick and fill at the bid seen then, so an exit can land past the 25% or 100% line. */
 function manGuardOn() { return P.manGuard === undefined ? true : !!P.manGuard; }
 /* TWO MANUAL BOOKS share one code path (2026-11-27, James: "one shared paper account ... keep all his stats separate ... a new page on mine"). MANCFG is James's on-demand book (r.mank, page /). SONCFG is his son's own book (r.sonk, page /son): own journal list, own stop flag r.sonShut, own busy flag, own guardrail settings (kv son_guard), no entry in James's signal list, no share of James's correlation cap, never counted by scoreOf or the days list. Simulated journal only: neither book sends a broker order. */
-const MANCFG = { key: 'mank', book: 'man', busy: 'manBusy', son: false }, SONCFG = { key: 'sonk', book: 'son', busy: 'sonBusy', son: true };
+/* 2026-11-28 (James): a third page /gf, same as the son's but on screen in Latin American Spanish: book r.gfk, stop flag r.gfShut, guardrail settings kv gf_guard. guest = not James. */
+const MANCFG = { key: 'mank', book: 'man', busy: 'manBusy', guest: false, shut: 'shut', g: 'manG' }, SONCFG = { key: 'sonk', book: 'son', busy: 'sonBusy', guest: true, who: 'son', shut: 'sonShut', g: 'sonG', gon: 'sonGuard', kv: 'son_guard' }, GFCFG = { key: 'gfk', book: 'gf', busy: 'gfBusy', guest: true, who: 'gf', shut: 'gfShut', g: 'gfG', gon: 'gfGuard', kv: 'gf_guard' };
 /* GUARDRAIL SETTINGS (James 2026-11-27: on/off plus editable percentages, and a close-at-gain choice). Defaults stay MAN.gLoss 30 / gGain 100 / gTrail 25 with the trailing-stop mode. Bounds are enforced here, not on the page. mode 'trail' = +gain% arms the trailing stop (v2, default); mode 'close' = sell at the bid at +gain% ('guard target'). */
 function cleanGuard(q) { const o = {}, n = (v, lo, hi) => { v = +v; return Number.isFinite(v) && v >= lo && v <= hi ? Math.round(v * 10) / 10 : undefined; }; if (q.loss !== undefined) o.loss = n(q.loss, 5, 90); if (q.gain !== undefined) o.gain = n(q.gain, 10, 1000); if (q.trail !== undefined) o.trail = n(q.trail, 5, 60); if (q.mode !== undefined) o.mode = q.mode === 'close' ? 'close' : q.mode === 'trail' ? 'trail' : undefined; Object.keys(o).forEach(k => { if (o[k] === undefined) delete o[k]; }); return o; }
-function guardCfg(cfg) { const x = (cfg.son ? P.sonG : P.manG) || {}, on = cfg.son ? (P.sonGuard === undefined ? true : !!P.sonGuard) : manGuardOn(); return { on, loss: x.loss || MAN.gLoss, gain: x.gain || MAN.gGain, trail: x.trail || MAN.gTrail, mode: x.mode === 'close' ? 'close' : 'trail' }; }
+function guardCfg(cfg) { const x = P[cfg.g] || {}, on = cfg.guest ? (P[cfg.gon] === undefined ? true : !!P[cfg.gon]) : manGuardOn(); return { on, loss: x.loss || MAN.gLoss, gain: x.gain || MAN.gGain, trail: x.trail || MAN.gTrail, mode: x.mode === 'close' ? 'close' : 'trail' }; }
 async function manualEnter(sym, side, qty) { return manualEnterB(MANCFG, sym, side, qty); }
 async function manualEnterSon(sym, side, qty) { return manualEnterB(SONCFG, sym, side, qty); }
+async function manualEnterGf(sym, side, qty) { return manualEnterB(GFCFG, sym, side, qty); }
 async function manualEnterB(cfg, sym, side, qty) {
-  const r = P.rec, now = Date.now(), lg = cfg.son ? () => {} : logSignal; // the son's book never writes into James's signal list
+  const r = P.rec, now = Date.now(), lg = cfg.guest ? () => {} : logSignal; // a guest book (son, gf) never writes into James's signal list
   if (!MAN_ON) return { ok: false, error: 'on-demand orders are switched off (MAN_ON=0)' };
   if (!r) return { ok: false, error: 'the journal is not loaded yet' };
-  const sh = cfg.son ? r.sonShut : r.shut; if (sh) return { ok: false, error: 'trading is stopped for today (' + sh + ')' };
+  const sh = r[cfg.shut]; if (sh) return { ok: false, error: 'trading is stopped for today (' + sh + ')' };
   if (!MAN.syms.includes(sym)) return { ok: false, error: 'symbol must be one of ' + MAN.syms.join(', ') };
   if (side !== 'call' && side !== 'put') return { ok: false, error: 'side must be call or put' };
   qty = +qty; if (!Number.isInteger(qty) || qty < 1 || qty > MAN.maxQty) return { ok: false, error: 'quantity must be 1 to ' + MAN.maxQty };
@@ -1456,10 +1459,10 @@ async function manualEnterB(cfg, sym, side, qty) {
     const cap = MAN.idx.includes(sym) ? MAN.maxPrem : MAN.maxPremStk;
     let pk; try { pk = await pickContract(sym, dir, px, cap, 0); } catch (err) { pk = { why: 'could not load option data (' + ((err && err.code) || 'error') + ')' }; }
     if (pk.why) { lg(sym, sig, px, 'skipped', 'on-demand ' + side + ': ' + pk.why); saveRec(); return { ok: false, error: pk.why }; }
-    if (P.rec !== r || (cfg.son ? r.sonShut : r.shut)) return { ok: false, error: 'the trading day changed or stopped while the order was being placed' };
+    if (P.rec !== r || r[cfg.shut]) return { ok: false, error: 'the trading day changed or stopped while the order was being placed' };
     const cost = Math.round(pk.ask * 100 * qty * 100) / 100;
     if (cost > MAN.maxCost) { const why = qty + 'x ' + sym + ' ' + pk.type + ' ' + pk.strike + ' costs $' + cost.toFixed(0) + ', over the $' + MAN.maxCost + ' per-order limit; try fewer contracts'; lg(sym, sig, px, 'skipped', 'on-demand ' + side + ': ' + why); saveRec(); return { ok: false, error: why }; }
-    const corr = cfg.son ? null : corrCapBlocks(r, sym, cost); // the son's book is simulated and kept out of James's correlation cap
+    const corr = cfg.guest ? null : corrCapBlocks(r, sym, cost); // a guest book is simulated and kept out of James's correlation cap
     if (corr) { const why = 'would push ' + sym + '-group open risk to $' + corr.next.toFixed(0) + ', over the $' + CORR_CAP_USD + ' correlation cap'; lg(sym, sig, px, 'skipped', 'on-demand ' + side + ': ' + why); saveRec(); return { ok: false, error: why }; }
     const p = { book: cfg.book, sym, dir, type: pk.type, strike: pk.strike, exp: pk.exp, inst: pk.inst, t0: now, entryAsk: pk.ask, entryBid: pk.bid, entryU: px, qAge: pk.qAge, qty, peak: pk.bid, iv: pk.iv, delta: pk.delta, flatMin: MAN.flat };
     r[cfg.key].open.push(p);
@@ -1490,13 +1493,14 @@ async function manageManB(cfg) {
 }
 async function manageMan() { return manageManB(MANCFG); }
 async function manageSon() { return manageManB(SONCFG); }
-const MANUAL_BOOKS = { man: ['mank', manageMan], son: ['sonk', manageSon], orb: ['orbk', manageOrb], orbn: ['orbnk', manageOrbN], x9: ['x9k', x9Manage], fp: ['fpk', fpManage], csk: ['csk', cskManage], cdr: ['cdrk', cdrManage] };
-async function manualCloseBook(book, sym, t0, n) { // n (optional, manual books man and son only): sell just n of the contracts; omitted or >= qty closes the whole position
+async function manageGf() { return manageManB(GFCFG); }
+const MANUAL_BOOKS = { man: ['mank', manageMan], son: ['sonk', manageSon], gf: ['gfk', manageGf], orb: ['orbk', manageOrb], orbn: ['orbnk', manageOrbN], x9: ['x9k', x9Manage], fp: ['fpk', fpManage], csk: ['csk', cskManage], cdr: ['cdrk', cdrManage] };
+async function manualCloseBook(book, sym, t0, n) { // n (optional, manual books man, son and gf only): sell just n of the contracts; omitted or >= qty closes the whole position
   const b = MANUAL_BOOKS[book]; if (!b) return { ok: false, error: 'unknown book' };
   const k = P.rec && P.rec[b[0]], p = k && k.open.find(x => x.sym === sym && String(x.t0) === String(t0));
   if (!p) return { ok: false, error: 'that position is not open (it may have just closed)' };
   if (!marketOpen(Date.now())) return { ok: false, error: 'market is closed' };
-  n = Math.floor(+n) || 0; const part = (book === 'man' || book === 'son') && n >= 1 && n < (p.qty || 1), q0 = p.qty;
+  n = Math.floor(+n) || 0; const part = (book === 'man' || book === 'son' || book === 'gf') && n >= 1 && n < (p.qty || 1), q0 = p.qty;
   if (part) p.sellQty = n; else p.manual = true; saveRec();
   for (let i = 0; i < 10 && P.busy; i++) await new Promise(r => setTimeout(r, 500));
   if (P.busy) return { ok: true, closed: false, pending: true, note: 'Queued: the server is busy; it closes on the next price.' };
@@ -1530,9 +1534,9 @@ function realStatus() {
 const fs = require('fs'), zlib = require('zlib'), path = require('path');
 let CITY = null, CITY_GZ = null;
 try { CITY = '<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>' + fs.readFileSync(path.join(__dirname, 'public', 'city.html'), 'utf8').replace('<!--WEB-->', '<script>window.__WEB__=1</script>') + '</body></html>'; CITY_GZ = zlib.gzipSync(CITY); } catch (e) { console.log('city.html missing: ' + e.message); }
-/* TRADE DECK (2026-11-27, James: "i would like the main original scalp city changed to this new interphase"; a copy for his son as a new page on the same server). One page file, public/deck.html, two uses: / for James (his manual book mank, plus a read-and-close list of every other open book) and /son for his son (his own book sonk). The old 3D page stays at /city. */
-function wrapPage(file, who) { try { const raw = fs.readFileSync(path.join(__dirname, 'public', file), 'utf8').replace('<!--WEB-->', '<script>window.__WHO__="' + who + '"</script>'); const html = '<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name=robots content=noindex></head><body>' + raw + '</body></html>'; return [html, zlib.gzipSync(html)]; } catch (e) { console.log(file + ' missing: ' + e.message); return [null, null]; } }
-const [DECK, DECK_GZ] = wrapPage('deck.html', 'james'), [SON, SON_GZ] = wrapPage('deck.html', 'son');
+/* TRADE DECK (2026-11-27, James: "i would like the main original scalp city changed to this new interphase"; a copy for his son as a new page on the same server). One page file, public/deck.html, two uses: / for James (his manual book mank, plus a read-and-close list of every other open book) /son for his son (book sonk) and /gf in Latin American Spanish (book gfk, added 2026-11-28). The old 3D page stays at /city. */
+function wrapPage(file, who) { try { const raw = fs.readFileSync(path.join(__dirname, 'public', file), 'utf8').replace('<!--WEB-->', '<script>window.__WHO__="' + who + '"</script>'); const html = '<!doctype html><html lang=' + (who === 'gf' ? 'es-419' : 'en') + '><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name=robots content=noindex></head><body>' + raw + '</body></html>'; return [html, zlib.gzipSync(html)]; } catch (e) { console.log(file + ' missing: ' + e.message); return [null, null]; } }
+const [DECK, DECK_GZ] = wrapPage('deck.html', 'james'), [SON, SON_GZ] = wrapPage('deck.html', 'son'), [GF, GF_GZ] = wrapPage('deck.html', 'gf');
 function bars5(sym) {
   const st = P.raw[sym]; if (!st) return [];
   const out = {}; Object.keys(st).map(Number).sort((a, b) => a - b).forEach(t => {
@@ -1998,8 +2002,10 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, '<meta name=viewport content="width=device-width"><body style="font:18px system-ui;padding:24px;background:#080626;color:#fff">Robinhood is connected. You can close this tab and open your dashboard.</body>', 'text/html');
     }
     if (sonAuthed(u, req)) { if (u.pathname === '/') { res.writeHead(302, { location: '/son?key=' + encodeURIComponent(u.searchParams.get('key') || '') }); return res.end(); } return sonRoute(u, req, res); } // the son's key reaches ONLY /son and /api/son/*
+    if (gfAuthed(u, req)) { if (u.pathname === '/') { res.writeHead(302, { location: '/gf?key=' + encodeURIComponent(u.searchParams.get('key') || '') }); return res.end(); } return gfRoute(u, req, res); } // the gf key reaches ONLY /gf and /api/gf/*
     if (!authed(u, req)) return send(res, 401, 'Add ?key=YOUR_KEY to the address.', 'text/plain');
     if (u.pathname === '/son' || u.pathname.startsWith('/api/son/')) return sonRoute(u, req, res); // James's own key can open the son's page too
+    if (u.pathname === '/gf' || u.pathname.startsWith('/api/gf/')) return gfRoute(u, req, res); // James's own key can open the gf page too
     if (u.pathname === '/api/deck') return send(res, 200, deckOut(MANCFG));
     if (u.pathname === '/api/deck/history') return send(res, 200, await histOut('mank'));
     if (u.pathname === '/city' && CITY) { const gz = /gzip/.test(req.headers['accept-encoding'] || ''); res.writeHead(200, Object.assign({ 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }, gz ? { 'content-encoding': 'gzip' } : {})); return res.end(gz ? CITY_GZ : CITY); } // classic Scalp City page (the 3D city), kept reachable
@@ -2044,6 +2050,9 @@ const server = http.createServer(async (req, res) => {
 /* SON ACCESS (2026-11-27): SON_KEY is a Render env var James sets himself; this code only compares it, never logs, stores or returns it. The son's key is accepted ONLY by sonRoute (page /son and /api/son/*); every other route needs ADMIN_KEY. If SON_KEY equals ADMIN_KEY it is ignored, so a copied key can never open the rest of the server. */
 const SON_KEY = process.env.SON_KEY || '';
 const sonAuthed = (u, req) => !!SON_KEY && SON_KEY !== ADMIN_KEY && (u.searchParams.get('key') === SON_KEY || req.headers['x-key'] === SON_KEY);
+/* GF ACCESS (2026-11-28): same rules as SON_KEY. GF_KEY is ignored when it equals ADMIN_KEY or SON_KEY, so a reused value can never open James's pages or the son's book. */
+const GF_KEY = process.env.GF_KEY || '';
+const gfAuthed = (u, req) => !!GF_KEY && GF_KEY !== ADMIN_KEY && GF_KEY !== (process.env.SON_KEY || '') && (u.searchParams.get('key') === GF_KEY || req.headers['x-key'] === GF_KEY);
 function guardQ(u) { const q = {}; ['loss', 'gain', 'trail', 'mode'].forEach(k => { const v = u.searchParams.get(k); if (v !== null) q[k] = v; }); return q; }
 function guardApply(u, cur) { const q = guardQ(u), c = cleanGuard(q), bad = Object.keys(q).filter(k => c[k] === undefined); return bad.length ? { error: 'out of range or invalid: ' + bad.join(', ') + ' (loss 5-90, gain 10-1000, trail 5-60, mode trail or close)' } : { g: Object.assign({}, cur, c) }; }
 const openOut = o => ({ sym: o.sym, type: o.type, strike: o.strike, exp: o.exp, qty: o.qty, entryAsk: o.entryAsk, t0: o.t0, peak: o.peak || null, trail: !!o.trailAt, flat: o.flatMin, live: o.live || null });
@@ -2058,11 +2067,11 @@ function deckOthers(r) { // every open position of the OTHER books, so the deck 
 }
 function deckOut(cfg) { // one light payload per page poll (today only); history is a separate, slower call
   const r = P.rec, k = (r && r[cfg.key]) || { open: [], trades: [], pnl: 0 };
-  const out = { now: Date.now(), who: cfg.son ? 'son' : 'james', market: marketOpen(Date.now()), day: r ? r.day : null, shut: cfg.son ? ((r && r.sonShut) || '') : ((r && r.shut) || ''), tickAt: P.lastTick || null, pnl: k.pnl || 0, g: guardCfg(cfg), bounds: { loss: [5, 90], gain: [10, 1000], trail: [5, 60] }, syms: MAN.syms, idx: MAN.idx, maxQty: MAN.maxQty, maxOpen: MAN.maxOpen, open: k.open.map(openOut), closed: k.trades.map(closedOut), sg: sigOut(), lv: P.lv || {}, lvx: lvxOut() };
-  if (!cfg.son) { out.cd = { on: !(r && r.cskOff), master: CSK_ON }; out.others = deckOthers(r); out.dayAll = r ? Math.round(['orbk', 'orbnk', 'csk', 'x9k', 'fpk', 'cdrk', 'mank'].reduce((a, k) => a + ((r[k] && r[k].pnl) || 0), r.pnl || 0) * 100) / 100 : 0; } // dayAll: every book's realized P&L today, shown as one line so the manual-book tiles are not mistaken for the whole day
+  const out = { now: Date.now(), who: cfg.guest ? cfg.who : 'james', market: marketOpen(Date.now()), day: r ? r.day : null, shut: (r && r[cfg.shut]) || '', tickAt: P.lastTick || null, pnl: k.pnl || 0, g: guardCfg(cfg), bounds: { loss: [5, 90], gain: [10, 1000], trail: [5, 60] }, syms: MAN.syms, idx: MAN.idx, maxQty: MAN.maxQty, maxOpen: MAN.maxOpen, open: k.open.map(openOut), closed: k.trades.map(closedOut), sg: sigOut(), lv: P.lv || {}, lvx: lvxOut() };
+  if (!cfg.guest) { out.cd = { on: !(r && r.cskOff), master: CSK_ON }; out.others = deckOthers(r); out.dayAll = r ? Math.round(['orbk', 'orbnk', 'csk', 'x9k', 'fpk', 'cdrk', 'mank'].reduce((a, k) => a + ((r[k] && r[k].pnl) || 0), r.pnl || 0) * 100) / 100 : 0; } // dayAll: every book's realized P&L today, shown as one line so the manual-book tiles are not mistaken for the whole day
   return out;
 }
-const HIST = {}; // 60 s cache per book: the day-by-day totals for ONE book (James's mank or the son's sonk), never mixed
+const HIST = {}; // 60 s cache per book: the day-by-day totals for ONE book (James's mank, the son's sonk or gfk), never mixed
 async function histOut(key) {
   const h = HIST[key]; if (h && Date.now() - h.at < 60000) return h.v;
   const scan = await kscan('rec:', 200), days = [];
@@ -2070,20 +2079,25 @@ async function histOut(key) {
   days.sort((a, b) => a.day < b.day ? -1 : 1); const tot = days.reduce((a, d) => a + d.pnl, 0), v = { days, nDays: days.length, total: Math.round(tot * 100) / 100, avgPerDay: days.length ? Math.round(tot / days.length * 100) / 100 : null, note: 'paper, simulated fills at the ask and bid; average is over the days this book traded' };
   HIST[key] = { at: Date.now(), v }; return v;
 }
-async function sonRoute(u, req, res) {
-  const p = u.pathname, post = req.method === 'POST', r = P.rec;
-  if (p === '/son') { if (!SON) return send(res, 404, 'Not found', 'text/plain'); const gz = /gzip/.test(req.headers['accept-encoding'] || ''); res.writeHead(200, Object.assign({ 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }, gz ? { 'content-encoding': 'gzip' } : {})); return res.end(gz ? SON_GZ : SON); }
-  if (p === '/api/son/state') return send(res, 200, deckOut(SONCFG));
-  if (p === '/api/son/history') return send(res, 200, await histOut('sonk'));
+/* One router for both guest pages. cfg picks the book; page and zipped are that guest's own copy of deck.html. */
+async function guestRoute(cfg, page, zipped, u, req, res) {
+  const base = '/api/' + cfg.who + '/', post = req.method === 'POST', r = P.rec;
+  if (u.pathname === '/' + cfg.who) { if (!page) return send(res, 404, 'Not found', 'text/plain'); const gz = /gzip/.test(req.headers['accept-encoding'] || ''); res.writeHead(200, Object.assign({ 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }, gz ? { 'content-encoding': 'gzip' } : {})); return res.end(gz ? zipped : page); }
+  if (!u.pathname.startsWith(base)) return send(res, 404, 'Not found', 'text/plain');
+  const p = u.pathname.slice(base.length);
+  if (p === 'state') return send(res, 200, deckOut(cfg));
+  if (p === 'history') return send(res, 200, await histOut(cfg.key));
   if (!post) return send(res, 404, 'Not found', 'text/plain');
-  if (p === '/api/son/enter') { const sy = (u.searchParams.get('sym') || '').toUpperCase(); if (!/^[A-Z.]{1,6}$/.test(sy)) return send(res, 400, { ok: false, error: 'bad symbol' }); return send(res, 200, await manualEnterSon(sy, (u.searchParams.get('side') || '').toLowerCase(), u.searchParams.get('qty'))); }
-  if (p === '/api/son/close') { const sy = (u.searchParams.get('sym') || '').toUpperCase(); if (!/^[A-Z.]{1,6}$/.test(sy)) return send(res, 400, { ok: false, error: 'bad symbol' }); return send(res, 200, await manualCloseBook('son', sy, u.searchParams.get('t0') || '', u.searchParams.get('n'))); }
-  if (p === '/api/son/closeall') { const open = ((r && r.sonk && r.sonk.open) || []).slice(), out = []; for (const o of open) out.push(await manualCloseBook('son', o.sym, o.t0)); return send(res, 200, { ok: true, results: out }); }
-  if (p === '/api/son/guard') { const on = u.searchParams.get('on'); if (on !== null && on !== '1' && on !== '0') return send(res, 400, { ok: false, error: 'on must be 1 or 0' }); const ga = guardApply(u, P.sonG); if (ga.error) return send(res, 400, { ok: false, error: ga.error }); if (on !== null) P.sonGuard = on === '1'; P.sonG = ga.g; try { await kset('son_guard', Object.assign({ on: guardCfg(SONCFG).on, at: new Date().toISOString() }, P.sonG)); } catch (e) { slog('son_guard_save_error', { e: String((e && e.message) || e).slice(0, 80) }); } return send(res, 200, Object.assign({ ok: true }, guardCfg(SONCFG))); }
-  if (p === '/api/son/stopday') { if (!r) return send(res, 200, { ok: false, error: 'no journal yet' }); const open = ((r.sonk && r.sonk.open) || []).slice(); for (const o of open) await manualCloseBook('son', o.sym, o.t0); r.sonShut = 'stopped by you'; await saveRec(); return send(res, 200, { ok: true }); }
-  if (p === '/api/son/resume') { if (!r || r.sonShut !== 'stopped by you') return send(res, 200, { ok: false, error: 'not stopped' }); r.sonShut = ''; await saveRec(); return send(res, 200, { ok: true }); }
+  if (p === 'enter') { const sy = (u.searchParams.get('sym') || '').toUpperCase(); if (!/^[A-Z.]{1,6}$/.test(sy)) return send(res, 400, { ok: false, error: 'bad symbol' }); return send(res, 200, await manualEnterB(cfg, sy, (u.searchParams.get('side') || '').toLowerCase(), u.searchParams.get('qty'))); }
+  if (p === 'close') { const sy = (u.searchParams.get('sym') || '').toUpperCase(); if (!/^[A-Z.]{1,6}$/.test(sy)) return send(res, 400, { ok: false, error: 'bad symbol' }); return send(res, 200, await manualCloseBook(cfg.book, sy, u.searchParams.get('t0') || '', u.searchParams.get('n'))); }
+  if (p === 'closeall') { const open = ((r && r[cfg.key] && r[cfg.key].open) || []).slice(), out = []; for (const o of open) out.push(await manualCloseBook(cfg.book, o.sym, o.t0)); return send(res, 200, { ok: true, results: out }); }
+  if (p === 'guard') { const on = u.searchParams.get('on'); if (on !== null && on !== '1' && on !== '0') return send(res, 400, { ok: false, error: 'on must be 1 or 0' }); const ga = guardApply(u, P[cfg.g]); if (ga.error) return send(res, 400, { ok: false, error: ga.error }); if (on !== null) P[cfg.gon] = on === '1'; P[cfg.g] = ga.g; try { await kset(cfg.kv, Object.assign({ on: guardCfg(cfg).on, at: new Date().toISOString() }, P[cfg.g])); } catch (e) { slog(cfg.kv + '_save_error', { e: String((e && e.message) || e).slice(0, 80) }); } return send(res, 200, Object.assign({ ok: true }, guardCfg(cfg))); }
+  if (p === 'stopday') { if (!r) return send(res, 200, { ok: false, error: 'no journal yet' }); const open = ((r[cfg.key] && r[cfg.key].open) || []).slice(); for (const o of open) await manualCloseBook(cfg.book, o.sym, o.t0); r[cfg.shut] = 'stopped by you'; await saveRec(); return send(res, 200, { ok: true }); }
+  if (p === 'resume') { if (!r || r[cfg.shut] !== 'stopped by you') return send(res, 200, { ok: false, error: 'not stopped' }); r[cfg.shut] = ''; await saveRec(); return send(res, 200, { ok: true }); }
   return send(res, 404, 'Not found', 'text/plain');
 }
+function sonRoute(u, req, res) { return guestRoute(SONCFG, SON, SON_GZ, u, req, res); }
+function gfRoute(u, req, res) { return guestRoute(GFCFG, GF, GF_GZ, u, req, res); }
 
 const DASH = `<!doctype html><html><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Scalp City Server</title>
 <style>:root{--bg:#080626;--ink:#e9e9ff;--dim:#8a90d0;--g:#34ff9a;--r:#ff3d6e;--c:#38f4d8}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.4 ui-monospace,Menlo,monospace;padding:16px}
@@ -2120,6 +2134,7 @@ function load(){api('/api/status').then(function(x){s=x;draw()}).catch(function(
   { const w = await kget('watch'); if (Array.isArray(w) && w.length) WATCH = w; }
   { const g = await kget('man_guard'); if (g && typeof g.on === 'boolean') P.manGuard = g.on; if (g) P.manG = cleanGuard(g); } // on-demand guardrails switch and percentages
   { const g = await kget('son_guard'); if (g && typeof g.on === 'boolean') P.sonGuard = g.on; if (g) P.sonG = cleanGuard(g); } // the son's own guardrail settings
+  { const g = await kget('gf_guard'); if (g && typeof g.on === 'boolean') P.gfGuard = g.on; if (g) P.gfG = cleanGuard(g); } // the gf page's own guardrail settings
   await connect();
   setInterval(() => { tick(); }, TICK_MS);
   setInterval(() => { sigTick(); }, 60000); setTimeout(() => { sigTick(); }, 15000); // signal board: display only
