@@ -1537,6 +1537,9 @@ try { CITY = '<!doctype html><html><head><meta charset=utf8><meta name=viewport 
 /* TRADE DECK (2026-11-27, James: "i would like the main original scalp city changed to this new interphase"; a copy for his son as a new page on the same server). One page file, public/deck.html, two uses: / for James (his manual book mank, plus a read-and-close list of every other open book) /son for his son (book sonk) and /gf in Latin American Spanish (book gfk, added 2026-11-28). The old 3D page stays at /city. */
 function wrapPage(file, who) { try { const raw = fs.readFileSync(path.join(__dirname, 'public', file), 'utf8').replace('<!--WEB-->', '<script>window.__WHO__="' + who + '"</script>'); const html = '<!doctype html><html lang=' + (who === 'gf' ? 'es-419' : 'en') + '><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name=robots content=noindex></head><body>' + raw + '</body></html>'; return [html, zlib.gzipSync(html)]; } catch (e) { console.log(file + ' missing: ' + e.message); return [null, null]; } }
 const [DECK, DECK_GZ] = wrapPage('deck.html', 'james'), [SON, SON_GZ] = wrapPage('deck.html', 'son'), [GF, GF_GZ] = wrapPage('deck.html', 'gf');
+/* the manual-trading guide served behind each guest key (James 2026-11-28): English on /son/guide, Spanish on /gf/guide. Plain static pages. */
+const readGuide = f => { try { return fs.readFileSync(path.join(__dirname, 'public', f), 'utf8'); } catch (e) { return ''; } };
+const GUIDES = { son: readGuide('guide_en.html'), gf: readGuide('guide_es.html') };
 function bars5(sym) {
   const st = P.raw[sym]; if (!st) return [];
   const out = {}; Object.keys(st).map(Number).sort((a, b) => a - b).forEach(t => {
@@ -2004,8 +2007,8 @@ const server = http.createServer(async (req, res) => {
     if (sonAuthed(u, req)) { if (u.pathname === '/') { res.writeHead(302, { location: '/son?key=' + encodeURIComponent(u.searchParams.get('key') || '') }); return res.end(); } return sonRoute(u, req, res); } // the son's key reaches ONLY /son and /api/son/*
     if (gfAuthed(u, req)) { if (u.pathname === '/') { res.writeHead(302, { location: '/gf?key=' + encodeURIComponent(u.searchParams.get('key') || '') }); return res.end(); } return gfRoute(u, req, res); } // the gf key reaches ONLY /gf and /api/gf/*
     if (!authed(u, req)) return send(res, 401, 'Add ?key=YOUR_KEY to the address.', 'text/plain');
-    if (u.pathname === '/son' || u.pathname.startsWith('/api/son/')) return sonRoute(u, req, res); // James's own key can open the son's page too
-    if (u.pathname === '/gf' || u.pathname.startsWith('/api/gf/')) return gfRoute(u, req, res); // James's own key can open the gf page too
+    if (u.pathname === '/son' || u.pathname === '/son/guide' || u.pathname.startsWith('/api/son/')) return sonRoute(u, req, res); // James's own key can open the son's page too
+    if (u.pathname === '/gf' || u.pathname === '/gf/guide' || u.pathname.startsWith('/api/gf/')) return gfRoute(u, req, res); // James's own key can open the gf page too
     if (u.pathname === '/api/deck') return send(res, 200, deckOut(MANCFG));
     if (u.pathname === '/api/deck/history') return send(res, 200, await histOut('mank'));
     if (u.pathname === '/city' && CITY) { const gz = /gzip/.test(req.headers['accept-encoding'] || ''); res.writeHead(200, Object.assign({ 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }, gz ? { 'content-encoding': 'gzip' } : {})); return res.end(gz ? CITY_GZ : CITY); } // classic Scalp City page (the 3D city), kept reachable
@@ -2083,6 +2086,7 @@ async function histOut(key) {
 async function guestRoute(cfg, page, zipped, u, req, res) {
   const base = '/api/' + cfg.who + '/', post = req.method === 'POST', r = P.rec;
   if (u.pathname === '/' + cfg.who) { if (!page) return send(res, 404, 'Not found', 'text/plain'); const gz = /gzip/.test(req.headers['accept-encoding'] || ''); res.writeHead(200, Object.assign({ 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }, gz ? { 'content-encoding': 'gzip' } : {})); return res.end(gz ? zipped : page); }
+  if (u.pathname === '/' + cfg.who + '/guide') { const g = GUIDES[cfg.who]; return g ? send(res, 200, g, 'text/html; charset=utf-8') : send(res, 404, 'Not found', 'text/plain'); }
   if (!u.pathname.startsWith(base)) return send(res, 404, 'Not found', 'text/plain');
   const p = u.pathname.slice(base.length);
   if (p === 'state') return send(res, 200, deckOut(cfg));

@@ -260,6 +260,7 @@ a.btn{color:var(--ink);align-items:center;justify-content:center;min-height:44px
   <header class="top">
     <div class="brand">Trade Deck <span class="pill paper" id="whoPill">Paper account</span><span class="pill live" id="livePill">Connecting</span></div>
     <div class="acts">
+      <a class="btn neutral" id="guide" href="#" target="_blank" rel="noopener noreferrer" style="text-decoration:none;display:none">Trading guide</a>
       <a class="btn neutral" id="classic" href="/city" style="text-decoration:none;display:none">Classic city</a>
       <button class="tgl neutral" id="cskOn" type="button" role="switch" aria-checked="false" title="Automatic entries from the CSK strategy, for today only. Starts off every new day." style="display:none"><i></i><span id="cskState">CSK off</span></button>
       <button class="btn warn" id="stopDay" type="button">Stop for the day</button>
@@ -685,6 +686,7 @@ a.btn{color:var(--ink);align-items:center;justify-content:center;min-height:44px
     tx(q('.note2'),'Solo práctica: las compras y ventas son simuladas con cotizaciones reales de opciones (compras al precio más alto y vendes al precio más bajo). No se envía ninguna orden a ningún corredor. Los precios se actualizan cada 20 segundos aproximadamente. Los stops y las protecciones solo funcionan mientras el servidor está encendido; no hay un stop guardado en ningún corredor. Las líneas de soporte y resistencia son precios de referencia, no una ventaja comprobada.');
   }
   if(GF)esStatic();
+  if(GUEST){var gd=$('guide');gd.textContent=L('Trading guide','Guía de trading');gd.href=url('/'+(GF?'gf':'son')+'/guide');gd.style.display='flex'}
   try{if(localStorage.getItem('sgFold')==='1'){$('sbox').classList.add('fold')}}catch(e){}
   $('sgFold').addEventListener('click',function(){var on=$('sbox').classList.toggle('fold');$('sgFold').innerHTML=on?'&#9656;':'&#9662;';try{localStorage.setItem('sgFold',on?'1':'0')}catch(e){}});
   document.addEventListener('visibilitychange',function(){if(!document.hidden)poll()});

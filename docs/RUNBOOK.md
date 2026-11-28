@@ -208,3 +208,6 @@ In `rec:YYYY-MM-DD` -> `cskreal.list[]`: `pc` (taken once per spread at the 15:4
 - **Pre-push open-position check now includes `gfk.open`** as well as `sonk.open`. The heartbeat log line `open` carries both. CLAUDE.md's list is James's to change.
 - Tests: `node test/gf_page.test.js`, plus `son_access`, `son_book`, `deck_page`, `deck_levels`, `deck_calendar`, `manual_close`.
 - Any new on-screen text in `public/deck.html` must be written as `L('English','Español')`; a new server refusal message needs a line in the page's `SRV` list.
+
+## 2026-11-28 — Guides on the guest pages (pending push)
+- `/son/guide?key=SON_KEY` and `/gf/guide?key=GF_KEY` (James's key opens both). Source files `public/guide_en.html` and `public/guide_es.html`, read at server start. They quote on-screen labels and the default limits (1-3 contracts, 3 open, $1,200 per order, $400/$800 per contract, guardrails 30/100/25, 3:59 PM sell): update both guides when any of these or a button name changes. Test: `node test/gf_page.test.js`.
