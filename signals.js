@@ -86,7 +86,7 @@ function computeSignals(bars, opts) {
 function levels(bars) {
   if (!bars || bars.length < 2) return null;
   const last = bars[bars.length - 1], today = bars.filter(b => b.day === last.day); if (!today.length) return null;
-  const prior = bars.filter(b => b.day < last.day), pd = prior.length ? prior[prior.length - 1].day : null, pb = pd ? prior.filter(b => b.day === pd) : [];
+  const prior = bars.filter(b => b.day < last.day), pd = prior.length ? prior[prior.length - 1].day : null, pbAll = pd ? prior.filter(b => b.day === pd) : [], pb = pbAll.length && pbAll[0].min <= 575 ? pbAll : []; // a prior session that starts after 9:35 is partial (the server restarted mid-day and refetched only part of it): report no prior-day levels rather than wrong ones
   const hi = a => Math.max.apply(null, a.map(b => b.h)), lo = a => Math.min.apply(null, a.map(b => b.l)), r2 = x => Math.round(x * 100) / 100;
   let pv = 0, vv = 0; today.forEach(b => { pv += (b.h + b.l + b.c) / 3 * b.v; vv += b.v; });
   const or = today.filter(b => b.min < ORB_END), orDone = last.min >= ORB_END && or.length > 0;

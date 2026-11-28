@@ -191,6 +191,13 @@ button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .lvl{display:flex;justify-content:space-between;gap:10px;font-size:11px;color:var(--dim)}
 .lvl span:last-child{text-align:right}
 .lvn{font-size:12px;color:var(--warn);font-weight:600}.lvn:empty{display:none}
+.lvx{margin-top:2px}.lvx summary{cursor:pointer;color:var(--dim);list-style:none;padding:6px 0;font:600 11px var(--f-body);letter-spacing:.08em;text-transform:uppercase;min-height:32px}
+.lvx summary::-webkit-details-marker{display:none}.lvx summary::before{content:"+ ";font-weight:700}.lvx[open] summary::before{content:"- "}
+.lvxl{max-height:230px;overflow:auto;display:flex;flex-direction:column;gap:2px}
+.lvr{display:grid;grid-template-columns:62px 1fr auto;gap:8px;padding:3px 4px;border-radius:5px;color:var(--dim);font-size:12px;align-items:baseline}
+.lvr .p{font:500 12px var(--f-mono)}.lvr.maj{color:var(--ink)}.lvr.maj .p{font-weight:700}.lvr .d{font:500 11px var(--f-mono)}
+.lvr.px{background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--ink);font-weight:600}
+.lvfn{font-size:10px;color:var(--dim);margin-top:6px;line-height:1.4}
 @media (max-width:560px){
   body{font-size:15px}
   .brand{font-size:24px}
@@ -343,15 +350,28 @@ a.btn{color:var(--ink);align-items:center;justify-content:center;min-height:44px
   function fld(p,k){return p.el.querySelector('[data-f='+k+']')}
   function list(){return Object.keys(byId).map(function(k){return byId[k]}).sort(function(a,b){return b.t0-a.t0})}
 
-  /* ---- levels (display only) ---- */
-  function levels(sym){var L=S&&S.lv&&S.lv[sym];if(!L)return null;
-    var a=[['Prior-day high',L.pdh],['Prior-day low',L.pdl],['Opening-range high',L.orh],['Opening-range low',L.orl],['VWAP',L.vwap],['Day high',L.dh],['Day low',L.dl]].filter(function(x){return x[1]!=null}).map(function(x){return{n:x[0],v:x[1]}});
-    return{px:L.px,list:a}}
+  /* ---- levels (display only): reference lines, never a signal. Major lines drive Near/Approaching; the rest sit in the All levels list. Lines closer together than half the near distance are merged into one label. ---- */
+  function levels(sym){var L=S&&S.lv&&S.lv[sym],X=S&&S.lvx&&S.lvx[sym],H=X&&X.htf,a=[];if(!L)return null;
+    var add=function(n,v,major){if(v!=null&&isFinite(v))a.push({n:n,v:+v,major:!!major})};
+    add('Opening-range high',L.orh,1);add('Opening-range low',L.orl,1);add('VWAP',L.vwap,1);add('Day high',L.dh);add('Day low',L.dl);
+    if(H){add('Prior-day high',H.pdh,1);add('Prior-day low',H.pdl,1);add('Prior-week high',H.pwh,1);add('Prior-week low',H.pwl,1);add('Prior-month high',H.pmh,1);add('Prior-month low',H.pml,1)}
+    else{add('Prior-day high',L.pdh,1);add('Prior-day low',L.pdl,1)}
+    if(X){var F=X.fib,Q=X.h4,V=X.vp,O=X.oi,G=X.gex;
+      if(F){add('Fib 38.2 of prior day',F.f382);add('Fib 50 of prior day',F.f500);add('Fib 61.8 of prior day',F.f618)}
+      if(Q){add('Prior 4h high, morning',Q.amH);add('Prior 4h low, morning',Q.amL);add('Prior 4h high, afternoon',Q.pmH);add('Prior 4h low, afternoon',Q.pmL)}
+      if(V){add('Prior-day volume POC',V.poc,1);add('Prior value area high',V.vah);add('Prior value area low',V.val)}
+      if(O){add('OI call wall',O.callWall&&O.callWall.strike,1);add('OI put wall',O.putWall&&O.putWall.strike,1);add('OI max pin',O.max&&O.max.strike,1)}
+      if(G){add('GEX call wall (est.)',G.callWall);add('GEX put wall (est.)',G.putWall);add('Gamma flip (est.)',G.flip)}}
+    return{px:L.px,list:a,oiDate:X&&X.oi&&X.oi.oiDate?String(X.oi.oiDate):''}}
+  function lvCluster(list,tol){var s=list.slice().sort(function(x,y){return x.v-y.v}),out=[],g=null;
+    s.forEach(function(l){if(g&&(l.v-g.lo)/g.lo<=tol)g.items.push(l);else{g={lo:l.v,items:[l]};out.push(g)}});
+    return out.map(function(g){var mj=g.items.filter(function(i){return i.major}),oth=g.items.filter(function(i){return!i.major}),all=mj.concat(oth),lead=all[0],nm=all.map(function(i){return i.n});
+      return{v:lead.v,major:mj.length>0,n:nm.slice(0,2).join(' + ')+(nm.length>2?' +'+(nm.length-2)+' more':'')}})}
   function lvPaint(p){
-    var L=levels(p.sym),b=fld(p,'lvb');
-    if(!L||!L.list.length){b.className='lvb clear';b.textContent='Levels loading';fld(p,'lvt').textContent=p.sym;fld(p,'lvS').textContent='';fld(p,'lvR').textContent='';fld(p,'lvdot').style.left='50%';fld(p,'lvn').textContent='';fld(p,'lvtr').setAttribute('data-near','');return}
-    var u=L.px,up=null,dn=null,call=p.type==='call',thr=(p.sym==='SPY'||p.sym==='QQQ')?.0008:.0025;
-    L.list.forEach(function(l){if(l.v>u&&(!up||l.v<up.v))up=l;if(l.v<=u&&(!dn||l.v>dn.v))dn=l});
+    var L=levels(p.sym),b=fld(p,'lvb'),thr=(p.sym==='SPY'||p.sym==='QQQ')?.0008:.0025,cl=L?lvCluster(L.list,thr*.5):[],mj=cl.filter(function(c){return c.major});
+    if(!L||!mj.length){b.className='lvb clear';b.textContent='Levels loading';fld(p,'lvt').textContent=p.sym;fld(p,'lvS').textContent='';fld(p,'lvR').textContent='';fld(p,'lvdot').style.left='50%';fld(p,'lvn').textContent='';fld(p,'lvtr').setAttribute('data-near','');return}
+    var u=L.px,up=null,dn=null,call=p.type==='call';
+    mj.forEach(function(l){if(l.v>u&&(!up||l.v<up.v))up=l;if(l.v<=u&&(!dn||l.v>dn.v))dn=l});
     var rel=call?up:dn,dist=rel?Math.abs(rel.v-u)/u:null,st=!rel?'clear':dist<=thr?'near':dist<=thr*2.5?'near2':'clear';
     b.className='lvb '+st;
     b.textContent=st==='near'?'Near '+(call?'resistance':'support'):st==='near2'?'Approaching '+(call?'resistance':'support'):!rel?'No level '+(call?'above':'below'):'Room '+(call?'above':'below');
@@ -361,7 +381,13 @@ a.btn{color:var(--ink);align-items:center;justify-content:center;min-height:44px
     fld(p,'lvR').innerHTML=up?'Resistance '+up.v.toFixed(2)+'<br>'+esc(up.n)+', '+d(up):'No resistance above';
     fld(p,'lvdot').style.left=(up&&dn?Math.min(100,Math.max(0,(u-dn.v)/(up.v-dn.v)*100)):50)+'%';
     fld(p,'lvtr').setAttribute('data-near',st==='near'?(call?'r':'s'):'');
-    fld(p,'lvn').textContent=st==='near'?'Price often stalls or turns at a level like this. The stock is '+d(rel)+' from it.':''}
+    fld(p,'lvn').textContent=st==='near'?'Reference line only, not a tested signal. The stock is '+d(rel)+' from it.':'';
+    var rows=cl.slice().sort(function(x,y){return y.v-x.v}),h='',put=false,pxr='<div class="lvr px"><span class="p">'+u.toFixed(2)+'</span><span class="n">Stock price now</span><span class="d"></span></div>';
+    rows.forEach(function(c){if(!put&&c.v<=u){h+=pxr;put=true}var dd=(c.v-u)/u*100;h+='<div class="lvr'+(c.major?' maj':'')+'"><span class="p">'+c.v.toFixed(2)+'</span><span class="n">'+esc(c.n)+'</span><span class="d">'+(dd>=0?'+':'')+dd.toFixed(2)+'%</span></div>'});
+    if(!put)h+=pxr;
+    h+='<div class="lvfn">Bold lines trigger Near and Approaching. GEX lines are model estimates, not facts: they assume customers are long calls and short puts. OI is open interest'+(L.oiDate?' as of '+esc(L.oiDate):'')+', so it leaves out positions opened today. Fib, 4-hour and value-area lines are reference only. No line here is a tested signal.</div>';
+    if(p._lvh!==h){p._lvh=h;fld(p,'lvxl').innerHTML=h}
+    fld(p,'lvxs').textContent='All levels ('+cl.length+')'}
 
   /* ---- cards ---- */
   function cardHTML(p){
@@ -371,7 +397,7 @@ a.btn{color:var(--ink);align-items:center;justify-content:center;min-height:44px
     +'<div><div class="meter"><span class="stop" data-f="stopmk"></span><span class="zero" data-f="zero"></span><span class="fill" data-f="fill"></span><span class="trail" data-f="trail"></span><span class="mk" data-f="mk"></span></div>'
     +'<div class="mlab"><span data-f="lblL"></span><span>breakeven</span><span data-f="lblR"></span></div></div>'
     +'<div class="facts"><div><small>Paid</small><b data-f="paid"></b></div><div><small>Now (sell price)</small><b data-f="bid"></b></div><div><small>Best so far</small><b data-f="peak"></b></div></div>'
-    +'<div class="lv"><div class="lvh"><span class="lvt" data-f="lvt"></span><span class="lvb" data-f="lvb"></span></div><div class="lvtrack" data-f="lvtr"><i data-f="lvdot"></i></div><div class="lvl"><span data-f="lvS"></span><span data-f="lvR"></span></div><div class="lvn" data-f="lvn"></div></div>'
+    +'<div class="lv"><div class="lvh"><span class="lvt" data-f="lvt"></span><span class="lvb" data-f="lvb"></span></div><div class="lvtrack" data-f="lvtr"><i data-f="lvdot"></i></div><div class="lvl"><span data-f="lvS"></span><span data-f="lvR"></span></div><div class="lvn" data-f="lvn"></div><details class="lvx"><summary data-f="lvxs">All levels</summary><div class="lvxl" data-f="lvxl"></div></details></div>'
     +'<div class="guard" data-f="guard"></div>'
     +'<div data-f="act"></div>'}
   function actHTML(p){

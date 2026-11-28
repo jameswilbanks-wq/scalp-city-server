@@ -102,6 +102,13 @@ function occ(sym) { const m = /^(.*?)(\d{6})([CP])(\d{8})$/.exec(sym); return m 
    (as opposed to the data feed in ap() above). SWEEP_REAL_ORDERS=0 turns this off and sweep reverts to simulated fills. */
 const ALPACA_PAPER_TRADING_BASE = 'https://paper-api.alpaca.markets';
 const SWEEP_REAL_ORDERS = process.env.SWEEP_REAL_ORDERS !== '0';
+/* GET-only reader for Alpaca's PAPER trading base (market calendar and option contracts, for the deck's price levels). It sends no body and no method but GET, so it can never place or change an order. */
+async function apTradeGet(path, qs) {
+  const u = new URL(ALPACA_PAPER_TRADING_BASE + path); Object.keys(qs || {}).forEach(k => { if (qs[k] !== undefined && qs[k] !== '') u.searchParams.set(k, qs[k]); });
+  const r = await fetch(u, { method: 'GET', headers: { 'APCA-API-KEY-ID': AK, 'APCA-API-SECRET-KEY': AS, accept: 'application/json' } });
+  if (!r.ok) throw Object.assign(new Error('alpaca get ' + r.status + ' ' + (await r.text()).slice(0, 120)), { code: 'tool_error' });
+  return r.json();
+}
 async function apTrade(method, path, body) {
   const r = await fetch(ALPACA_PAPER_TRADING_BASE + path, { method, headers: Object.assign({ 'APCA-API-KEY-ID': AK, 'APCA-API-SECRET-KEY': AS, accept: 'application/json' }, body ? { 'content-type': 'application/json' } : {}), body: body ? JSON.stringify(body) : undefined });
   const txt = await r.text(); let j; try { j = txt ? JSON.parse(txt) : {}; } catch (e) { j = { raw: txt }; }
@@ -1589,6 +1596,25 @@ async function ensureBars(list) {
   await Promise.all(list.map(async s => { const e = ENS[s] = ENS[s] || { at: 0 }; if (P.raw[s] && Date.now() - e.at < 60000) return; e.at = Date.now(); try { await pBars(s); } catch (x) { e.err = String((x && (x.code || x.message)) || x).slice(0, 80); } }));
 }
 /* SIGNAL BOARD (James 2026-11-27): display-only table of the 10 manual tickers, seven signals each (signals.js; MACD and Bollinger added 2026-11-27 on James's "add all 7"), each row shows a grouped read: TREND (VWAP, ORB, EMA, MACD; 3 of 4 sets a direction) qualified by STRETCH (RSI, Bollinger) as BUY/SELL (clean), LATE or WATCH (grouped design agreed with James 2026-11-27 from the bt38 contradiction finding). The journal r.sgk records every grouped-status change. It never places or influences an order, never touches another book, runs in its own try/catch every 60 s while the market is open, and journals every light change in r.sgk (capped at 400 per day) so a later read-only study can measure hit rate net of spread. Not a validated strategy: see docs/DECISIONS.md 2026-11-27. */
+/* EXTENDED PRICE LEVELS (James 2026-11-27): previous day/week/month high-low, prior-day Fibonacci, previous-day 4-hour blocks, prior-session volume profile, open-interest walls and an estimated GEX, for the deck's support/resistance block. DISPLAY ONLY: it never touches an order, a signal or a book. Own timer and busy flag (not the 20 s tick, not the signal loop), every symbol and every part in its own try/catch, GET-only Alpaca data. Definitions are fixed in levels_ext.js and docs/DECISIONS.md. */
+const LX = require('./levels_ext.js');
+const LVX_API = {
+  async bars(sym, tf, start, end, feed) { const out = []; let tok = ''; for (let i = 0; i < 4; i++) { const d = await ap('/v2/stocks/bars', { symbols: sym, timeframe: tf, start, end, feed, limit: 1000, adjustment: 'raw', sort: 'asc', page_token: tok || undefined }); ((d.bars && d.bars[sym]) || []).forEach(b => out.push(b)); tok = d.next_page_token || ''; if (!tok) break; } return out; },
+  calendar: (a, b) => apTradeGet('/v2/calendar', { start: a, end: b }), contracts: q => apTradeGet('/v2/options/contracts', q), snaps: (sym, q) => ap('/v1beta1/options/snapshots/' + sym, q)
+};
+async function lvxTick() {
+  if (P.lvxBusy || !USE_ALPACA) return; P.lvxBusy = true; P.lvxSt = P.lvxSt || {};
+  try {
+    const now = Date.now(), o = { now, open: marketOpen(now), spot: s => P.lv && P.lv[s] && P.lv[s].px, cal: P.lvxCal || (P.lvxCal = {}) };
+    for (const sym of MAN.syms) {
+      const st = P.lvxSt[sym] || (P.lvxSt[sym] = {}), before = st.htfAt;
+      try { await LX.refreshSym(LVX_API, sym, st, o); } catch (e) { st.calcErr = String((e && e.message) || e).slice(0, 100); }
+      if (st.htfAt && st.htfAt !== before) console.log('levels_ext ' + JSON.stringify({ sym, feed: st.feed || null, day: st.htf.pdDay, pdh: st.htf.pdh, pwh: st.htf.pwh, pmh: st.htf.pmh, h4: !!st.h4, vp: !!st.vp, err: st.htfErr || null }));
+    }
+    P.lvxAt = Date.now();
+  } catch (err) { P.lvxErr = String((err && err.message) || err).slice(0, 120); } finally { P.lvxBusy = false; }
+}
+function lvxOut() { const o = {}; Object.keys(P.lvxSt || {}).forEach(k => { const c = LX.compact(P.lvxSt[k]); if (c) o[k] = c; }); return o; }
 const SigEng = require('./signals.js');
 async function sigTick() {
   if (P.sgBusy || !S.connected || !P.rec || !marketOpen(Date.now())) return;
@@ -2032,7 +2058,7 @@ function deckOthers(r) { // every open position of the OTHER books, so the deck 
 }
 function deckOut(cfg) { // one light payload per page poll (today only); history is a separate, slower call
   const r = P.rec, k = (r && r[cfg.key]) || { open: [], trades: [], pnl: 0 };
-  const out = { now: Date.now(), who: cfg.son ? 'son' : 'james', market: marketOpen(Date.now()), day: r ? r.day : null, shut: cfg.son ? ((r && r.sonShut) || '') : ((r && r.shut) || ''), tickAt: P.lastTick || null, pnl: k.pnl || 0, g: guardCfg(cfg), bounds: { loss: [5, 90], gain: [10, 1000], trail: [5, 60] }, syms: MAN.syms, idx: MAN.idx, maxQty: MAN.maxQty, maxOpen: MAN.maxOpen, open: k.open.map(openOut), closed: k.trades.map(closedOut), sg: sigOut(), lv: P.lv || {} };
+  const out = { now: Date.now(), who: cfg.son ? 'son' : 'james', market: marketOpen(Date.now()), day: r ? r.day : null, shut: cfg.son ? ((r && r.sonShut) || '') : ((r && r.shut) || ''), tickAt: P.lastTick || null, pnl: k.pnl || 0, g: guardCfg(cfg), bounds: { loss: [5, 90], gain: [10, 1000], trail: [5, 60] }, syms: MAN.syms, idx: MAN.idx, maxQty: MAN.maxQty, maxOpen: MAN.maxOpen, open: k.open.map(openOut), closed: k.trades.map(closedOut), sg: sigOut(), lv: P.lv || {}, lvx: lvxOut() };
   if (!cfg.son) { out.cd = { on: !(r && r.cskOff), master: CSK_ON }; out.others = deckOthers(r); out.dayAll = r ? Math.round(['orbk', 'orbnk', 'csk', 'x9k', 'fpk', 'cdrk', 'mank'].reduce((a, k) => a + ((r[k] && r[k].pnl) || 0), r.pnl || 0) * 100) / 100 : 0; } // dayAll: every book's realized P&L today, shown as one line so the manual-book tiles are not mistaken for the whole day
   return out;
 }
@@ -2097,6 +2123,7 @@ function load(){api('/api/status').then(function(x){s=x;draw()}).catch(function(
   await connect();
   setInterval(() => { tick(); }, TICK_MS);
   setInterval(() => { sigTick(); }, 60000); setTimeout(() => { sigTick(); }, 15000); // signal board: display only
+  setInterval(() => { lvxTick(); }, 60000); setTimeout(() => { lvxTick(); }, 25000); // extended price levels: display only
   setInterval(heartbeat, 60000); setTimeout(heartbeat, 5000); setInterval(() => { quoteSample(); }, 60000);
   slog('boot', { alpacaData: USE_ALPACA, db: !!pool, tickMs: TICK_MS, running: !!P.ctl.running, node: process.version });
   setInterval(() => { fastPos(); }, FAST_MS);
