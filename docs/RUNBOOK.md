@@ -214,3 +214,9 @@ In `rec:YYYY-MM-DD` -> `cskreal.list[]`: `pc` (taken once per spread at the 15:4
 
 ## 2026-11-28 — Guide pictures
 - The pictures are fixed screenshots (light theme, phone width). A change to a button, label or layout on the deck does **not** update them: retake and re-place them. The capture was a one-off using a local mock server, not part of the repo. Take screenshots without full-page capture (it changes the page width and shifts the arrow positions). `node test/gf_page.test.js` checks nine embedded pictures per guide, a text label and example caption on each, and one key line per arrow; it cannot check that an arrow points at the right thing.
+
+## 2026-11-28 — Order-flow chart (`orderflow.js`, `/api/flow`)
+- Routes: `/api/flow?sym=` (admin key, book `mank`), `/api/son/flow`, `/api/gf/flow`. A symbol is served only while that book has it open. The page asks every 20 s while a card is open and the chart is shown, or once for a hidden one.
+- Data: Alpaca `/v2/stocks/trades`, `feed=iex`. One cache per symbol, memory only (empty after a restart). Limits in `orderflow.js`: refresh at most every 15 s per symbol, 4 pages per refresh, 30 requests a minute in total (free plan: 200 historical calls a minute), 60 s pause after a 429, 8 s timeout.
+- Guests: off unless Render env `FLOW_GUESTS=1` (setting it restarts the server). Read the Alpaca terms note in DECISIONS first.
+- Tests: `node test/order_flow.test.js`. Checked on a local mock with real IEX SPY trades from 2026-11-27 10:30-11:00 ET. NOT yet checked live during market hours (first chance Monday 2026-11-30).

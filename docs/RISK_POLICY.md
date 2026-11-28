@@ -103,3 +103,6 @@ Simulated journal only, no broker order, outside James's correlation cap, same e
 
 ## 2026-11-28 — gf manual book (`gfk`)
 Same standing and limits as the son's book above: simulated journal only, no broker order, outside James's correlation cap, same entry limits, same guardrail bounds and defaults, own settings and own stop flag, stops run only while the server process runs.
+
+## 2026-11-28 — Order-flow chart is not part of risk control
+- Display only. `tick()`, stops, entries and exits never read it. It shares the Alpaca data key with them, so its requests are capped at 30 a minute and it pauses for 60 s after a 429. That cap limits only the chart's own requests; total request use by the whole server has not been measured.

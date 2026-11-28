@@ -13,6 +13,7 @@ const { UnauthorizedError } = require('@modelcontextprotocol/sdk/client/auth.js'
 const Engine = require('./engine.js');
 const Orb15 = require('./orb15.js');
 const AiOverlay = require('./ai_overlay.js');
+const OrderFlow = require('./orderflow.js');
 
 const PORT = +process.env.PORT || 3000;
 const PUBLIC_URL = (process.env.PUBLIC_URL || '').replace(/\/$/, '');
@@ -2011,6 +2012,7 @@ const server = http.createServer(async (req, res) => {
     if (u.pathname === '/gf' || u.pathname === '/gf/guide' || u.pathname.startsWith('/api/gf/')) return gfRoute(u, req, res); // James's own key can open the gf page too
     if (u.pathname === '/api/deck') return send(res, 200, deckOut(MANCFG));
     if (u.pathname === '/api/deck/history') return send(res, 200, await histOut('mank'));
+    if (u.pathname === '/api/flow') return send(res, 200, await flowOut(MANCFG, u));
     if (u.pathname === '/city' && CITY) { const gz = /gzip/.test(req.headers['accept-encoding'] || ''); res.writeHead(200, Object.assign({ 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }, gz ? { 'content-encoding': 'gzip' } : {})); return res.end(gz ? CITY_GZ : CITY); } // classic Scalp City page (the 3D city), kept reachable
     if (u.pathname === '/' && DECK) { const gz = /gzip/.test(req.headers['accept-encoding'] || ''); res.writeHead(200, Object.assign({ 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }, gz ? { 'content-encoding': 'gzip' } : {})); return res.end(gz ? DECK_GZ : DECK); }
     if (u.pathname === '/' && CITY) { const gz = /gzip/.test(req.headers['accept-encoding'] || ''); res.writeHead(200, Object.assign({ 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }, gz ? { 'content-encoding': 'gzip' } : {})); return res.end(gz ? CITY_GZ : CITY); }
@@ -2068,6 +2070,16 @@ function deckOthers(r) { // every open position of the OTHER books, so the deck 
   ((r.cdrk && r.cdrk.open) || []).forEach(p => o.push({ book: 'cdr', label: 'CDR', sym: p.sym, desc: p.sym + ' condor', t0: p.t0 }));
   return o;
 }
+/* ORDER FLOW chart on the open trade cards (James approved the mockup 2026-11-28). Display only, never part of tick(). Guest pages stay OFF unless FLOW_GUESTS=1: Alpaca's terms limit its data to personal use and ask for 30 days' written notice before it is made available to others through your own app. */
+const FLOW_GUESTS = process.env.FLOW_GUESTS === '1', FLOW = OrderFlow.create((path, qs) => ap(path, qs));
+async function flowOut(cfg, u) { // only a symbol that THIS book has open right now can be asked for, so no key can make the server fetch anything else
+  if (cfg.guest && !FLOW_GUESTS) return { ok: true, state: 'off' };
+  const sym = (u.searchParams.get('sym') || '').toUpperCase(), open = (P.rec && P.rec[cfg.key] && P.rec[cfg.key].open) || [];
+  if (!open.some(o => o.sym === sym)) return { ok: false, state: 'none', error: 'no open trade in that symbol' };
+  if (!USE_ALPACA) return { ok: true, state: 'unavailable' };
+  if (!marketOpen(Date.now())) return { ok: true, state: 'closed' };
+  const v = await FLOW.view(sym); delete v.err; return Object.assign({ ok: true, sym }, v);
+}
 function deckOut(cfg) { // one light payload per page poll (today only); history is a separate, slower call
   const r = P.rec, k = (r && r[cfg.key]) || { open: [], trades: [], pnl: 0 };
   const out = { now: Date.now(), who: cfg.guest ? cfg.who : 'james', market: marketOpen(Date.now()), day: r ? r.day : null, shut: (r && r[cfg.shut]) || '', tickAt: P.lastTick || null, pnl: k.pnl || 0, g: guardCfg(cfg), bounds: { loss: [5, 90], gain: [10, 1000], trail: [5, 60] }, syms: MAN.syms, idx: MAN.idx, maxQty: MAN.maxQty, maxOpen: MAN.maxOpen, open: k.open.map(openOut), closed: k.trades.map(closedOut), sg: sigOut(), lv: P.lv || {}, lvx: lvxOut() };
@@ -2091,6 +2103,7 @@ async function guestRoute(cfg, page, zipped, u, req, res) {
   const p = u.pathname.slice(base.length);
   if (p === 'state') return send(res, 200, deckOut(cfg));
   if (p === 'history') return send(res, 200, await histOut(cfg.key));
+  if (p === 'flow') return send(res, 200, await flowOut(cfg, u));
   if (!post) return send(res, 404, 'Not found', 'text/plain');
   if (p === 'enter') { const sy = (u.searchParams.get('sym') || '').toUpperCase(); if (!/^[A-Z.]{1,6}$/.test(sy)) return send(res, 400, { ok: false, error: 'bad symbol' }); return send(res, 200, await manualEnterB(cfg, sy, (u.searchParams.get('side') || '').toLowerCase(), u.searchParams.get('qty'))); }
   if (p === 'close') { const sy = (u.searchParams.get('sym') || '').toUpperCase(); if (!/^[A-Z.]{1,6}$/.test(sy)) return send(res, 400, { ok: false, error: 'bad symbol' }); return send(res, 200, await manualCloseBook(cfg.book, sy, u.searchParams.get('t0') || '', u.searchParams.get('n'))); }

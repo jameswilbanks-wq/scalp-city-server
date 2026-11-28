@@ -176,6 +176,15 @@ button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .meta{display:contents}
 .tgl.neutral[aria-checked=false]{color:var(--dim)}
 .lv{background:var(--panel2);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:7px}
+.flow{display:flex;flex-direction:column;gap:6px;min-width:0}.flow[hidden],.flbody[hidden],.flkey[hidden]{display:none}
+.flh{display:flex;align-items:center;justify-content:space-between;gap:8px}.flh b{font:700 11px var(--f-body);letter-spacing:.1em;text-transform:uppercase}
+.flh button{font:600 12px var(--f-body);color:var(--ink);background:var(--panel2);border:1px solid var(--line);border-radius:8px;min-height:36px;padding:0 12px;cursor:pointer}
+.flbody{display:flex;flex-direction:column;gap:6px;min-width:0}
+.flst{font:600 11px var(--f-body);color:var(--warn)}
+.flchart{background:var(--panel2);border-radius:8px;overflow:hidden;min-width:0}.flchart:empty{display:none}.flchart svg{display:block;width:100%}
+.flinfo{font:500 12px var(--f-mono);background:var(--panel2);border-radius:6px;padding:6px 9px}.flinfo:empty{display:none}
+.flkey{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:11px;color:var(--dim)}.flkey span{display:inline-flex;align-items:center;gap:5px}.flkey i{width:10px;height:10px;border-radius:50%}
+.flfn{font-size:11px;color:var(--dim)}
 .lvh{display:flex;justify-content:space-between;align-items:center;gap:8px}
 .lvt{font:500 12px var(--f-mono);color:var(--dim)}
 .lvb{font:700 10px var(--f-body);letter-spacing:.1em;text-transform:uppercase;padding:3px 8px;border-radius:99px;background:var(--panel);border:1px solid var(--line);color:var(--dim);white-space:nowrap}
@@ -333,18 +342,18 @@ a.btn{color:var(--ink);align-items:center;justify-content:center;min-height:44px
     state:'/api/son/state',hist:'/api/son/history',
     enter:function(s,side,q){return '/api/son/enter?'+Q({sym:s,side:side,qty:q})},
     close:function(p,n){return '/api/son/close?'+Q({sym:p.sym,t0:p.t0,n:n})},
-    guard:function(g){return '/api/son/guard?'+Q(g)},stop:'/api/son/stopday',resume:'/api/son/resume'
+    guard:function(g){return '/api/son/guard?'+Q(g)},stop:'/api/son/stopday',resume:'/api/son/resume',flow:function(s){return '/api/son/flow?'+Q({sym:s})}
   }:{
     state:'/api/deck',hist:'/api/deck/history',
     enter:function(s,side,q){return '/api/ondemand?'+Q({sym:s,side:side,qty:q})},
     close:function(p,n){return '/api/closebook?'+Q({book:'man',sym:p.sym,t0:p.t0,n:n})},
-    guard:function(g){return '/api/manguard?'+Q(g)},stop:'/api/stopday',resume:'/api/resumeday'
+    guard:function(g){return '/api/manguard?'+Q(g)},stop:'/api/stopday',resume:'/api/resumeday',flow:function(s){return '/api/flow?'+Q({sym:s})}
   };
   if(GF)EP={
     state:'/api/gf/state',hist:'/api/gf/history',
     enter:function(s,side,q){return '/api/gf/enter?'+Q({sym:s,side:side,qty:q})},
     close:function(p,n){return '/api/gf/close?'+Q({sym:p.sym,t0:p.t0,n:n})},
-    guard:function(g){return '/api/gf/guard?'+Q(g)},stop:'/api/gf/stopday',resume:'/api/gf/resume'
+    guard:function(g){return '/api/gf/guard?'+Q(g)},stop:'/api/gf/stopday',resume:'/api/gf/resume',flow:function(s){return '/api/gf/flow?'+Q({sym:s})}
   };
   /* Messages the SERVER writes (order refusals, queued notes) are English; on the Spanish page they are translated here. Anything not listed is shown in English rather than hidden. */
   var SRV=[
@@ -465,9 +474,68 @@ a.btn{color:var(--ink);align-items:center;justify-content:center;min-height:44px
     +'<div><div class="meter"><span class="stop" data-f="stopmk"></span><span class="zero" data-f="zero"></span><span class="fill" data-f="fill"></span><span class="trail" data-f="trail"></span><span class="mk" data-f="mk"></span></div>'
     +'<div class="mlab"><span data-f="lblL"></span><span>'+L('breakeven','ni ganas ni pierdes')+'</span><span data-f="lblR"></span></div></div>'
     +'<div class="facts"><div><small>'+L('Paid','Pagaste')+'</small><b data-f="paid"></b></div><div><small>'+L('Now (sell price)','Ahora (precio de venta)')+'</small><b data-f="bid"></b></div><div><small>'+L('Best so far','Mejor precio')+'</small><b data-f="peak"></b></div></div>'
+    +'<section class="flow" data-f="flow" hidden><div class="flh"><b>'+L('Order flow · stock','Flujo de órdenes · acción')+'</b><button type="button" data-f="flbtn" aria-expanded="true"></button></div><div class="flbody" data-f="flbody"><div class="flst" data-f="flst" aria-live="polite"></div><div class="flchart" data-f="flchart"></div><div class="flinfo" data-f="flinfo" aria-live="polite"></div>'
+    +'<div class="flkey" data-f="flkey"><span><i style="background:var(--up)"></i>'+L('Price ticked up (estimate)','El precio subió (estimado)')+'</span><span><i style="background:var(--down)"></i>'+L('Price ticked down (estimate)','El precio bajó (estimado)')+'</span><span><i style="background:var(--accent);border-radius:2px"></i>'+L('Shares traded at each price','Acciones operadas en cada precio')+'</span><span><i style="background:var(--warn);border-radius:2px"></i>'+L('Most-traded price','Precio más operado')+'</span></div>'
+    +'<div class="flfn">'+L('Stock price, not your option. Bubbles are trades that already happened: bigger means more shares. This is not an order book, and it is not a tested signal.','Es el precio de la acción, no el de tu opción. Las burbujas son operaciones que ya pasaron: más grande significa más acciones. No muestra las órdenes en espera y no es una señal comprobada.')+'</div></div></section>'
     +'<div class="lv"><div class="lvh"><span class="lvt" data-f="lvt"></span><span class="lvb" data-f="lvb"></span></div><div class="lvtrack" data-f="lvtr"><div class="lvticks" data-f="lvtk"></div><i data-f="lvdot"></i></div><div class="lvl"><span data-f="lvS"></span><span data-f="lvR"></span></div><div class="lvn" data-f="lvn"></div><details class="lvx"><summary data-f="lvxs">'+L('All levels','Todos los niveles')+'</summary><div class="lvxl" data-f="lvxl"></div></details></div>'
     +'<div class="guard" data-f="guard"></div>'
     +'<div data-f="act"></div>'}
+  /* ---- order flow chart on each open card (display only; the server feeds it from /flow). One reply per symbol is shared by every card in that symbol. ---- */
+  var FL={},FLbusy={},FLoff=false,FLhide=false;try{FLhide=localStorage.getItem('flowHide')==='1'}catch(e){}
+  function flowFetch(sym){
+    if(FLoff||FLbusy[sym])return;FLbusy[sym]=1;
+    call(EP.flow(sym)).then(function(r){FLbusy[sym]=0;
+      if(r&&r.state==='off'){FLoff=true;list().forEach(function(p){if(p.el)fld(p,'flow').hidden=true});return}
+      if(!r||!r.ok||r.state==='none'){flowFail(sym);return}
+      var old=FL[sym];if((r.state==='loading'||r.state==='unavailable'||r.state==='closed')&&old&&old.d){old.note=r.state}else{FL[sym]={d:r.state==='ok'?r:null,state:r.state,at:r.to||0,stale:!!r.stale,note:''}}
+      flowRedraw(sym)}).catch(function(){FLbusy[sym]=0;flowFail(sym)})}
+  function flowFail(sym){var f=FL[sym];if(f){f.note='unavailable';flowRedraw(sym)}}
+  function flowRedraw(sym){list().forEach(function(p){if(p.sym===sym&&p.el)flowPaint(p)})}
+  function flowPoll(){if(FLoff||document.hidden)return;var want={};list().forEach(function(p){if(p.el&&(!p.flHide||!FL[p.sym]))want[p.sym]=1});Object.keys(want).forEach(flowFetch)}
+  function flowBind(p){
+    p.flHide=FLhide;p.flPick=null;p._flk='';
+    fld(p,'flbtn').addEventListener('click',function(){p.flHide=!p.flHide;FLhide=p.flHide;try{localStorage.setItem('flowHide',FLhide?'1':'0')}catch(e){}p._flk='';flowPaint(p);if(!p.flHide)flowFetch(p.sym)});
+    fld(p,'flchart').addEventListener('click',function(e){var f=FL[p.sym],d=f&&f.d;if(!d||!e.target.getAttribute)return;var b=e.target.getAttribute('data-b'),v=e.target.getAttribute('data-v');
+      if(b!==null&&d.bubbles[+b]){var g=d.bubbles[+b];p.flPick={k:'b',t:d.from+g[0]*60000,p:g[1],d:g[3]}}else if(v!==null&&d.profile[+v])p.flPick={k:'v',p:d.profile[+v][0]};else return;flowPaint(p)})}
+  function flowLevels(sym){var Lv=levels(sym);if(!Lv)return{};var thr=(sym==='SPY'||sym==='QQQ')?.0008:.0025,u=Lv.px,up=null,dn=null;
+    lvCluster(Lv.list,thr*.5).forEach(function(c){if(!c.major)return;if(c.v>u&&(up===null||c.v<up))up=c.v;if(c.v<=u&&(dn===null||c.v>dn))dn=c.v});return{up:up,dn:dn}}
+  function flowStatus(f){
+    if(!f.d){if(f.state==='loading')return L('Loading the last 30 minutes of trades...','Cargando las operaciones de los últimos 30 minutos...');if(f.state==='empty')return L('No trades on this exchange in the last 30 minutes.','No hubo operaciones en esta bolsa en los últimos 30 minutos.');if(f.state==='closed')return L('The market is closed.','El mercado está cerrado.');return L('Order flow is not available right now. Your trade and its stops do not depend on this chart.','El flujo de órdenes no está disponible ahora. Tu operación y sus stops no dependen de esta gráfica.')}
+    if(f.note||f.stale)return L('Not updating right now. Last update '+hm(f.at)+' New York time.','No se está actualizando. Última actualización: '+hm(f.at)+', hora de Nueva York.');
+    return L('One exchange only (IEX) · last 30 minutes · updated '+hm(f.at)+' ET','Solo una bolsa (IEX) · últimos 30 minutos · actualizado '+hm(f.at)+' (Nueva York)')}
+  function flowPaint(p){
+    var sec=fld(p,'flow');if(!sec)return;var f=FL[p.sym];if(FLoff||!f){sec.hidden=true;return}sec.hidden=false;
+    var btn=fld(p,'flbtn');btn.textContent=p.flHide?L('Show','Mostrar'):L('Hide','Ocultar');btn.setAttribute('aria-expanded',p.flHide?'false':'true');fld(p,'flbody').hidden=!!p.flHide;if(p.flHide)return;
+    var st=fld(p,'flst'),box=fld(p,'flchart'),info=fld(p,'flinfo'),txt=flowStatus(f);if(st.textContent!==txt)st.textContent=txt;fld(p,'flkey').hidden=!f.d;
+    if(!f.d){if(p._flk!=='none'){p._flk='none';box.innerHTML='';info.textContent=''}return}
+    var d=f.d,W=Math.max(250,box.clientWidth||sec.clientWidth||300),lv=flowLevels(p.sym),key=[d.to,W,JSON.stringify(p.flPick),lv.up,lv.dn,p.t0].join('|');if(key===p._flk)return;p._flk=key;
+    var H=250,PW=Math.round(W*.2),AX=46,right=W-AX,X1=right-PW-6,top=10,bot=H-22,span=Math.max(d.hi-d.lo,d.step*4),lo=d.lo-span*.08,hi=d.hi+span*.08;
+    /* a nearby level is brought onto the chart; a far one is named at the edge so it does not flatten the price line */
+    var near=function(v){return v!==null&&v!==undefined&&v>=d.lo-span*.6&&v<=d.hi+span*.6};if(near(lv.up))hi=Math.max(hi,lv.up+span*.06);if(near(lv.dn))lo=Math.min(lo,lv.dn-span*.06);
+    var y=function(v){return top+(hi-v)/(hi-lo)*(bot-top)},x=function(m){return 6+m/30*(X1-12)};
+    var gs=[.01,.02,.05,.1,.25,.5,1,2,5,10,25],g=gs[gs.length-1],i;for(i=0;i<gs.length;i++)if((hi-lo)/gs[i]<=6){g=gs[i];break}
+    var s='<svg viewBox="0 0 '+W+' '+H+'" height="'+H+'" role="img" aria-label="'+esc(L(p.sym+' stock price, trade bubbles and shares by price, last 30 minutes. Latest '+d.last.p.toFixed(2)+'.',p.sym+': precio de la acción, burbujas de operaciones y acciones por precio, últimos 30 minutos. Último '+d.last.p.toFixed(2)+'.'))+'">';
+    for(var q=Math.ceil(lo/g)*g;q<=hi;q+=g)s+='<line x1="0" x2="'+right+'" y1="'+y(q)+'" y2="'+y(q)+'" style="stroke:var(--line)"/><text x="'+(W-4)+'" y="'+(y(q)+3.5)+'" text-anchor="end" font-size="10" style="fill:var(--dim);font-family:var(--f-mono)">'+q.toFixed(2)+'</text>';
+    if(p.t0>=d.from){var bx=x(Math.min(30,(p.t0-d.from)/60000));s+='<line x1="'+bx+'" x2="'+bx+'" y1="'+top+'" y2="'+bot+'" style="stroke:var(--ink);stroke-opacity:.45" stroke-dasharray="2 3"/><text x="'+(bx>X1-70?bx-4:bx+4)+'" y="'+(bot-5)+'" text-anchor="'+(bx>X1-70?'end':'start')+'" font-size="10" style="fill:var(--ink)">'+L('You bought','Compraste')+'</text>'}
+    var vmax=d.bubbles.reduce(function(a,b){return Math.max(a,b[2])},1),sel=null,pk=p.flPick;
+    d.bubbles.forEach(function(b,n){var on=!!(pk&&pk.k==='b'&&pk.t===d.from+b[0]*60000&&pk.d===b[3]&&Math.abs(pk.p-b[1])<=d.step/2&&!sel);if(on)sel=b;var c=b[3]>0?'var(--up)':b[3]<0?'var(--down)':'var(--dim)';
+      s+='<circle data-b="'+n+'" cx="'+x(b[0]+.5).toFixed(1)+'" cy="'+y(b[1]).toFixed(1)+'" r="'+(2+Math.sqrt(b[2]/vmax)*10).toFixed(1)+'" style="fill:'+c+';fill-opacity:.36;stroke:'+c+';stroke-width:'+(on?3:1)+';cursor:pointer"/>'});
+    s+='<polyline fill="none" style="stroke:var(--ink)" stroke-width="1.8" stroke-linejoin="round" pointer-events="none" points="'+d.line.map(function(a){return x(a[0]).toFixed(1)+','+y(a[1]).toFixed(1)}).join(' ')+'"/>';
+    var tip=d.line[d.line.length-1];s+='<circle cx="'+x(tip[0]).toFixed(1)+'" cy="'+y(tip[1]).toFixed(1)+'" r="3.5" style="fill:var(--ink)" pointer-events="none"/>';
+    [[lv.up,L('Resistance','Resistencia'),'var(--down)',-5,top+9],[lv.dn,L('Support','Soporte'),'var(--up)',13,bot-18]].forEach(function(l,n){if(l[0]===null||l[0]===undefined)return;var on=l[0]>=lo&&l[0]<=hi,ty=on?Math.min(bot-3,Math.max(top+8,y(l[0])+l[3])):l[4];
+      if(on)s+='<line x1="0" x2="'+right+'" y1="'+y(l[0])+'" y2="'+y(l[0])+'" style="stroke:'+l[2]+'" stroke-width="1.5" stroke-dasharray="5 4" pointer-events="none"/>';
+      s+='<text x="6" y="'+ty+'" font-size="10" font-weight="600" pointer-events="none" style="fill:'+l[2]+';paint-order:stroke;stroke:var(--panel2);stroke-width:3px">'+l[1]+' '+l[0].toFixed(2)+(on?'':(n===0?' ↑':' ↓'))+'</text>'});
+    s+='<line x1="'+right+'" x2="'+right+'" y1="'+top+'" y2="'+bot+'" style="stroke:var(--dim)"/>';
+    var pmax=d.profile.reduce(function(a,b){return Math.max(a,b[1])},1),bh=Math.max(2.5,y(0)-y(d.step)-1.5),selV=null;
+    d.profile.forEach(function(r,n){var w=Math.max(1,r[1]/pmax*PW),isP=r[0]===d.poc,on=!!(pk&&pk.k==='v'&&Math.abs(pk.p-r[0])<d.step/2&&!selV);if(on)selV=r;
+      s+='<rect data-v="'+n+'" x="'+(right-PW)+'" y="'+(y(r[0])-(bh+1.5)/2).toFixed(1)+'" width="'+PW+'" height="'+(bh+1.5).toFixed(1)+'" style="fill:transparent;cursor:pointer"/>';
+      s+='<rect data-v="'+n+'" x="'+(right-w).toFixed(1)+'" y="'+(y(r[0])-bh/2).toFixed(1)+'" width="'+w.toFixed(1)+'" height="'+bh.toFixed(1)+'" style="fill:'+(isP?'var(--warn)':'var(--accent)')+';fill-opacity:'+(isP?.95:.55)+';cursor:pointer'+(on?';stroke:var(--ink);stroke-width:2':'')+'"/>'});
+    s+='<text x="6" y="'+(H-7)+'" font-size="10" style="fill:var(--dim)">'+L('30 min ago','hace 30 min')+'</text><text x="'+X1+'" y="'+(H-7)+'" text-anchor="end" font-size="10" style="fill:var(--dim)">'+L('now','ahora')+'</text></svg>';
+    box.innerHTML=s;
+    var num=function(n){return Math.round(n).toLocaleString('en-US')},msg=L('Tap a bubble or a bar to see its numbers.','Toca una burbuja o una barra para ver sus números.');
+    if(sel)msg=num(sel[2])+L(' shares near ',' acciones cerca de ')+sel[1].toFixed(2)+' · '+hm(d.from+sel[0]*60000)+(sel[3]>0?L(' · price ticked up',' · el precio subió'):sel[3]<0?L(' · price ticked down',' · el precio bajó'):'');
+    if(selV)msg=num(selV[1])+L(' shares at about ',' acciones alrededor de ')+selV[0].toFixed(2)+(selV[0]===d.poc?L(' · most-traded price',' · precio más operado'):'');
+    info.textContent=msg}
   function actHTML(p){
     var id=esc(p.id);
     if(p.busy)return '<div class="confirm"><button class="no" type="button" disabled>'+L('Selling...','Vendiendo...')+'</button></div>';
@@ -479,11 +547,11 @@ a.btn{color:var(--ink);align-items:center;justify-content:center;min-height:44px
   function addCard(p){
     var d=document.createElement('article');d.className='card';d.innerHTML=cardHTML(p);
     var em=$('cards').querySelector('.empty');if(em)em.parentNode.removeChild(em);
-    $('cards').insertBefore(d,$('cards').firstChild);p.el=d;p.actKey='';paint(p)}
+    $('cards').insertBefore(d,$('cards').firstChild);p.el=d;p.actKey='';flowBind(p);paint(p);flowFetch(p.sym)}
   function paint(p){
     var v=pnl(p),c=pct(p),k=p.has?cls(v):'flat',lo=G.loss/100,hi=G.gain/100,span=lo+hi,zero=lo/span*100;
     p.el.classList.toggle('pos',k==='up');p.el.classList.toggle('neg',k==='dn');
-    fld(p,'held').textContent=L('held ','abierta hace ')+held(p);lvPaint(p);
+    fld(p,'held').textContent=L('held ','abierta hace ')+held(p);lvPaint(p);flowPaint(p);
     fld(p,'sub').innerHTML=L(esc(p.strike)+' strike','strike '+esc(p.strike))+' &middot; '+L('expires ','vence ')+esc(p.exp===(S&&S.day)?L('today','hoy'):p.exp)+' &middot; '+p.qty+L(' contract',' contrato')+(p.qty>1?'s':'');
     var a=fld(p,'amt');a.textContent=p.has?money(v,true):'--';a.className='amt num '+k;
     var pc=fld(p,'pc');pc.textContent=p.has?(c>=0?'+':'')+(c*100).toFixed(1)+'%':L('waiting for a price','esperando precio');pc.className='pc '+k;
@@ -690,6 +758,6 @@ a.btn{color:var(--ink);align-items:center;justify-content:center;min-height:44px
   try{if(localStorage.getItem('sgFold')==='1'){$('sbox').classList.add('fold')}}catch(e){}
   $('sgFold').addEventListener('click',function(){var on=$('sbox').classList.toggle('fold');$('sgFold').innerHTML=on?'&#9656;':'&#9662;';try{localStorage.setItem('sgFold',on?'1':'0')}catch(e){}});
   document.addEventListener('visibilitychange',function(){if(!document.hidden)poll()});
-  clock();setInterval(clock,1000);poll();setInterval(poll,5000);loadHist();setInterval(loadHist,60000);
+  clock();setInterval(clock,1000);poll();setInterval(poll,5000);loadHist();setInterval(loadHist,60000);setInterval(flowPoll,20000);document.addEventListener('visibilitychange',function(){if(!document.hidden)flowPoll()});
 })();
 </script>
