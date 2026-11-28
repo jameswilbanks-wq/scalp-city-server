@@ -87,6 +87,11 @@ t('the guides: each guest key opens only its own guide; the header button shows 
   for (const h of ['Read this first', 'Your first practice trade', 'Guardrails', 'Signals', 'Support and resistance', 'If something does not work']) assert.ok(en.includes('<h2>' + h), h);
   for (const h of ['Lee esto primero', 'Tu primera operación', 'Las protecciones', 'Las señales', 'Soporte y resistencia', 'Si algo no funciona']) assert.ok(es.includes('<h2>' + h), h);
   assert.ok(es.includes('cuánto aceptas perder') && es.includes('¿Cuántos de 3 quieres vender?') && en.includes('Find the levels.'), 'later corrections carried over');
-  for (const g of [en, es]) assert.ok(!/@|wilbanks|james|<\?claude|\*\*|\| ---|src=|https?:/i.test(g.replace(/<style>[\s\S]*?<\/style>/, '')), 'no personal details, leftover markup or outside links');
+  for (const g of [en, es]) {
+    const pics = g.match(/<image id="[a-z]+" href="[^"]*"/g) || []; assert.strictEqual(pics.length, 9, 'nine pictures'); assert.strictEqual((g.match(/<image /g) || []).length, 9); assert.ok(pics.every(x => /^<image id="[a-z]+" href="data:image\/jpeg;base64,[A-Za-z0-9+\/=]+"$/.test(x)), 'pictures are embedded, never loaded from elsewhere'); assert.ok((g.match(/<use href="[^"]*"/g) || []).every(x => /^<use href="#[a-z]+"$/.test(x)), 'picture slices point inside the page');
+    const figs = g.match(/<figure class="fig">[\s\S]*?<\/figure>/g) || []; assert.strictEqual(figs.length, 9);
+    for (const f of figs) { assert.ok(/role="img" aria-label="[^"]+"/.test(f), 'picture has a text label'); assert.ok(/made-up numbers|números inventados/.test(f), 'labelled as an example'); assert.strictEqual((f.match(/<circle /g) || []).length, (f.match(/<li>/g) || []).length, 'one key line per arrow'); }
+    assert.ok(!/@|wilbanks|james|<\?claude|\*\*|\| ---|src=|https?:/i.test(g.replace(/data:image\/jpeg;base64,[A-Za-z0-9+\/=]+/g, 'PIC').replace(/<style>[\s\S]*?<\/style>/, '')), 'no personal details, leftover markup or outside links');
+  }
 });
 (async () => { for (const [n, f] of tests) { try { await f(); pass++; console.log('ok   ' + n); } catch (e) { console.log('FAIL ' + n + '\n' + (e && e.stack || e)); } } console.log(pass + '/' + tests.length + ' passed'); process.exit(pass === tests.length ? 0 : 1); })();

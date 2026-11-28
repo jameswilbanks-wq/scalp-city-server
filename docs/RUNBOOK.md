@@ -209,5 +209,8 @@ In `rec:YYYY-MM-DD` -> `cskreal.list[]`: `pc` (taken once per spread at the 15:4
 - Tests: `node test/gf_page.test.js`, plus `son_access`, `son_book`, `deck_page`, `deck_levels`, `deck_calendar`, `manual_close`.
 - Any new on-screen text in `public/deck.html` must be written as `L('English','Español')`; a new server refusal message needs a line in the page's `SRV` list.
 
-## 2026-11-28 — Guides on the guest pages (pending push)
+## 2026-11-28 — Guides on the guest pages
 - `/son/guide?key=SON_KEY` and `/gf/guide?key=GF_KEY` (James's key opens both). Source files `public/guide_en.html` and `public/guide_es.html`, read at server start. They quote on-screen labels and the default limits (1-3 contracts, 3 open, $1,200 per order, $400/$800 per contract, guardrails 30/100/25, 3:59 PM sell): update both guides when any of these or a button name changes. Test: `node test/gf_page.test.js`.
+
+## 2026-11-28 — Guide pictures
+- The pictures are fixed screenshots (light theme, phone width). A change to a button, label or layout on the deck does **not** update them: retake and re-place them. The capture was a one-off using a local mock server, not part of the repo. Take screenshots without full-page capture (it changes the page width and shifts the arrow positions). `node test/gf_page.test.js` checks nine embedded pictures per guide, a text label and example caption on each, and one key line per arrow; it cannot check that an arrow points at the right thing.
